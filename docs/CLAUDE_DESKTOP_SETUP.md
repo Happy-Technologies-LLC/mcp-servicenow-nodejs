@@ -6,7 +6,7 @@
 
 ## ✅ Current Working Configuration
 
-Your Claude Desktop is already configured! Here's the working setup:
+Your Claude Desktop is configured with **Option A: Multi-Instance with Runtime Switching** ⭐
 
 **Config File:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
@@ -16,17 +16,15 @@ Your Claude Desktop is already configured! Here's the working setup:
     "servicenow-nodejs": {
       "command": "node",
       "args": ["/Users/nczitzer/WebstormProjects/mcp-servicenow-nodejs/src/stdio-server.js"],
-      "cwd": "/Users/nczitzer/WebstormProjects/mcp-servicenow-nodejs",
-      "env": {
-        "SERVICENOW_INSTANCE_URL": "https://dev276360.service-now.com",
-        "SERVICENOW_USERNAME": "admin",
-        "SERVICENOW_PASSWORD": "your-password",
-        "SERVICENOW_AUTH_TYPE": "basic"
-      }
+      "cwd": "/Users/nczitzer/WebstormProjects/mcp-servicenow-nodejs"
     }
   }
 }
 ```
+
+**Instance Configuration:** `config/servicenow-instances.json`
+
+The server automatically loads your instances from the config file. You can switch between instances during your conversation without restarting!
 
 ---
 
@@ -42,10 +40,52 @@ open ~/Library/Application\ Support/Claude/claude_desktop_config.json
 nano ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
-### 2. Add ServiceNow MCP Server
+### 2. Choose Configuration Method
 
-Add this to the `mcpServers` section:
+**You have TWO options - choose ONE:**
 
+#### Option A: Multi-Instance with Runtime Switching (Recommended) ⭐
+
+**Step 1:** Create `config/servicenow-instances.json`:
+```bash
+cd /Users/YOUR_USERNAME/WebstormProjects/mcp-servicenow-nodejs
+nano config/servicenow-instances.json
+```
+
+```json
+{
+  "instances": [
+    {
+      "name": "dev",
+      "url": "https://dev123456.service-now.com",
+      "username": "admin",
+      "password": "password",
+      "default": true
+    }
+  ]
+}
+```
+
+**Step 2:** Add to Claude Desktop config (NO env section):
+```json
+{
+  "mcpServers": {
+    "servicenow-nodejs": {
+      "command": "node",
+      "args": ["/Users/YOUR_USERNAME/WebstormProjects/mcp-servicenow-nodejs/src/stdio-server.js"],
+      "cwd": "/Users/YOUR_USERNAME/WebstormProjects/mcp-servicenow-nodejs"
+    }
+  }
+}
+```
+
+**Benefits:** ✅ One config file, ✅ Runtime switching, ✅ Easy to add instances
+
+---
+
+#### Option B: Single Instance (Simple)
+
+Add to Claude Desktop config (WITH env section):
 ```json
 {
   "mcpServers": {
@@ -56,18 +96,20 @@ Add this to the `mcpServers` section:
       "env": {
         "SERVICENOW_INSTANCE_URL": "https://your-instance.service-now.com",
         "SERVICENOW_USERNAME": "your-username",
-        "SERVICENOW_PASSWORD": "your-password",
-        "SERVICENOW_AUTH_TYPE": "basic"
+        "SERVICENOW_PASSWORD": "your-password"
       }
     }
   }
 }
 ```
 
-**Important:** Replace:
-- `YOUR_USERNAME` with your actual username
-- `your-instance.service-now.com` with your ServiceNow instance
-- `your-username` and `your-password` with your credentials
+**Benefits:** ✅ Simple, ✅ Everything in one file
+
+**Limitations:** ❌ No instance switching, ❌ Restart required to change instances
+
+---
+
+**Important:** Replace `YOUR_USERNAME` with your actual username
 
 ### 3. Restart Claude Desktop
 
