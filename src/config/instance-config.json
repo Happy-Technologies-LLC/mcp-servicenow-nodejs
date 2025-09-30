@@ -1,0 +1,4693 @@
+{
+  "instance_info": {
+    "url": "https://dev276360.service-now.com",
+    "version": "glide-zurich-07-01-2025__patch1-08-20-2025_09-08-2025_1328.zip",
+    "edition": "Service Management",
+    "capabilities": [],
+    "plugins": []
+  },
+  "enabled_packages": [
+    "service desk"
+  ],
+  "custom_configurations": {
+    "source": "Clean comprehensive ServiceNow developer table definitions",
+    "total_tables": 94,
+    "generated_on": "2025-09-26T13:55:10.451Z",
+    "priority_system": "1=Core ITSM, 2=Extended Services, 3=Platform Development, 4=Advanced Integration, 5=Analytics",
+    "incident": {
+      "label": "Incident",
+      "table": "incident",
+      "key_field": "number",
+      "display_field": "short_description",
+      "required_fields": [
+        "short_description"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "state",
+        "priority",
+        "urgency",
+        "impact",
+        "category",
+        "subcategory",
+        "caller_id",
+        "assigned_to",
+        "assignment_group",
+        "description",
+        "work_notes"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Incident table"
+    },
+    "change_request": {
+      "label": "Change Request",
+      "table": "change_request",
+      "key_field": "number",
+      "display_field": "short_description",
+      "required_fields": [
+        "short_description"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Change Request table"
+    },
+    "change_task": {
+      "label": "Change Task",
+      "table": "change_task",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Change Task table"
+    },
+    "problem": {
+      "label": "Problem",
+      "table": "problem",
+      "key_field": "number",
+      "display_field": "short_description",
+      "required_fields": [
+        "short_description"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Problem table"
+    },
+    "problem_task": {
+      "label": "Problem Task",
+      "table": "problem_task",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Problem Task table"
+    },
+    "sc_cat_item": {
+      "label": "Sc Cat Item",
+      "table": "sc_cat_item",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Sc Cat Item table"
+    },
+    "sc_category": {
+      "label": "Sc Category",
+      "table": "sc_category",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Sc Category table"
+    },
+    "sc_request": {
+      "label": "Sc Request",
+      "table": "sc_request",
+      "key_field": "number",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Sc Request table"
+    },
+    "sc_req_item": {
+      "label": "Sc Req Item",
+      "table": "sc_req_item",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Sc Req Item table"
+    },
+    "item_option_new": {
+      "label": "Item Option New",
+      "table": "item_option_new",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Item Option New table"
+    },
+    "sys_user": {
+      "label": "Sys User",
+      "table": "sys_user",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "user_name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Sys User table"
+    },
+    "sys_user_group": {
+      "label": "Sys User Group",
+      "table": "sys_user_group",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Sys User Group table"
+    },
+    "sys_user_grmember": {
+      "label": "Sys User Grmember",
+      "table": "sys_user_grmember",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 1,
+      "package": "service_desk",
+      "description": "ServiceNow Sys User Grmember table"
+    },
+    "cmdb_ci": {
+      "label": "Cmdb Ci",
+      "table": "cmdb_ci",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "cmdb",
+      "description": "ServiceNow Cmdb Ci table"
+    },
+    "cmdb_ci_computer": {
+      "label": "Cmdb Ci Computer",
+      "table": "cmdb_ci_computer",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "cmdb",
+      "description": "ServiceNow Cmdb Ci Computer table"
+    },
+    "cmdb_ci_server": {
+      "label": "Cmdb Ci Server",
+      "table": "cmdb_ci_server",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "cmdb",
+      "description": "ServiceNow Cmdb Ci Server table"
+    },
+    "cmdb_rel_ci": {
+      "label": "Cmdb Rel Ci",
+      "table": "cmdb_rel_ci",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "cmdb",
+      "description": "ServiceNow Cmdb Rel Ci table"
+    },
+    "alm_asset": {
+      "label": "Alm Asset",
+      "table": "alm_asset",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "cmdb",
+      "description": "ServiceNow Alm Asset table"
+    },
+    "kb_knowledge": {
+      "label": "Kb Knowledge",
+      "table": "kb_knowledge",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Kb Knowledge table"
+    },
+    "kb_knowledge_base": {
+      "label": "Kb Knowledge Base",
+      "table": "kb_knowledge_base",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Kb Knowledge Base table"
+    },
+    "kb_category": {
+      "label": "Kb Category",
+      "table": "kb_category",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Kb Category table"
+    },
+    "sys_script": {
+      "label": "Sys Script",
+      "table": "sys_script",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "platform_developer",
+      "description": "ServiceNow Sys Script table"
+    },
+    "sys_script_client": {
+      "label": "Sys Script Client",
+      "table": "sys_script_client",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "platform_developer",
+      "description": "ServiceNow Sys Script Client table"
+    },
+    "sys_script_include": {
+      "label": "Sys Script Include",
+      "table": "sys_script_include",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "platform_developer",
+      "description": "ServiceNow Sys Script Include table"
+    },
+    "sys_ui_script": {
+      "label": "Sys Ui Script",
+      "table": "sys_ui_script",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "platform_developer",
+      "description": "ServiceNow Sys Ui Script table"
+    },
+    "wf_workflow": {
+      "label": "Wf Workflow",
+      "table": "wf_workflow",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Wf Workflow table"
+    },
+    "wf_activity": {
+      "label": "Wf Activity",
+      "table": "wf_activity",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Wf Activity table"
+    },
+    "wf_workflow_version": {
+      "label": "Wf Workflow Version",
+      "table": "wf_workflow_version",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name",
+        "table"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active",
+        "not_cacheable",
+        "journal",
+        "start",
+        "schedule",
+        "activity_stages",
+        "workflow",
+        "run_multiple",
+        "requires_ert",
+        "order",
+        "relative_duration",
+        "column_renderer",
+        "expected_sequences",
+        "validated",
+        "published",
+        "description"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Wf Workflow Version table",
+      "instance_customized": true,
+      "field_metadata": {
+        "not_cacheable": {
+          "label": "Not cacheable",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "journal": {
+          "label": "Journal",
+          "required": false,
+          "max_length": "1000",
+          "reference": ""
+        },
+        "start": {
+          "label": "Starting activity",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=wf_activity",
+            "value": "wf_activity"
+          }
+        },
+        "schedule": {
+          "label": "Schedule",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=cmn_schedule",
+            "value": "cmn_schedule"
+          }
+        },
+        "table": {
+          "label": "Table",
+          "required": true,
+          "max_length": "80",
+          "reference": ""
+        },
+        "activity_stages": {
+          "label": "Activity stages",
+          "required": false,
+          "max_length": "8000",
+          "reference": ""
+        },
+        "sys_created_on": {
+          "label": "Created",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "workflow": {
+          "label": "Workflow",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=wf_workflow",
+            "value": "wf_workflow"
+          }
+        },
+        "active": {
+          "label": "Active",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_id": {
+          "label": "Sys ID",
+          "required": false,
+          "max_length": "32",
+          "reference": ""
+        },
+        "run_multiple": {
+          "label": "Run multiple",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "requires_ert": {
+          "label": "Requires ERT",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "order": {
+          "label": "Order",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "relative_duration": {
+          "label": "Relative duration",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=cmn_relative_duration",
+            "value": "cmn_relative_duration"
+          }
+        },
+        "column_renderer": {
+          "label": "Stage rendering",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=column_renderer",
+            "value": "column_renderer"
+          }
+        },
+        "expected_sequences": {
+          "label": "Expected sequences",
+          "required": false,
+          "max_length": "8000",
+          "reference": ""
+        },
+        "sys_created_by": {
+          "label": "Created by",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "validated": {
+          "label": "Workflow Runtime Validation Status",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "published": {
+          "label": "Published",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "description": {
+          "label": "Description",
+          "required": false,
+          "max_length": "4000",
+          "reference": ""
+        },
+        "on_cancel": {
+          "label": "On-cancel script",
+          "required": false,
+          "max_length": "1000",
+          "reference": ""
+        },
+        "condition": {
+          "label": "Condition",
+          "required": false,
+          "max_length": "1000",
+          "reference": ""
+        },
+        "expected_time": {
+          "label": "Expected time",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "stage_order": {
+          "label": "Stage order",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "full_sequences": {
+          "label": "Full sequences",
+          "required": false,
+          "max_length": "8000",
+          "reference": ""
+        },
+        "sys_updated_on": {
+          "label": "Updated",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "name": {
+          "label": "Name",
+          "required": true,
+          "max_length": "100",
+          "reference": ""
+        },
+        "checked_out": {
+          "label": "Checked out",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "max_activity_count": {
+          "label": "Max activity count",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "timezone": {
+          "label": "Timezone",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "condition_type": {
+          "label": "If condition matches",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "expected_time_type": {
+          "label": "Delivery based on",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_mod_count": {
+          "label": "Updates",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "stage_field": {
+          "label": "Stage field",
+          "required": false,
+          "max_length": "80",
+          "reference": ""
+        },
+        "after_business_rules": {
+          "label": "Run after bus. rules run",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_updated_by": {
+          "label": "Updated by",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "checked_out_by": {
+          "label": "Checked out by",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=sys_user",
+            "value": "sys_user"
+          }
+        },
+        "pin_type": {
+          "label": "Activity pinning",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        }
+      }
+    },
+    "sys_update_set": {
+      "label": "Sys Update Set",
+      "table": "sys_update_set",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Update Set table"
+    },
+    "sys_update_xml": {
+      "label": "Sys Update Xml",
+      "table": "sys_update_xml",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Update Xml table"
+    },
+    "sys_update_set_merge": {
+      "label": "Sys Update Set Merge",
+      "table": "sys_update_set_merge",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Update Set Merge table"
+    },
+    "rm_story": {
+      "label": "Rm Story",
+      "table": "rm_story",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "agile_management",
+      "description": "ServiceNow Rm Story table"
+    },
+    "rm_epic": {
+      "label": "Rm Epic",
+      "table": "rm_epic",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "agile_management",
+      "description": "ServiceNow Rm Epic table"
+    },
+    "rm_scrum_task": {
+      "label": "Rm Scrum Task",
+      "table": "rm_scrum_task",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "agile_management",
+      "description": "ServiceNow Rm Scrum Task table"
+    },
+    "pm_project": {
+      "label": "Pm Project",
+      "table": "pm_project",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "agile_management",
+      "description": "ServiceNow Pm Project table"
+    },
+    "m2m_story_dependencies": {
+      "label": "M2m Story Dependencies",
+      "table": "m2m_story_dependencies",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "agile_management",
+      "description": "ServiceNow M2m Story Dependencies table"
+    },
+    "sys_ws_definition": {
+      "label": "Sys Ws Definition",
+      "table": "sys_ws_definition",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "integration_specialist",
+      "description": "ServiceNow Sys Ws Definition table"
+    },
+    "sys_rest_message": {
+      "label": "Sys Rest Message",
+      "table": "sys_rest_message",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "integration_specialist",
+      "description": "ServiceNow Sys Rest Message table"
+    },
+    "sys_rest_message_fn": {
+      "label": "Sys Rest Message Fn",
+      "table": "sys_rest_message_fn",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "integration_specialist",
+      "description": "ServiceNow Sys Rest Message Fn table"
+    },
+    "sys_import_set": {
+      "label": "Sys Import Set",
+      "table": "sys_import_set",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "integration_specialist",
+      "description": "ServiceNow Sys Import Set table"
+    },
+    "sys_transform_map": {
+      "label": "Sys Transform Map",
+      "table": "sys_transform_map",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "integration_specialist",
+      "description": "ServiceNow Sys Transform Map table"
+    },
+    "cmn_cost_center": {
+      "label": "Cmn Cost Center",
+      "table": "cmn_cost_center",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "enterprise",
+      "description": "ServiceNow Cmn Cost Center table"
+    },
+    "cmn_department": {
+      "label": "Cmn Department",
+      "table": "cmn_department",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "enterprise",
+      "description": "ServiceNow Cmn Department table"
+    },
+    "cmn_location": {
+      "label": "Cmn Location",
+      "table": "cmn_location",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "enterprise",
+      "description": "ServiceNow Cmn Location table"
+    },
+    "core_company": {
+      "label": "Core Company",
+      "table": "core_company",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "enterprise",
+      "description": "ServiceNow Core Company table"
+    },
+    "ast_contract": {
+      "label": "Ast Contract",
+      "table": "ast_contract",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "enterprise",
+      "description": "ServiceNow Ast Contract table"
+    },
+    "sysapproval_approver": {
+      "label": "Sysapproval Approver",
+      "table": "sysapproval_approver",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Sysapproval Approver table"
+    },
+    "sys_approval": {
+      "label": "Sys Approval",
+      "table": "sys_approval",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Approval table"
+    },
+    "sp_page": {
+      "label": "Sp Page",
+      "table": "sp_page",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sp Page table"
+    },
+    "sp_widget": {
+      "label": "Sp Widget",
+      "table": "sp_widget",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sp Widget table"
+    },
+    "sp_theme": {
+      "label": "Sp Theme",
+      "table": "sp_theme",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sp Theme table"
+    },
+    "sys_ux_page": {
+      "label": "Sys Ux Page",
+      "table": "sys_ux_page",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ux Page table"
+    },
+    "sys_ux_component": {
+      "label": "Sys Ux Component",
+      "table": "sys_ux_component",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ux Component table"
+    },
+    "sys_ux_macroponent": {
+      "label": "Sys Ux Macroponent",
+      "table": "sys_ux_macroponent",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ux Macroponent table"
+    },
+    "sys_ux_data_resource": {
+      "label": "Sys Ux Data Resource",
+      "table": "sys_ux_data_resource",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ux Data Resource table"
+    },
+    "sys_atf_test": {
+      "label": "Sys Atf Test",
+      "table": "sys_atf_test",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Atf Test table"
+    },
+    "sys_atf_test_suite": {
+      "label": "Sys Atf Test Suite",
+      "table": "sys_atf_test_suite",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Atf Test Suite table"
+    },
+    "sys_report": {
+      "label": "Sys Report",
+      "table": "sys_report",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 5,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Report table"
+    },
+    "pa_dashboards": {
+      "label": "Pa Dashboards",
+      "table": "pa_dashboards",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 5,
+      "package": "service_desk",
+      "description": "ServiceNow Pa Dashboards table"
+    },
+    "sys_db_object": {
+      "label": "Database Table",
+      "table": "sys_db_object",
+      "key_field": "sys_id",
+      "display_field": "label",
+      "required_fields": [
+        "name",
+        "label"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "platform_developer",
+      "description": "Core table that stores metadata about every table in ServiceNow"
+    },
+    "sys_dictionary": {
+      "label": "Dictionary Entry",
+      "table": "sys_dictionary",
+      "key_field": "sys_id",
+      "display_field": "column_label",
+      "required_fields": [
+        "name",
+        "element"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "platform_developer",
+      "description": "Dictionary entries defining field metadata for all tables"
+    },
+    "sys_properties": {
+      "label": "System Property",
+      "table": "sys_properties",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "platform_developer",
+      "description": "System properties and configuration settings"
+    },
+    "sys_app": {
+      "label": "Application",
+      "table": "sys_app",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "platform_developer",
+      "description": "Application definitions and metadata"
+    },
+    "sys_scope": {
+      "label": "Application Scope",
+      "table": "sys_scope",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 2,
+      "package": "platform_developer",
+      "description": "Application scope definitions for scoped applications"
+    },
+    "sys_ui_form": {
+      "label": "Form",
+      "table": "sys_ui_form",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow Form table"
+    },
+    "sys_ui_form_section": {
+      "label": "Sys Ui Form Section",
+      "table": "sys_ui_form_section",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ui Form Section table"
+    },
+    "sys_ui_element": {
+      "label": "Sys Ui Element",
+      "table": "sys_ui_element",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active",
+        "sys_ui_formatter",
+        "sys_ui_section",
+        "element",
+        "type",
+        "sys_mod_count",
+        "position",
+        "sys_user"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ui Element table",
+      "instance_customized": true,
+      "field_metadata": {
+        "sys_ui_formatter": {
+          "label": "Sys UI formatter",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=sys_ui_formatter",
+            "value": "sys_ui_formatter"
+          }
+        },
+        "sys_ui_section": {
+          "label": "Sys UI section",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=sys_ui_section",
+            "value": "sys_ui_section"
+          }
+        },
+        "sys_created_on": {
+          "label": "Created",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "element": {
+          "label": "Element",
+          "required": false,
+          "max_length": "255",
+          "reference": ""
+        },
+        "sys_updated_on": {
+          "label": "Updated",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_id": {
+          "label": "Sys ID",
+          "required": false,
+          "max_length": "32",
+          "reference": ""
+        },
+        "type": {
+          "label": "Type",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_mod_count": {
+          "label": "Updates",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "position": {
+          "label": "Position",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_created_by": {
+          "label": "Created by",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        },
+        "sys_user": {
+          "label": "Sys user",
+          "required": false,
+          "max_length": "32",
+          "reference": {
+            "link": "https://dev276360.service-now.com/api/now/table/sys_db_object?name=sys_user",
+            "value": "sys_user"
+          }
+        },
+        "sys_updated_by": {
+          "label": "Updated by",
+          "required": false,
+          "max_length": "40",
+          "reference": ""
+        }
+      }
+    },
+    "sys_ui_list": {
+      "label": "List View",
+      "table": "sys_ui_list",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow List View table"
+    },
+    "sys_ui_policy": {
+      "label": "UI Policy",
+      "table": "sys_ui_policy",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow UI Policy table"
+    },
+    "sys_ui_policy_action": {
+      "label": "Sys Ui Policy Action",
+      "table": "sys_ui_policy_action",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ui Policy Action table"
+    },
+    "sys_ui_action": {
+      "label": "UI Action",
+      "table": "sys_ui_action",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow UI Action table"
+    },
+    "sys_ui_macro": {
+      "label": "UI Macro",
+      "table": "sys_ui_macro",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "table",
+        "view",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "ui_developer",
+      "description": "ServiceNow UI Macro table"
+    },
+    "sp_portal": {
+      "label": "Service Portal",
+      "table": "sp_portal",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "Service Portal configuration and settings"
+    },
+    "sp_instance": {
+      "label": "Portal Instance",
+      "table": "sp_instance",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "Portal instance configurations"
+    },
+    "sp_dependency": {
+      "label": "Portal Dependency",
+      "table": "sp_dependency",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Portal Dependency table"
+    },
+    "sp_header_footer": {
+      "label": "Portal Header/Footer",
+      "table": "sp_header_footer",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Portal Header/Footer table"
+    },
+    "sys_ux_event": {
+      "label": "UX Event",
+      "table": "sys_ux_event",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "Next Experience UX event definitions"
+    },
+    "sys_ux_addon_event_mapping": {
+      "label": "Sys Ux Addon Event Mapping",
+      "table": "sys_ux_addon_event_mapping",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow Sys Ux Addon Event Mapping table"
+    },
+    "sys_ux_page_element": {
+      "label": "UX Page Element",
+      "table": "sys_ux_page_element",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow UX Page Element table"
+    },
+    "sys_ux_page_registry": {
+      "label": "UX Page Registry",
+      "table": "sys_ux_page_registry",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow UX Page Registry table"
+    },
+    "sys_ux_lib_component": {
+      "label": "UX Library Component",
+      "table": "sys_ux_lib_component",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 4,
+      "package": "ui_developer",
+      "description": "ServiceNow UX Library Component table"
+    },
+    "sys_email": {
+      "label": "Email",
+      "table": "sys_email",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "Email message records"
+    },
+    "sys_email_log": {
+      "label": "Email Log",
+      "table": "sys_email_log",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Email Log table"
+    },
+    "sys_email_attachment": {
+      "label": "Sys Email Attachment",
+      "table": "sys_email_attachment",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Email Attachment table"
+    },
+    "sysevent_email_action": {
+      "label": "Sysevent Email Action",
+      "table": "sysevent_email_action",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sysevent Email Action table"
+    },
+    "sys_email_template": {
+      "label": "Email Template",
+      "table": "sys_email_template",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Email Template table"
+    },
+    "sys_notification": {
+      "label": "Notification",
+      "table": "sys_notification",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "Notification rules and configurations"
+    },
+    "sys_push_notif": {
+      "label": "Sys Push Notif",
+      "table": "sys_push_notif",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Sys Push Notif table"
+    },
+    "sys_user_role": {
+      "label": "User Role",
+      "table": "sys_user_role",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow User Role table"
+    },
+    "sys_user_has_role": {
+      "label": "User Role Assignment",
+      "table": "sys_user_has_role",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow User Role Assignment table"
+    },
+    "sys_security_acl": {
+      "label": "Access Control Rule",
+      "table": "sys_security_acl",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Access Control Rule table"
+    },
+    "sys_choice": {
+      "label": "Choice",
+      "table": "sys_choice",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Choice table"
+    },
+    "sys_metadata": {
+      "label": "Metadata",
+      "table": "sys_metadata",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Metadata table"
+    },
+    "sys_attachment": {
+      "label": "Attachment",
+      "table": "sys_attachment",
+      "key_field": "sys_id",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_updated_by",
+        "name",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "priority": 3,
+      "package": "service_desk",
+      "description": "ServiceNow Attachment table"
+    },
+    "contract_rel_location": {
+      "label": "contract rel location",
+      "table": "contract_rel_location",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "contract",
+        "sys_created_on",
+        "location",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_stop": {
+      "label": "ts stop",
+      "table": "ts_stop",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_by",
+        "sys_mod_count",
+        "comment",
+        "sys_created_on",
+        "active",
+        "sys_created_by",
+        "word",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_japanese_token_dictionary": {
+      "label": "ts japanese token dictionary",
+      "table": "ts_japanese_token_dictionary",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "tokens",
+        "text"
+      ],
+      "common_fields": [
+        "sys_mod_count",
+        "sys_updated_by",
+        "pos",
+        "sys_created_on",
+        "reading",
+        "sys_created_by",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_sub_man_st_cloud_entitlement_subscription": {
+      "label": "sn sub man st cloud entitlement subscription",
+      "table": "sn_sub_man_st_cloud_entitlement_subscription",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "total_purchased_pool_capacity_tb",
+        "start_date",
+        "purchased_quantity",
+        "type",
+        "capacity_per_unit_tb",
+        "product",
+        "end_date",
+        "product_code"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ua_ih_feature_usage": {
+      "label": "ua ih feature usage",
+      "table": "ua_ih_feature_usage",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "license_id",
+        "caller_scope_ref",
+        "spoke_name",
+        "sys_updated_on",
+        "update_time",
+        "caller_scope",
+        "sys_mod_count",
+        "spoke_id",
+        "sys_updated_by",
+        "originating_scope_ref"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ua_blocking": {
+      "label": "ua blocking",
+      "table": "ua_blocking",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_on",
+        "event_type",
+        "sys_created_by",
+        "stream_id",
+        "sys_updated_on",
+        "sys_updated_by",
+        "block_source",
+        "sys_mod_count"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ua_ct_usage": {
+      "label": "ua ct usage",
+      "table": "ua_ct_usage",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "insert_count",
+        "user",
+        "sys_created_by",
+        "time_stamp",
+        "table_name",
+        "sys_updated_on",
+        "delete_count",
+        "app_scope",
+        "sys_mod_count",
+        "sys_updated_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_aisearch_global_job_log": {
+      "label": "sn aisearch global job log",
+      "table": "sn_aisearch_global_job_log",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_on",
+        "sn_aisearch_global_migration_job",
+        "sys_created_by",
+        "message",
+        "sys_updated_on",
+        "level",
+        "sys_updated_by",
+        "sequence",
+        "sys_mod_count"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "syslog_client_trans_det0000": {
+      "label": "syslog client trans det0000",
+      "table": "syslog_client_trans_det0000",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_on",
+        "name",
+        "sys_updated_by",
+        "order",
+        "duration",
+        "sys_mod_count",
+        "table",
+        "type",
+        "sys_created_on",
+        "client_transaction"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_4_7": {
+      "label": "ts c 4 7",
+      "table": "ts_c_4_7",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "word",
+        "document_number",
+        "total_weight",
+        "positions"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_phrase": {
+      "label": "ts phrase",
+      "table": "ts_phrase",
+      "key_field": "number",
+      "display_field": "number",
+      "required_fields": [],
+      "common_fields": [
+        "number",
+        "phrase"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_28_5": {
+      "label": "ts c 28 5",
+      "table": "ts_c_28_5",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "word",
+        "document_number",
+        "total_weight",
+        "positions"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "v_cluster_transaction": {
+      "label": "v cluster transaction",
+      "table": "v_cluster_transaction",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "age",
+        "job_count",
+        "business_rule",
+        "sys_created_by",
+        "foreground",
+        "br_count",
+        "transaction_id",
+        "sys_updated_by",
+        "scope_name",
+        "acl_time"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_cmdb_ws_dm_certification_attribute_status": {
+      "label": "sn cmdb ws dm certification attribute status",
+      "table": "sn_cmdb_ws_dm_certification_attribute_status",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_by",
+        "comment",
+        "element",
+        "cmdb_data_management_task",
+        "sys_mod_count",
+        "status",
+        "certification_record",
+        "sys_created_on",
+        "certified_value",
+        "table"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "statemgmt_compat_actions": {
+      "label": "statemgmt compat actions",
+      "table": "statemgmt_compat_actions",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "compatible_action",
+        "action"
+      ],
+      "common_fields": [
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_created_on",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "svc_model_obj_constraint": {
+      "label": "svc model obj constraint",
+      "table": "svc_model_obj_constraint",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_on",
+        "name",
+        "sys_created_by",
+        "last_mark",
+        "ci_type",
+        "state_key",
+        "template_stable_id",
+        "state"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_discovery": {
+      "label": "cmdb discovery",
+      "table": "cmdb_discovery",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "ecc_queue_name",
+        "discoverer",
+        "sys_created_by",
+        "ecc_queue_topic",
+        "cmdb_ci",
+        "sys_updated_on",
+        "status",
+        "cmdb_class_name",
+        "sys_mod_count",
+        "sys_updated_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ecc_event0000": {
+      "label": "ecc event0000",
+      "table": "ecc_event0000",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "task",
+        "agent_correlator",
+        "outage",
+        "sys_updated_on",
+        "component",
+        "source",
+        "sys_mod_count",
+        "severity",
+        "sys_updated_by",
+        "status"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_8_1": {
+      "label": "ts c 8 1",
+      "table": "ts_c_8_1",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "total_weight",
+        "positions",
+        "word",
+        "document_number"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_employee_employment_history": {
+      "label": "sn employee employment history",
+      "table": "sn_employee_employment_history",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "gap_reason",
+        "zip",
+        "employment_type",
+        "sys_updated_on",
+        "end_date",
+        "state",
+        "sys_mod_count",
+        "employment_history_type",
+        "sys_updated_by",
+        "status"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sys_cs_channel_user_profile": {
+      "label": "sys cs channel user profile",
+      "table": "sys_cs_channel_user_profile",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "channel_user_id",
+        "channel"
+      ],
+      "common_fields": [
+        "user_table",
+        "sys_created_on",
+        "user_document",
+        "sys_created_by",
+        "expired_on",
+        "display_name",
+        "sys_updated_on",
+        "timezone",
+        "active",
+        "sys_mod_count"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sla_definition_sla_breakdown": {
+      "label": "sla definition sla breakdown",
+      "table": "sla_definition_sla_breakdown",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "contract_sla",
+        "sla_breakdown_definition"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sla_breakdown_core": {
+      "label": "sla breakdown core",
+      "table": "sla_breakdown_core",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "retroactive",
+        "business_duration",
+        "sys_created_by",
+        "task_sla",
+        "pause_time",
+        "business_pause_duration",
+        "duration",
+        "sys_updated_on",
+        "task",
+        "start"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_24_7": {
+      "label": "ts c 24 7",
+      "table": "ts_c_24_7",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "total_weight",
+        "positions",
+        "word",
+        "document_number"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_cmdb_ws_ms_discovery_sources_not_reporting": {
+      "label": "sn cmdb ws ms discovery sources not reporting",
+      "table": "sn_cmdb_ws_ms_discovery_sources_not_reporting",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "last_discovered",
+        "ci",
+        "discovery_source",
+        "class"
+      ],
+      "common_fields": [
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_updated_by",
+        "sys_domain",
+        "sys_mod_count",
+        "state",
+        "cmdb_reference",
+        "sys_created_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_class_relationships": {
+      "label": "cmdb class relationships",
+      "table": "cmdb_class_relationships",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "parent"
+      ],
+      "common_fields": [
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_created_on",
+        "class_relationships",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_m2m_model_compatibility": {
+      "label": "cmdb m2m model compatibility",
+      "table": "cmdb_m2m_model_compatibility",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_on",
+        "model_2",
+        "sys_created_by",
+        "model_1",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_domain_path",
+        "sys_updated_by",
+        "sys_domain"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_11_0": {
+      "label": "ts c 11 0",
+      "table": "ts_c_11_0",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "positions",
+        "document_number",
+        "total_weight",
+        "word"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "visualization_migration_storage": {
+      "label": "visualization migration storage",
+      "table": "visualization_migration_storage",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "macroponent",
+        "sys_created_on",
+        "json"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "pa_indicator_data_snapshot_status": {
+      "label": "pa indicator data snapshot status",
+      "table": "pa_indicator_data_snapshot_status",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "data_snapshot_status",
+        "indicator"
+      ],
+      "common_fields": [
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_created_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "license_role_to_custom_table": {
+      "label": "license role to custom table",
+      "table": "license_role_to_custom_table",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "table_ref"
+      ],
+      "common_fields": [
+        "sys_updated_on",
+        "sys_user_role",
+        "sys_mod_count",
+        "sys_updated_by",
+        "role_name",
+        "sys_created_on",
+        "table_name",
+        "active",
+        "sys_created_by",
+        "license_role_type"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sa_notification0001": {
+      "label": "sa notification0001",
+      "table": "sa_notification0001",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "sys_domain",
+        "sys_created_by",
+        "content",
+        "ci",
+        "timestamp",
+        "sys_mod_count",
+        "name",
+        "sys_updated_by",
+        "sys_created_on",
+        "service"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_collab_request_permission_section": {
+      "label": "sn collab request permission section",
+      "table": "sn_collab_request_permission_section",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "info",
+        "title"
+      ],
+      "common_fields": [
+        "sys_mod_count",
+        "sys_updated_on",
+        "sys_updated_by",
+        "order",
+        "sys_created_on",
+        "sys_created_by",
+        "active"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_20_9": {
+      "label": "ts c 20 9",
+      "table": "ts_c_20_9",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "word",
+        "document_number",
+        "total_weight",
+        "positions"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "unauth_chg_notifications": {
+      "label": "unauth chg notifications",
+      "table": "unauth_chg_notifications",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_on",
+        "sys_updated_by",
+        "sys_mod_count",
+        "last_event_sent",
+        "sys_created_on",
+        "cmdb_ci",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "experiment": {
+      "label": "experiment",
+      "table": "experiment",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [
+        "experiment_parameter",
+        "start_time",
+        "name"
+      ],
+      "common_fields": [
+        "category",
+        "sync_version",
+        "description",
+        "sys_updated_on",
+        "experiment_id",
+        "instance_type",
+        "opt_out",
+        "sys_mod_count",
+        "sys_updated_by",
+        "gcf_definition_id"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ml_language_x_prediction_result": {
+      "label": "ml language x prediction result",
+      "table": "ml_language_x_prediction_result",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_by",
+        "prediction_feedback",
+        "language_x_solution",
+        "sys_updated_on",
+        "prediction_result",
+        "language_x_config",
+        "sys_domain_path",
+        "sys_updated_by",
+        "composite_solution_id",
+        "prediction_input"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "hermes_audit_records": {
+      "label": "hermes audit records",
+      "table": "hermes_audit_records",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "service_id"
+      ],
+      "common_fields": [
+        "sys_updated_on",
+        "ip_address",
+        "resource",
+        "sys_updated_by",
+        "principal_type",
+        "sys_mod_count",
+        "data_center",
+        "principal_name",
+        "sys_created_on",
+        "timestamp"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "promin_process_category_kpi": {
+      "label": "promin process category kpi",
+      "table": "promin_process_category_kpi",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "impacted_kpis",
+        "category",
+        "process_def"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_domain"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmn_user_schedule": {
+      "label": "cmn user schedule",
+      "table": "cmn_user_schedule",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_domain",
+        "start_date",
+        "sys_created_on",
+        "sys_class_name",
+        "schedule",
+        "sys_created_by",
+        "active",
+        "user"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_fc_initiator": {
+      "label": "cmdb fc initiator",
+      "table": "cmdb_fc_initiator",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_on",
+        "wwpn",
+        "sys_created_by",
+        "wwnn",
+        "sys_domain_path",
+        "sys_updated_on",
+        "fc_disk",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_domain"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ecc_event0002": {
+      "label": "ecc event0002",
+      "table": "ecc_event0002",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "name",
+        "sys_class_name",
+        "outage",
+        "sys_created_on",
+        "payload",
+        "type",
+        "sys_created_by",
+        "severity",
+        "task",
+        "agent_correlator"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_24_0": {
+      "label": "ts c 24 0",
+      "table": "ts_c_24_0",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "word",
+        "total_weight",
+        "positions",
+        "document_number"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "svc_recomputation_log0004": {
+      "label": "svc recomputation log0004",
+      "table": "svc_recomputation_log0004",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "guid",
+        "sys_updated_by",
+        "metric_key",
+        "row_num",
+        "metric_value",
+        "sys_mod_count",
+        "sys_created_by",
+        "topic",
+        "environment",
+        "layer"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_publications_workflow_config": {
+      "label": "sn publications workflow config",
+      "table": "sn_publications_workflow_config",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "process_workflow",
+        "workflow"
+      ],
+      "common_fields": [
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_created_on",
+        "sys_created_by",
+        "approvers",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_ci_end_of_life_ledger": {
+      "label": "cmdb ci end of life ledger",
+      "table": "cmdb_ci_end_of_life_ledger",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_mod_count",
+        "state",
+        "sys_created_on",
+        "cmdb_ci",
+        "sys_updated_on",
+        "sys_created_by",
+        "sys_domain",
+        "sys_updated_by",
+        "system_id"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_data_management_policy_execution": {
+      "label": "cmdb data management policy execution",
+      "table": "cmdb_data_management_policy_execution",
+      "key_field": "number",
+      "display_field": "number",
+      "required_fields": [],
+      "common_fields": [
+        "percent_complete",
+        "sys_created_on",
+        "number",
+        "execution_state",
+        "sys_domain",
+        "end_time",
+        "sys_created_by",
+        "start_time",
+        "open_task_count",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ui_notification_payload_processor": {
+      "label": "ui notification payload processor",
+      "table": "ui_notification_payload_processor",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [
+        "name"
+      ],
+      "common_fields": [
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "class_name",
+        "sys_created_on",
+        "description"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_wn_app_config": {
+      "label": "sn wn app config",
+      "table": "sn_wn_app_config",
+      "key_field": "sys_id",
+      "display_field": "short_description",
+      "required_fields": [],
+      "common_fields": [
+        "active",
+        "sys_updated_by",
+        "sys_mod_count",
+        "short_description",
+        "sys_created_on",
+        "title",
+        "sys_created_by",
+        "base_path",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "fx_currency2_instance": {
+      "label": "fx currency2 instance",
+      "table": "fx_currency2_instance",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_by",
+        "table",
+        "amount",
+        "sys_updated_on",
+        "reference_amount",
+        "currency",
+        "sys_updated_by",
+        "parent_record",
+        "reference_currency",
+        "sys_mod_count"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "alm_asset_creation_queue": {
+      "label": "alm asset creation queue",
+      "table": "alm_asset_creation_queue",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_by",
+        "state",
+        "sys_updated_on",
+        "table",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_domain",
+        "source_id",
+        "sys_created_on",
+        "comments"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sysevent0005": {
+      "label": "sysevent0005",
+      "table": "sysevent0005",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "processing_duration",
+        "parm2",
+        "sys_mod_count",
+        "partition",
+        "sys_updated_by",
+        "instance",
+        "claimed_by",
+        "user_id",
+        "table",
+        "sys_created_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "asmt_m2m_recipientslist_survey": {
+      "label": "asmt m2m recipientslist survey",
+      "table": "asmt_m2m_recipientslist_survey",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [
+        "recipients_list",
+        "metric_type"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "name",
+        "sys_created_by",
+        "sys_domain_path",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_domain"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "upgrade_preview": {
+      "label": "upgrade preview",
+      "table": "upgrade_preview",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_created_on",
+        "tracker",
+        "source_version",
+        "sys_created_by",
+        "preview_finished",
+        "sys_updated_on",
+        "preview_started",
+        "sys_updated_by",
+        "status",
+        "target_version"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "promin_project_entity": {
+      "label": "promin project entity",
+      "table": "promin_project_entity",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [
+        "name",
+        "source_type"
+      ],
+      "common_fields": [
+        "table",
+        "advanced_condition_type",
+        "target_field",
+        "report_source",
+        "touch_point_excluded_users",
+        "sys_created_by",
+        "touch_point_time_range",
+        "advanced_condition_relation",
+        "source_field",
+        "external_dataset"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "cmdb_os_user": {
+      "label": "cmdb os user",
+      "table": "cmdb_os_user",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "home_directory",
+        "sys_updated_on",
+        "os_user_name",
+        "sys_mod_count",
+        "sys_updated_by",
+        "computer",
+        "os_user_id",
+        "sys_created_on",
+        "password",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_c_20_2": {
+      "label": "ts c 20 2",
+      "table": "ts_c_20_2",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "word",
+        "total_weight",
+        "positions",
+        "document_number"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "bsm_edge_color": {
+      "label": "bsm edge color",
+      "table": "bsm_edge_color",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_on",
+        "relationship_type",
+        "sys_mod_count",
+        "sys_updated_by",
+        "color",
+        "sys_created_on",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ngbsm_filter": {
+      "label": "ngbsm filter",
+      "table": "ngbsm_filter",
+      "key_field": "name",
+      "display_field": "name",
+      "required_fields": [],
+      "common_fields": [
+        "user",
+        "sys_mod_count",
+        "sys_updated_by",
+        "name",
+        "sys_created_on",
+        "filter",
+        "sys_created_by",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_vsc_first_time_modal_user_preference": {
+      "label": "sn vsc first time modal user preference",
+      "table": "sn_vsc_first_time_modal_user_preference",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "modal_last_shown",
+        "show_modal",
+        "sys_mod_count",
+        "sys_updated_by",
+        "tool_last_access",
+        "sys_created_on",
+        "tool_name",
+        "sys_created_by",
+        "user",
+        "sys_updated_on"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "m2m_kb_task": {
+      "label": "m2m kb task",
+      "table": "m2m_kb_task",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_on",
+        "kb_knowledge",
+        "sys_mod_count",
+        "sys_updated_by",
+        "task",
+        "sys_created_on",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_aisearch_global_job_ingest_history": {
+      "label": "sn aisearch global job ingest history",
+      "table": "sn_aisearch_global_job_ingest_history",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sn_aisearch_global_migration_job",
+        "sys_updated_on",
+        "percent_complete",
+        "sys_mod_count",
+        "sys_updated_by",
+        "total_record_count",
+        "sys_created_on",
+        "ais_ingest_datasource_stats",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "promin_view_field_config": {
+      "label": "promin view field config",
+      "table": "promin_view_field_config",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "field",
+        "view",
+        "process_def"
+      ],
+      "common_fields": [
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "sys_domain",
+        "sys_created_on",
+        "include_in_new_project",
+        "sys_created_by",
+        "grouped"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "ts_deleted_doc": {
+      "label": "ts deleted doc",
+      "table": "ts_deleted_doc",
+      "key_field": "number",
+      "display_field": "number",
+      "required_fields": [],
+      "common_fields": [
+        "table",
+        "shard",
+        "number"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "subscription_has_app": {
+      "label": "subscription has app",
+      "table": "subscription_has_app",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "sys_updated_on",
+        "application",
+        "sys_mod_count",
+        "sys_updated_by",
+        "subscription",
+        "sys_created_on",
+        "sys_created_by"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "v_user_rotation": {
+      "label": "v user rotation",
+      "table": "v_user_rotation",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [],
+      "common_fields": [
+        "roster",
+        "sys_mod_count",
+        "sys_updated_by",
+        "type",
+        "rota",
+        "sys_created_on",
+        "user",
+        "current_user_id",
+        "sys_created_by",
+        "end_date_time"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "iamsync_message": {
+      "label": "iamsync message",
+      "table": "iamsync_message",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "subject"
+      ],
+      "common_fields": [
+        "channel",
+        "sys_created_on",
+        "state",
+        "sys_created_by",
+        "queue_expiration",
+        "sys_updated_on",
+        "claimed",
+        "sys_mod_count",
+        "sys_updated_by",
+        "nack_count"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    },
+    "sn_cmdb_ws_insight_data": {
+      "label": "sn cmdb ws insight data",
+      "table": "sn_cmdb_ws_insight_data",
+      "key_field": "sys_id",
+      "display_field": "sys_id",
+      "required_fields": [
+        "count",
+        "cloud_provider",
+        "ci_category"
+      ],
+      "common_fields": [
+        "sys_created_on",
+        "sys_created_by",
+        "sys_updated_on",
+        "sys_mod_count",
+        "sys_updated_by",
+        "state"
+      ],
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "list",
+        "search"
+      ],
+      "discovered": true
+    }
+  }
+}

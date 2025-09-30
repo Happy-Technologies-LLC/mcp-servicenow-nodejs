@@ -1,0 +1,28 @@
+{
+  "instances": [
+    {
+      "name": "dev",
+      "url": "https://dev276360.service-now.com",
+      "username": "admin",
+      "password": "$h4fG+9nAGeU",
+      "default": true,
+      "description": "Development instance"
+    },
+    {
+      "name": "prod",
+      "url": "https://yourinstance.service-now.com",
+      "username": "api_user",
+      "password": "your_password",
+      "default": false,
+      "description": "Production instance"
+    },
+    {
+      "name": "test",
+      "url": "https://test123456.service-now.com",
+      "username": "test_user",
+      "password": "test_password",
+      "default": false,
+      "description": "Test instance"
+    }
+  ]
+}
