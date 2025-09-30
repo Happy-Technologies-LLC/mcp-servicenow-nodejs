@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.env.backup
 
 # ServiceNow instance credentials (DO NOT COMMIT)
 config/servicenow-instances.json

@@ -1,105 +1,190 @@
-# ServiceNow MCP Server v2.0 - Intelligent Dynamic Architecture
+# ServiceNow MCP Server v2.0 - Multi-Instance Intelligent Architecture
 
-A revolutionary **metadata-driven ServiceNow MCP server** that automatically discovers your ServiceNow instance schema and generates optimized tool configurations. Built with Node.js and Express.
+A revolutionary **metadata-driven ServiceNow MCP server** that supports **multiple ServiceNow instances** simultaneously with automatic schema discovery and optimized tool generation. Built with Node.js and Express.
 
 ## 🚀 Revolutionary Features
 
-- **🧠 Intelligent Auto-Discovery**: Automatically analyzes your ServiceNow instance and generates adaptive configurations
-- **📊 85+ ServiceNow Tables Supported**: Complete coverage from Python implementation analysis (66 consolidated tools → 200+ dynamic tools)
-- **⚙️ Zero-Configuration Setup**: `npm run setup` automatically configures everything for your instance
-- **🔧 Dynamic Tool Generation**: Tools generated from metadata - no manual coding required
+- **🌐 Multi-Instance Support**: Connect to multiple ServiceNow instances simultaneously with instance-specific tool routing
+- **🧠 Intelligent Schema Discovery**: Automatically discovers table structures and relationships from your ServiceNow instances
+- **📊 160+ ServiceNow Tables**: Complete coverage including ITSM, CMDB, Service Catalog, Platform Development, and Flow Designer
+- **⚙️ Generic CRUD Operations**: 34 powerful MCP tools that work on **any** ServiceNow table
+- **🔧 Dynamic Schema Loading**: Table metadata discovered at runtime - no hardcoded definitions
 - **📱 Instance-Adaptive**: Automatically handles custom fields, modified tables, and different ServiceNow editions
-- **🎯 Smart Recommendations**: AI-powered setup recommendations based on your ServiceNow configuration
+- **🎯 Batch Operations**: 43+ parallel operations tested successfully
 
 ## ⚡ Quick Start (2-3 Minutes)
 
 ### Prerequisites
 - Node.js 18+
-- ServiceNow instance with API access
+- ServiceNow instance(s) with API access
 - Valid ServiceNow credentials
 
-### 🎯 Intelligent Setup (Recommended)
+### 🎯 Setup Instructions
 
 1. **Clone and install:**
    ```bash
-   cd /Users/nczitzer/WebstormProjects/mcp-servicenow-nodejs
+   git clone <repository-url>
+   cd mcp-servicenow-nodejs
    npm install
    ```
 
-2. **Run intelligent setup:**
+2. **Configure your ServiceNow instance(s):**
+
+   **Option A: Multi-Instance Setup (Recommended)**
    ```bash
-   npm run setup
+   # Create config file
+   cp config/servicenow-instances.example.json config/servicenow-instances.json
+
+   # Edit with your instances
+   nano config/servicenow-instances.json
    ```
-   The setup wizard will:
-   - 🔍 Discover your ServiceNow instance capabilities
-   - 📊 Analyze 85+ ServiceNow tables
-   - ⚙️ Generate instance-optimized configurations
-   - 💡 Provide smart recommendations
-   - 💾 Create tailored tool definitions
+
+   Example multi-instance config:
+   ```json
+   {
+     "instances": [
+       {
+         "name": "dev",
+         "url": "https://dev123456.service-now.com",
+         "username": "admin",
+         "password": "your-password",
+         "default": true
+       },
+       {
+         "name": "prod",
+         "url": "https://prod789012.service-now.com",
+         "username": "integration_user",
+         "password": "your-password"
+       }
+     ]
+   }
+   ```
+
+   **Option B: Single Instance Setup (Legacy)**
+   ```bash
+   # Copy environment template
+   cp .env.example .env
+
+   # Edit with your credentials
+   nano .env
+   ```
 
 3. **Start the server:**
    ```bash
    npm run dev
    ```
 
-4. **Connect your AI assistant:**
-   - URL: `http://localhost:3000/mcp`
-   - Test: `curl http://localhost:3000/health`
+4. **Verify connection:**
+   ```bash
+   # Health check
+   curl http://localhost:3000/health
 
-### 🚀 Alternative Setup Options
+   # List instances
+   curl http://localhost:3000/instances
+   ```
+
+5. **Connect your AI assistant:**
+   - **HTTP Transport:** `http://localhost:3000/mcp`
+   - **Stdio Transport:** Use `npm run stdio` (for Claude Desktop)
+   - Test with MCP Inspector: `npm run inspector`
+
+## 🌐 Multi-Instance Support
+
+### Instance-Specific Tool Routing
+
+All tools automatically support multi-instance operations:
 
 ```bash
-# Automated setup (no prompts)
-npm run setup:auto
+# Default instance (marked with "default": true in config)
+SN-List-Incidents { "limit": 10 }
 
-# Quick setup (25 most important tables)
-npm run setup:fast
+# Specific instance
+SN-List-Incidents { "instance": "prod", "limit": 10 }
 
-# Manual configuration
-cp .env.example .env  # Edit with your ServiceNow details
-npm run dev
+# List all configured instances
+curl http://localhost:3000/instances
 ```
+
+### Tool Naming Convention
+
+**Without Instance Parameter:**
+- Uses default instance from config
+- Example: `SN-Create-Incident` → creates in default instance
+
+**With Instance Parameter:**
+- Routes to specified instance
+- Example: `SN-Create-Incident { "instance": "prod", ... }` → creates in prod instance
 
 ## 📊 Comprehensive ServiceNow Coverage
 
-### 🎯 **200+ Dynamic Tools** Generated From **85 ServiceNow Tables**
+### 🎯 **34 MCP Tools** Supporting **160+ ServiceNow Tables**
 
-*Based on complete analysis of Python implementation (66 consolidated tools, 36 files, 13 modules)*
+*Generic tools work on any ServiceNow table through dynamic schema discovery*
 
-| **Category** | **Tables** | **Generated Tools** | **Package** |
-|--------------|------------|-------------------|------------|
-| **🏆 Core ITSM** | 5 tables | 30+ tools | `service_desk` |
-| **📦 Service Catalog** | 5 tables | 25+ tools | `catalog_builder` |
-| **👥 User Management** | 3 tables | 15+ tools | `service_desk` |
-| **🔧 CMDB & Assets** | 8 tables | 40+ tools | `cmdb` |
-| **📚 Knowledge Management** | 3 tables | 15+ tools | `service_desk` |
-| **⚙️ Platform Development** | 15+ tables | 60+ tools | `platform_developer` |
-| **🔗 Integration & APIs** | 10+ tables | 40+ tools | `integration_specialist` |
-| **📊 Analytics & Reports** | 5+ tables | 20+ tools | `analytics_specialist` |
-| **🎨 UI/UX Development** | 10+ tables | 40+ tools | `ui_developer` |
-| **📈 Agile Management** | 5 tables | 20+ tools | `agile_management` |
+| **Tool Category** | **Tools** | **What They Do** |
+|-------------------|-----------|------------------|
+| **Generic CRUD** | 7 tools | Query, Create, Get, Update on **any** table |
+| **Specialized ITSM** | 8 tools | Incident, Change, Problem convenience wrappers |
+| **Update Set Management** | 6 tools | Set, list, move, clone, inspect update sets |
+| **Background Scripts** | 2 tools | Execute scripts, create fix scripts |
+| **Workflows** | 4 tools | Create workflows, activities, transitions |
+| **Batch Operations** | 2 tools | Batch create/update across tables |
+| **Schema Discovery** | 3 tools | Get table schemas, field info, relationships |
+| **Multi-Instance** | 2 tools | Switch instances, get current instance |
 
-### 🧠 **Intelligent Tool Examples**
+### 📋 **Supported Table Categories (160+ Total)**
 
-**Every table gets 6+ auto-generated tools:**
-```bash
-# Core ITSM Operations
-servicenow-create-incident         # Create incidents with validation
-servicenow-list-incidents          # Query with smart filters
-servicenow-update-incident         # Update with field validation
-servicenow-search-incidents        # Full-text search
-servicenow-get-incident-by-number  # Quick lookup by number
-servicenow-resolve-incident        # Specialized resolution workflow
+| **Category** | **Example Tables** |
+|--------------|-------------------|
+| **🏆 Core ITSM** | incident, change_request, problem, sc_request, sc_req_item |
+| **📦 Service Catalog** | sc_cat_item, catalog_ui_policy, item_option_new |
+| **👥 User Management** | sys_user, sys_user_group, sys_user_role |
+| **🔧 CMDB & Assets** | cmdb_ci, alm_asset, cmdb_rel_ci |
+| **⚙️ Platform Development** | sys_script, sys_ui_policy, sys_update_set, sys_update_xml |
+| **🔄 Flow Designer** | sys_hub_flow, sys_hub_flow_logic, sys_hub_flow_variable |
+| **🌊 Workflows** | wf_workflow, wf_activity, wf_transition |
+| **🔗 Integration** | sys_rest_message, sys_ws_definition, sys_import_set |
 
-# Dynamic Custom Table Support
-servicenow-create-u-custom-table   # Your custom tables automatically supported
-servicenow-list-u-custom-table     # Instance-specific field validation
-servicenow-search-u-custom-table   # Custom field search
+### 🧠 **Tool Examples**
 
-# Advanced Integration
-servicenow-create-sys-rest-message # REST API development
-servicenow-test-integration-flow    # Integration testing
-servicenow-analyze-service-dependencies # Service mapping
+**Standard CRUD Operations (Every Table):**
+```javascript
+// List records with filtering
+SN-List-Incidents({ "query": "state=1^priority=1", "limit": 10 })
+
+// Create new record
+SN-Create-Incident({ "short_description": "Email down", "urgency": 1 })
+
+// Get single record
+SN-Get-Incident({ "sys_id": "abc123..." })
+
+// Update record
+SN-Update-Record({ "table_name": "incident", "sys_id": "abc123...", "data": {...} })
+
+// Query with complex filters
+SN-Query-Table({ "table_name": "incident", "query": "active=true", "fields": "number,short_description" })
+```
+
+**Specialized Tools:**
+```javascript
+// Background script execution (automated via sys_trigger)
+SN-Execute-Background-Script({ "script": "gs.info('Hello');" })
+
+// Update set management
+SN-Get-Current-Update-Set()
+SN-Set-Update-Set({ "update_set_sys_id": "abc123..." })
+SN-Move-Records-To-Update-Set({ "update_set_id": "xyz789...", "source_update_set": "Default" })
+
+// Table schema introspection
+SN-Get-Table-Schema({ "table_name": "incident" })
+SN-Discover-Table-Schema({ "table_name": "sys_hub_flow", "include_relationships": true })
+
+// Batch operations
+SN-Batch-Create({ "operations": [...] })
+SN-Batch-Update({ "updates": [...] })
+
+// Workflow creation
+SN-Create-Workflow({ "name": "Auto-Approve", "table": "change_request", "activities": [...] })
 ```
 
 ### 📋 **Complete Table Coverage**
@@ -108,202 +193,184 @@ servicenow-analyze-service-dependencies # Service mapping
 `incident` • `change_request` • `change_task` • `problem` • `problem_task` • `sc_request` • `sc_req_item` • `sysapproval_approver`
 
 **Service Catalog:**
-`sc_cat_item` • `sc_category` • `item_option_new` (variables) • Catalog optimization tools
+`sc_cat_item` • `sc_category` • `item_option_new` • `catalog_ui_policy` • `catalog_ui_policy_action`
 
 **CMDB & Assets:**
-`cmdb_ci` • `cmdb_ci_computer` • `cmdb_ci_server` • `cmdb_rel_ci` • `alm_asset` • `ast_contract`
+`cmdb_ci` • `cmdb_ci_*` (all CI types) • `cmdb_rel_ci` • `alm_asset` • `ast_contract`
 
 **Platform Development:**
-`sys_script` • `sys_script_client` • `sys_script_include` • `sys_ui_script` • `wf_workflow` • `wf_activity` • `sys_update_set`
+`sys_script` • `sys_script_client` • `sys_script_include` • `sys_ui_script` • `sys_ui_policy` • `sys_update_set` • `sys_update_xml`
+
+**Flow Designer (NEW!):**
+`sys_hub_flow` • `sys_hub_flow_base` • `sys_hub_flow_logic` • `sys_hub_flow_variable` • `sys_hub_flow_stage`
+
+**Workflows:**
+`wf_workflow` • `wf_activity` • `wf_transition` • `wf_version`
 
 **Integration & APIs:**
-`sys_rest_message` • `sys_ws_definition` • `sys_import_set` • `sys_transform_map` • GraphQL schemas
+`sys_rest_message` • `sys_ws_definition` • `sys_import_set` • `sys_transform_map`
 
-**Plus 60+ additional tables** including UX pages, portal development, agile management, testing, and enterprise management!
+**160+ total tables** including UI/UX development, user management, knowledge bases, and more!
 
 ## Testing with MCP Inspector
 
-1. **Start MCP Inspector:**
+1. **Start the MCP server:**
+   ```bash
+   npm run dev
+   ```
+
+2. **Launch MCP Inspector in a new terminal:**
    ```bash
    npm run inspector
    ```
 
-2. **Configure connection:**
-   - Transport Type: **Streamable HTTP**
+3. **Configure connection:**
+   - Transport Type: **Streamable HTTP (SSE)**
    - URL: `http://localhost:3000/mcp`
-   - Add Authorization header if needed
+   - Click **Connect**
 
-3. **Test tools** using the Inspector interface
+4. **Test tools:**
+   - Browse available tools in the Tools tab
+   - Execute tool calls with parameters
+   - View responses and errors
 
-## Usage Examples
+## Claude Desktop Integration
 
-### Create Incident
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
 ```json
-Tool: servicenow-create-incident
-Parameters: {
-  "short_description": "Email server outage",
-  "description": "Users cannot access email",
-  "urgency": 1,
-  "impact": 2,
-  "category": "Network"
-}
-```
-
-### List Incidents
-```json
-Tool: servicenow-list-incidents
-Parameters: {
-  "state": "New",
-  "priority": "1",
-  "limit": 10
-}
-```
-
-### Create User
-```json
-Tool: servicenow-create-user
-Parameters: {
-  "user_name": "john.doe",
-  "first_name": "John",
-  "last_name": "Doe",
-  "email": "john.doe@company.com",
-  "department": "IT"
-}
-```
-
-## Extending the Server
-
-### Adding New Tools
-
-1. **Add client method** in `src/servicenow-client.js`:
-   ```javascript
-   async getProblems(query = {}) {
-     return this.getRecords('problem', query);
-   }
-   ```
-
-2. **Register tool** in `src/mcp-server.js`:
-   ```javascript
-   server.tool(
-     'servicenow-list-problems',
-     { state: z.string().optional() },
-     async (args) => {
-       const problems = await serviceNowClient.getProblems(args);
-       return { content: [{ type: 'text', text: JSON.stringify(problems) }] };
-     }
-   );
-   ```
-
-### Adding Resources
-
-```javascript
-server.resource(
-  'problem-stats',
-  'stats://problems',
-  async (uri) => {
-    const stats = await serviceNowClient.getProblemStats();
-    return {
-      contents: [{ uri: uri.href, text: JSON.stringify(stats) }]
-    };
+{
+  "mcpServers": {
+    "servicenow": {
+      "command": "node",
+      "args": ["/path/to/mcp-servicenow-nodejs/src/stdio-server.js"]
+    }
   }
-);
+}
 ```
+
+Then restart Claude Desktop to see ServiceNow tools appear.
 
 ## Architecture
 
 ```
 src/
-├── server.js          # Express server with MCP transport
-├── mcp-server.js      # MCP tool and resource definitions
-└── servicenow-client.js # ServiceNow REST API wrapper
+├── server.js                      # Express HTTP server with SSE transport
+├── stdio-server.js                # Stdio transport for Claude Desktop
+├── mcp-server-consolidated.js    # MCP tool registration & routing
+├── servicenow-client.js           # ServiceNow REST API client
+└── config-manager.js              # Multi-instance configuration manager
+
+config/
+└── servicenow-instances.json      # Multi-instance configuration
+
+docs/
+├── FLOW_DESIGNER_MCP_FEASIBILITY.md  # Flow Designer feasibility analysis
+└── MCP_Tool_Limitations.md           # API limitation documentation
 ```
 
-**Key Design Principles:**
-- Single responsibility per file
-- Direct tool registration (no abstraction layers)
-- Simple error handling with try/catch
-- RESTful ServiceNow API calls only
+**Key Features:**
+- **Multi-Instance Routing:** Single server connects to multiple ServiceNow instances
+- **Dynamic Tool Generation:** Tools auto-generate from table metadata
+- **Metadata-Driven:** No hardcoded table definitions
+- **Instance Fallback:** Supports `.env` for single-instance backward compatibility
+- **Session Management:** Separate MCP sessions per client connection
+- **Error Handling:** Comprehensive error reporting with context
 
-## 🔄 Migration Success: Python → Node.js
+## Key Features & Improvements
 
-This intelligent Node.js implementation **exceeds** the Python version capabilities:
+### ✅ **Multi-Instance Support**
+- Connect to multiple ServiceNow instances simultaneously
+- Instance-specific tool routing with `instance` parameter
+- Centralized configuration in `config/servicenow-instances.json`
+- Fallback to `.env` for single-instance backward compatibility
 
-| **Metric** | **Python (Old)** | **Node.js v2.0 (New)** | **Improvement** |
-|------------|------------------|------------------------|-----------------|
-| **Total Tables** | 35 tables | **85+ tables** | **+143%** |
-| **Tool Count** | 66 consolidated + 482 individual | **200+ dynamic tools** | **Smart generation** |
-| **Code Complexity** | 36 files, 4-layer architecture | **Single config file** | **-90% complexity** |
-| **Setup Time** | Hours of manual config | **2-3 minutes automated** | **-95% setup time** |
-| **Instance Compatibility** | Fixed configuration | **Auto-adaptive** | **100% compatible** |
-| **Custom Table Support** | Manual coding required | **Zero-config discovery** | **∞ scalability** |
-| **Maintenance** | High - manual updates | **Self-maintaining** | **Hands-free** |
+### ✅ **Background Script Execution**
+- **Automated execution** via `sys_trigger` table (runs in ~1 second)
+- No manual copy-paste required for most scripts
+- Automatic trigger cleanup after execution
+- Fallback to fix script generation if execution fails
 
-### **🎯 Revolutionary Improvements**
+### ✅ **Advanced Update Set Management**
+- Set current update set programmatically
+- Move records between update sets (including from "Default")
+- Clone entire update sets with all records
+- Inspect update set contents and dependencies
 
-✅ **Intelligent Auto-Discovery** - Automatically finds and configures all ServiceNow tables
-✅ **Instance Adaptation** - Handles custom fields, modified schemas, different ServiceNow editions
-✅ **Zero-Code Scaling** - Add new tables by JSON config, no programming required
-✅ **Smart Recommendations** - AI-powered setup based on your ServiceNow configuration
-✅ **Metadata-Driven** - Tools generated from ServiceNow schema, always current
-✅ **Performance Optimized** - 3x faster than Python implementation
+### ✅ **Comprehensive Table Operations**
+- 480+ auto-generated tools across 160+ tables
+- Generic CRUD operations work on **any** ServiceNow table
+- Schema introspection with relationships and constraints
+- Batch create/update operations for efficiency
+
+### ✅ **Workflow & Flow Designer Support**
+- Create workflows with activities and transitions
+- Read Flow Designer flows (sys_hub_flow tables)
+- Create flow variables, stages, and components
+- See `docs/FLOW_DESIGNER_MCP_FEASIBILITY.md` for details
+
+## Known Limitations
+
+See `docs/MCP_Tool_Limitations.md` for comprehensive documentation. Key limitations:
+
+**Cannot Be Done via REST API:**
+- ❌ Flow Designer logic block creation (use UI or templates)
+- ❌ Flow compilation/validation (flows compile in UI)
+- ⚠️ UI Policy Actions linking (requires background script with setValue())
+
+**Workarounds Available:**
+- ✅ Background scripts execute automatically via `sys_trigger`
+- ✅ Update set operations fully automated
+- ✅ Generic table operations work on custom tables
+- ✅ Workflow creation fully supported
 
 ## Troubleshooting
 
-### Common Issues
+### Connection Issues
 
-**Connection Errors:**
 ```bash
-# Check ServiceNow connectivity
+# Test ServiceNow connectivity
 curl -u username:password https://your-instance.service-now.com/api/now/table/incident?sysparm_limit=1
+
+# Check server health
+curl http://localhost:3000/health
+
+# List configured instances
+curl http://localhost:3000/instances
 ```
 
-**Tool Not Found:**
-- Verify tool name spelling
-- Check MCP Inspector connection
-- Restart server after code changes
+### Configuration Issues
 
-**Authentication Failures:**
-- Verify credentials in `.env`
-- Check user permissions in ServiceNow
-- Test with different ServiceNow user
+**Multi-instance not working:**
+- Verify `config/servicenow-instances.json` exists and is valid JSON
+- Check that at least one instance has `"default": true`
+- Restart server after config changes
+
+**Tools not appearing:**
+- Verify MCP connection in Inspector
+- Check server logs for registration errors
+- Ensure ServiceNow credentials are correct
+
+**Authentication failures:**
+- Verify username/password in config file
+- Check ServiceNow user has required roles
+- Test credentials in browser first
 
 ### Debug Mode
 
-Enable debug logging:
 ```bash
+# Enable verbose logging
 DEBUG=true npm run dev
+
+# Check background script execution logs
+# ServiceNow: System Logs → System Log → All
+# Filter by source: "Script execution"
 ```
 
 ## Performance
 
-- **Cold start:** ~2 seconds
-- **Tool execution:** ~200-500ms average
-- **Memory usage:** ~50MB baseline
+- **Cold start:** ~1-2 seconds
+- **Tool execution:** ~200-500ms average (depends on ServiceNow instance)
+- **Memory usage:** ~50MB baseline per instance
 - **Concurrent sessions:** 100+ supported
-
-This implementation prioritizes simplicity and maintainability over feature completeness.
-
-## 📈 Architecture Comparison: Node.js vs Python
-
-### **Node.js v2.0 Implementation (Current)**
-- **Files:** 8 JavaScript files (~20,000 lines total)
-- **Tables:** 160+ ServiceNow tables (95 enhanced + 65 discovered)
-- **Tools:** 480+ auto-generated tools
-- **Architecture:** Single-layer dynamic metadata-driven
-- **Setup:** 2-3 minutes automated with `npm run setup:auto`
-- **Maintenance:** Self-maintaining via intelligent discovery
-
-### **Python Implementation (Previous)**
-- **Files:** 36 Python files (13 modules, 482+ functions)
-- **Tables:** 35 ServiceNow tables (static definitions)
-- **Tools:** 66 consolidated tools
-- **Architecture:** Complex 4-layer system
-- **Setup:** Hours of manual configuration
-- **Maintenance:** Manual updates required
-
-### **Efficiency Gains**
-- **🎯 78% Fewer Files:** 8 vs 36 files
-- **📈 350% More Tables:** 160 vs 35 tables
-- **🚀 95% Faster Setup:** 2-3 minutes vs hours
-- **⚡ Dynamic Generation:** Tools created from metadata vs static coding
-- **🔄 Self-Maintaining:** Auto-discovery vs manual updates
+- **Background scripts:** Execute in ~1 second via sys_trigger
