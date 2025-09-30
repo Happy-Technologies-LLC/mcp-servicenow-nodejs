@@ -241,15 +241,26 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 ```json
 {
   "mcpServers": {
-    "servicenow": {
+    "servicenow-nodejs": {
       "command": "node",
-      "args": ["/path/to/mcp-servicenow-nodejs/src/stdio-server.js"]
+      "args": ["/Users/YOUR_USERNAME/WebstormProjects/mcp-servicenow-nodejs/src/stdio-server.js"],
+      "cwd": "/Users/YOUR_USERNAME/WebstormProjects/mcp-servicenow-nodejs",
+      "env": {
+        "SERVICENOW_INSTANCE_URL": "https://your-instance.service-now.com",
+        "SERVICENOW_USERNAME": "your-username",
+        "SERVICENOW_PASSWORD": "your-password",
+        "SERVICENOW_AUTH_TYPE": "basic"
+      }
     }
   }
 }
 ```
 
-Then restart Claude Desktop to see ServiceNow tools appear.
+**Important:** Replace `YOUR_USERNAME` with your actual username and update credentials.
+
+Then restart Claude Desktop (⌘Q and reopen) to see ServiceNow tools appear.
+
+**Detailed setup guide:** `docs/CLAUDE_DESKTOP_SETUP.md`
 
 ## Architecture
 
