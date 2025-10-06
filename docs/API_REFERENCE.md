@@ -1,9 +1,10 @@
 # ServiceNow MCP Server - API Reference
 
-**Version:** 2.0
-**Last Updated:** 2025-09-30
+**Version:** 2.1
+**Last Updated:** 2025-10-06
+**Total Tools:** 44
 
-Complete reference for all MCP tools available in the ServiceNow server.
+Complete reference for all MCP tools and resources available in the ServiceNow server.
 
 ---
 
@@ -12,33 +13,55 @@ Complete reference for all MCP tools available in the ServiceNow server.
 1. [Tool Categories](#tool-categories)
 2. [Generic CRUD Operations](#generic-crud-operations)
 3. [Specialized Tools](#specialized-tools)
-4. [Update Set Management](#update-set-management)
-5. [Workflow Operations](#workflow-operations)
-6. [Schema & Discovery](#schema--discovery)
-7. [Batch Operations](#batch-operations)
-8. [Multi-Instance Support](#multi-instance-support)
+4. [Incident Management Convenience Tools](#incident-management-convenience-tools)
+5. [Change Request Convenience Tools](#change-request-convenience-tools)
+6. [Problem Management Convenience Tools](#problem-management-convenience-tools)
+7. [Update Set Management](#update-set-management)
+8. [Workflow Operations](#workflow-operations)
+9. [Schema & Discovery](#schema--discovery)
+10. [Batch Operations](#batch-operations)
+11. [MCP Resources](#mcp-resources)
+12. [Multi-Instance Support](#multi-instance-support)
 
 ---
 
 ## Tool Categories
 
-### 📊 **Generic CRUD Operations**
+### 📊 **Generic CRUD Operations** (6 tools)
 Work on **any** ServiceNow table (160+ supported)
 
-### 🎯 **Specialized Tools**
-Table-specific operations for core ITSM tables
+### 🎯 **Specialized Tools** (6 tools)
+Table-specific list operations for core ITSM tables
 
-### 🔄 **Update Set Management**
+### 🎫 **Incident Management Convenience Tools** (5 tools)
+User-friendly incident operations accepting incident numbers
+
+### 🔄 **Change Request Convenience Tools** (3 tools)
+User-friendly change request operations accepting change numbers
+
+### ⚠️ **Problem Management Convenience Tools** (2 tools)
+User-friendly problem operations accepting problem numbers
+
+### 📦 **Update Set Management** (6 tools)
 Advanced update set operations
 
-### 🌊 **Workflow Operations**
+### 🌊 **Workflow Operations** (4 tools)
 Create and manage workflows programmatically
 
-### 🔍 **Schema & Discovery**
+### 🔍 **Schema & Discovery** (4 tools)
 Table introspection and metadata
 
-### ⚡ **Batch Operations**
+### ⚡ **Batch Operations** (2 tools)
 Efficient multi-record operations
+
+### 🔌 **Instance Management** (2 tools)
+Multi-instance configuration and switching
+
+### 🛠️ **Script Execution** (2 tools)
+Automated and manual background script execution
+
+### 📊 **Advanced Validation** (2 tools)
+Configuration validation and field explanation
 
 ---
 
@@ -138,7 +161,7 @@ Update an existing record.
 Each major table has specialized tools:
 
 - **Incidents:** `SN-List-Incidents`, `SN-Create-Incident`, `SN-Get-Incident`
-- **Changes:** `SN-List-ChangeRequests`, `SN-Create-ChangeRequest`
+- **Changes:** `SN-List-ChangeRequests`
 - **Problems:** `SN-List-Problems`
 - **Users:** `SN-List-SysUsers`
 - **Groups:** `SN-List-SysUserGroups`
@@ -150,6 +173,269 @@ SN-List-Incidents({
   "query": "state=1^priority=1",
   "limit": 10,
   "instance": "prod"
+})
+```
+
+---
+
+## Incident Management Convenience Tools
+
+User-friendly tools that accept incident numbers instead of sys_ids.
+
+### SN-Add-Comment
+
+Add a comment to an incident using the incident number.
+
+**Parameters:**
+```javascript
+{
+  "incident_number": "INC0012345",  // Required
+  "comment": "Investigating the issue with the user",
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Add-Comment({
+  "incident_number": "INC0012345",
+  "comment": "User confirmed the issue started after last deployment"
+})
+```
+
+---
+
+### SN-Add-Work-Notes
+
+Add work notes to an incident (internal notes not visible to users).
+
+**Parameters:**
+```javascript
+{
+  "incident_number": "INC0012345",  // Required
+  "work_notes": "Checked logs, found database connection timeout",
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Add-Work-Notes({
+  "incident_number": "INC0012345",
+  "work_notes": "Applied hotfix to production server"
+})
+```
+
+---
+
+### SN-Assign-Incident
+
+Assign an incident to a user and/or group. Automatically resolves user names to sys_ids.
+
+**Parameters:**
+```javascript
+{
+  "incident_number": "INC0012345",  // Required
+  "assigned_to": "John Smith",  // User name or sys_id
+  "assignment_group": "Network Team",  // Optional: Group name or sys_id
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Assign-Incident({
+  "incident_number": "INC0012345",
+  "assigned_to": "John Smith",
+  "assignment_group": "IT Support"
+})
+```
+
+**Features:**
+- Accepts user name or sys_id for `assigned_to`
+- Accepts group name or sys_id for `assignment_group`
+- Automatically looks up sys_ids from names
+
+---
+
+### SN-Resolve-Incident
+
+Resolve an incident with resolution notes.
+
+**Parameters:**
+```javascript
+{
+  "incident_number": "INC0012345",  // Required
+  "resolution_notes": "Restarted service, issue resolved",
+  "resolution_code": "Solved (Permanently)",  // Optional
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Resolve-Incident({
+  "incident_number": "INC0012345",
+  "resolution_notes": "Database connection pool was exhausted. Increased pool size from 10 to 20.",
+  "resolution_code": "Solved (Permanently)"
+})
+```
+
+**Resolution Codes:**
+- "Solved (Permanently)"
+- "Solved (Work Around)"
+- "Not Solved (Not Reproducible)"
+- "Not Solved (Too Costly)"
+
+---
+
+### SN-Close-Incident
+
+Close an incident with close notes.
+
+**Parameters:**
+```javascript
+{
+  "incident_number": "INC0012345",  // Required
+  "close_notes": "Confirmed fix is working in production",
+  "close_code": "Solved (Permanently)",  // Optional
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Close-Incident({
+  "incident_number": "INC0012345",
+  "close_notes": "User confirmed issue is resolved. Monitoring for 24 hours showed no recurrence.",
+  "close_code": "Solved (Permanently)"
+})
+```
+
+---
+
+## Change Request Convenience Tools
+
+User-friendly tools for managing change requests.
+
+### SN-Add-Change-Comment
+
+Add a comment to a change request.
+
+**Parameters:**
+```javascript
+{
+  "change_number": "CHG0012345",  // Required
+  "comment": "Risk assessment completed",
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Add-Change-Comment({
+  "change_number": "CHG0012345",
+  "comment": "All CAB members have reviewed and approved the change plan"
+})
+```
+
+---
+
+### SN-Assign-Change
+
+Assign a change request to a user and/or group.
+
+**Parameters:**
+```javascript
+{
+  "change_number": "CHG0012345",  // Required
+  "assigned_to": "Jane Doe",  // User name or sys_id
+  "assignment_group": "Change Management",  // Optional
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Assign-Change({
+  "change_number": "CHG0012345",
+  "assigned_to": "Jane Doe",
+  "assignment_group": "Change Management"
+})
+```
+
+---
+
+### SN-Approve-Change
+
+Approve a change request.
+
+**Parameters:**
+```javascript
+{
+  "change_number": "CHG0012345",  // Required
+  "approval_comments": "Risk is acceptable, approved for production",  // Optional
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Approve-Change({
+  "change_number": "CHG0012345",
+  "approval_comments": "CAB approved. Proceed with scheduled maintenance window."
+})
+```
+
+---
+
+## Problem Management Convenience Tools
+
+User-friendly tools for managing problems.
+
+### SN-Add-Problem-Comment
+
+Add a comment to a problem record.
+
+**Parameters:**
+```javascript
+{
+  "problem_number": "PRB0012345",  // Required
+  "comment": "Root cause identified in database configuration",
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Add-Problem-Comment({
+  "problem_number": "PRB0012345",
+  "comment": "RCA complete. Issue caused by insufficient connection pool size during peak hours."
+})
+```
+
+---
+
+### SN-Close-Problem
+
+Close a problem with resolution information.
+
+**Parameters:**
+```javascript
+{
+  "problem_number": "PRB0012345",  // Required
+  "resolution_notes": "Database pool size increased, monitoring confirms fix",
+  "resolution_code": "Fix Applied",  // Optional
+  "instance": "prod"  // Optional
+}
+```
+
+**Example:**
+```javascript
+SN-Close-Problem({
+  "problem_number": "PRB0012345",
+  "resolution_notes": "Permanent fix deployed: increased connection pool from 10 to 50 connections. No incidents reported in 2 weeks.",
+  "resolution_code": "Fix Applied"
 })
 ```
 
@@ -510,6 +796,118 @@ Generate a script file for manual execution (fallback).
 
 ---
 
+## MCP Resources
+
+MCP Resources provide read-only access to ServiceNow metadata and configuration information. Unlike tools (which perform actions), resources return static or semi-static data that can be cached and referenced.
+
+### Understanding Resources vs Tools
+
+**Tools:**
+- Perform actions (create, update, delete)
+- Accept parameters and return results
+- Execute operations that modify state
+- Example: `SN-Create-Incident`, `SN-Update-Record`
+
+**Resources:**
+- Provide read-only data access
+- Can be cached by the MCP client
+- Return metadata and configuration
+- Example: Instance info, table schemas
+
+### Available Resources
+
+#### servicenow://instance
+
+Returns information about the currently connected ServiceNow instance.
+
+**URI:** `servicenow://instance`
+
+**Returns:**
+```json
+{
+  "server_info": {
+    "name": "ServiceNow MCP Server (Consolidated)",
+    "version": "2.0.0",
+    "description": "Consolidated ServiceNow integration with metadata-driven schema lookups"
+  },
+  "instance_info": {
+    "url": "https://dev123.service-now.com",
+    "username": "admin"
+  },
+  "capabilities": {
+    "total_tables": 160,
+    "operations": ["create", "read", "update", "query", "schema_lookup"],
+    "tools": 44
+  }
+}
+```
+
+**Usage:**
+- Check current connection status
+- Verify instance configuration
+- View available capabilities
+
+---
+
+#### servicenow://tables/all
+
+Returns complete metadata for all available ServiceNow tables.
+
+**URI:** `servicenow://tables/all`
+
+**Returns:**
+```json
+{
+  "incident": {
+    "name": "incident",
+    "label": "Incident",
+    "key_field": "number",
+    "required_fields": ["short_description"],
+    "common_fields": ["number", "short_description", "description", "priority", "state"],
+    "description": "ITSM incident management table"
+  },
+  "change_request": {
+    "name": "change_request",
+    "label": "Change Request",
+    "key_field": "number",
+    "required_fields": ["short_description"],
+    "common_fields": ["number", "short_description", "risk", "impact"],
+    "description": "Change management requests"
+  }
+  // ... 160+ more tables
+}
+```
+
+**Usage:**
+- Discover available tables
+- View required and common fields
+- Find key fields for each table
+- Build dynamic queries and forms
+
+---
+
+### Reading Resources
+
+**Via MCP SDK:**
+```javascript
+// Read instance information
+const instance = await client.readResource('servicenow://instance');
+
+// Read all table metadata
+const tables = await client.readResource('servicenow://tables/all');
+```
+
+**Via HTTP (when using HTTP transport):**
+```bash
+# List available resources
+curl http://localhost:3000/mcp/resources
+
+# Read specific resource
+curl http://localhost:3000/mcp/resources/servicenow://instance
+```
+
+---
+
 ## Multi-Instance Support
 
 All tools support the `instance` parameter to route requests to specific ServiceNow instances.
@@ -591,13 +989,129 @@ ServiceNow enforces rate limits on API calls:
 
 ## Best Practices
 
-1. **Use Generic Tools** (`SN-Query-Table`) for flexibility
-2. **Batch Operations** for multiple record operations
-3. **Field Selection** to reduce payload size (`fields` parameter)
-4. **Pagination** for large result sets (`limit`, `offset`)
-5. **Update Sets** to track configuration changes
-6. **Instance Parameter** to target correct environment
-7. **Background Scripts** for complex operations requiring server-side logic
+1. **Use Convenience Tools** for common ITSM operations (SN-Add-Comment, SN-Assign-Incident, etc.)
+   - Accept human-readable identifiers (incident numbers, user names)
+   - Automatically resolve sys_ids
+   - Provide better error messages
+
+2. **Use Generic Tools** (`SN-Query-Table`) for flexibility and custom tables
+   - Works on any ServiceNow table
+   - Required for tables without specialized tools
+
+3. **Batch Operations** for multiple record operations
+   - Up to 50+ operations in a single call
+   - Transactional support for data integrity
+   - Progress notifications for long-running operations
+
+4. **Field Selection** to reduce payload size
+   - Use `fields` parameter to specify only needed fields
+   - Reduces network transfer and improves performance
+   - Example: `fields: "number,short_description,state"`
+
+5. **Pagination** for large result sets
+   - Use `limit` and `offset` for controlled data retrieval
+   - Default limit is 25, maximum is typically 1000
+   - Implement pagination for tables with many records
+
+6. **Update Sets** to track configuration changes
+   - Always set update set BEFORE making config changes
+   - Use `SN-Set-Update-Set` for automated setup
+   - Verify with `SN-Get-Current-Update-Set`
+
+7. **Instance Parameter** to target correct environment
+   - Specify `instance` parameter for multi-instance setups
+   - Default instance used if not specified
+   - Use `SN-Set-Instance` or `SN-Get-Current-Instance` for management
+
+8. **Background Scripts** for complex operations
+   - Use `SN-Execute-Background-Script` with trigger method
+   - Executes in ~1 second, fully automated
+   - Fallback to fix script if needed
+
+9. **MCP Resources** for metadata discovery
+   - Cache resource data to avoid repeated queries
+   - Use `servicenow://tables/all` for table discovery
+   - Check `servicenow://instance` for connection verification
+
+---
+
+## Quick Reference - All Tools
+
+### Generic CRUD (6 tools)
+- `SN-Query-Table` - Query any table with filters
+- `SN-Create-Record` - Create record in any table
+- `SN-Get-Record` - Get single record by sys_id
+- `SN-Update-Record` - Update existing record
+- `SN-Get-Table-Schema` - Get basic table schema
+- `SN-List-Available-Tables` - List all available tables
+
+### Specialized List Tools (6 tools)
+- `SN-List-Incidents` - List incidents with filters
+- `SN-Create-Incident` - Create new incident
+- `SN-Get-Incident` - Get incident by sys_id
+- `SN-List-ChangeRequests` - List change requests
+- `SN-List-Problems` - List problems
+- `SN-List-SysUsers` - List users
+- `SN-List-SysUserGroups` - List user groups
+- `SN-List-CmdbCis` - List configuration items
+
+### Incident Convenience (5 tools)
+- `SN-Add-Comment` - Add comment by incident number
+- `SN-Add-Work-Notes` - Add work notes by incident number
+- `SN-Assign-Incident` - Assign incident (resolves user names)
+- `SN-Resolve-Incident` - Resolve incident with notes
+- `SN-Close-Incident` - Close incident with notes
+
+### Change Request Convenience (3 tools)
+- `SN-Add-Change-Comment` - Add comment by change number
+- `SN-Assign-Change` - Assign change request
+- `SN-Approve-Change` - Approve change request
+
+### Problem Convenience (2 tools)
+- `SN-Add-Problem-Comment` - Add comment by problem number
+- `SN-Close-Problem` - Close problem with resolution
+
+### Update Set Management (6 tools)
+- `SN-Get-Current-Update-Set` - Get active update set
+- `SN-Set-Update-Set` - Set current update set (automated)
+- `SN-List-Update-Sets` - List all update sets
+- `SN-Move-Records-To-Update-Set` - Move records between sets
+- `SN-Clone-Update-Set` - Clone entire update set
+- `SN-Inspect-Update-Set` - Inspect update set contents
+
+### Workflow Operations (4 tools)
+- `SN-Create-Workflow` - Create complete workflow
+- `SN-Create-Activity` - Add workflow activity
+- `SN-Create-Transition` - Link workflow activities
+- `SN-Publish-Workflow` - Publish workflow version
+
+### Schema & Discovery (4 tools)
+- `SN-Discover-Table-Schema` - Deep schema with relationships
+- `SN-Explain-Field` - Detailed field documentation
+- `SN-Validate-Configuration` - Validate catalog config
+- `SN-Inspect-Update-Set` - Inspect update set (also in Update Set)
+
+### Batch Operations (2 tools)
+- `SN-Batch-Create` - Create multiple records with references
+- `SN-Batch-Update` - Update multiple records efficiently
+
+### Instance Management (2 tools)
+- `SN-Set-Instance` - Switch to different instance
+- `SN-Get-Current-Instance` - Get current instance info
+
+### Script Execution (2 tools)
+- `SN-Execute-Background-Script` - Automated script execution
+- `SN-Create-Fix-Script` - Generate script for manual execution
+
+### Application Scope (1 tool)
+- `SN-Set-Current-Application` - Set current application scope
+
+---
+
+## MCP Resources (2 resources)
+
+- `servicenow://instance` - Instance info and capabilities
+- `servicenow://tables/all` - Complete table metadata
 
 ---
 
@@ -608,3 +1122,21 @@ ServiceNow enforces rate limits on API calls:
 - **Instance Switching:** `docs/INSTANCE_SWITCHING_GUIDE.md`
 - **Troubleshooting:** `docs/403_TROUBLESHOOTING.md`
 - **Research & Breakthroughs:** `docs/research/`
+
+---
+
+## Summary
+
+**Total Tools:** 44
+**Total Resources:** 2
+**Supported Tables:** 160+
+**Instance Support:** Unlimited (via config)
+
+**Key Features:**
+- Generic tools work on any ServiceNow table
+- Convenience tools for better UX (accept numbers/names instead of sys_ids)
+- Automated background script execution via sys_trigger
+- Multi-instance support with easy switching
+- Batch operations with progress notifications
+- MCP resources for metadata discovery
+- Comprehensive schema introspection

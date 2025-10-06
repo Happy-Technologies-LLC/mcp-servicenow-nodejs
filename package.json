@@ -10,16 +10,22 @@
     "stdio": "node src/stdio-server.js",
     "inspector": "npx @modelcontextprotocol/inspector",
     "extract-metadata": "node scripts/extract-table-metadata.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+    "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "@modelcontextprotocol/sdk": "^0.5.0",
     "axios": "^1.6.0",
+    "chokidar": "^4.0.3",
     "dotenv": "^16.3.1",
+    "express": "^4.18.2",
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.2.0",
     "nodemon": "^3.0.2"
   },
   "author": "Your Name",

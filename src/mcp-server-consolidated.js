@@ -3,6 +3,8 @@ import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSche
 import fs from 'fs/promises';
 import path from 'path';
 import { configManager } from './config-manager.js';
+import { syncScript, syncAllScripts, SCRIPT_TYPES } from './script-sync.js';
+import { parseNaturalLanguage, getSupportedPatterns } from './natural-language.js';
 
 export async function createMcpServer(serviceNowClient) {
   const server = new Server(
@@ -18,6 +20,20 @@ export async function createMcpServer(serviceNowClient) {
       }
     }
   );
+
+  // Set up progress callback for ServiceNow client
+  serviceNowClient.setProgressCallback((message) => {
+    try {
+      server.notification({
+        method: 'notifications/progress',
+        params: {
+          progress: message
+        }
+      });
+    } catch (error) {
+      console.error('Failed to send progress notification:', error.message);
+    }
+  });
 
   // Load table metadata
   let tableMetadata = {};
@@ -498,6 +514,43 @@ export async function createMcpServer(serviceNowClient) {
         }
       },
       {
+        name: 'SN-Natural-Language-Search',
+        description: 'Search ServiceNow records using natural language queries. Converts human-readable queries into ServiceNow encoded queries and executes them. Supports: Priority (P1-P5, high/low), Assignment (assigned to me, unassigned, assigned to <name>), Dates (created today, last 7 days, recent), States (new/open/closed/in progress), Content (about SAP, containing error), Impact/Urgency (high/medium/low), Numbers (number is INC0012345). Examples: "find all P1 incidents", "show recent problems assigned to me", "high priority changes created last week", "open incidents about SAP", "unassigned P2 incidents created today". Returns both the parsed encoded query and matching records with pattern analysis.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Natural language query (e.g., "high priority incidents assigned to me", "recent problems about database") (required)'
+            },
+            table: {
+              type: 'string',
+              description: 'Target ServiceNow table name (default: "incident"). Common tables: incident, problem, change_request, sys_user, cmdb_ci',
+              default: 'incident'
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of records to return (default: 25)',
+              default: 25
+            },
+            fields: {
+              type: 'string',
+              description: 'Comma-separated list of fields to return (optional)'
+            },
+            order_by: {
+              type: 'string',
+              description: 'Field to sort by (e.g., "sys_created_on" or "-priority" for descending) (optional)'
+            },
+            show_patterns: {
+              type: 'boolean',
+              description: 'Include pattern matching details in response (default: true)',
+              default: true
+            }
+          },
+          required: ['query']
+        }
+      },
+      {
         name: 'SN-Execute-Background-Script',
         description: '🚀 EXECUTES background scripts with THREE methods: (1) sys_trigger [DEFAULT & MOST RELIABLE] - Creates scheduled job that runs in 1 second and auto-deletes, (2) UI endpoint (sys.scripts.do) - Attempts direct execution via UI, (3) Fix script - Manual fallback. Use for: setting update sets, complex GlideRecord operations, GlideUpdateSet API calls, etc. The sys_trigger method is most reliable and works consistently!',
         inputSchema: {
@@ -594,7 +647,7 @@ export async function createMcpServer(serviceNowClient) {
       },
       {
         name: 'SN-Batch-Create',
-        description: 'Create multiple related records in one operation with variable references and transactional support',
+        description: 'Create multiple related records in one operation with variable references and transactional support. Reports progress during execution.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -614,6 +667,11 @@ export async function createMcpServer(serviceNowClient) {
               type: 'boolean',
               description: 'All-or-nothing transaction (default: true)',
               default: true
+            },
+            progress: {
+              type: 'boolean',
+              description: 'Report progress notifications (default: true)',
+              default: true
             }
           },
           required: ['operations']
@@ -621,7 +679,7 @@ export async function createMcpServer(serviceNowClient) {
       },
       {
         name: 'SN-Batch-Update',
-        description: 'Update multiple records efficiently in a single operation',
+        description: 'Update multiple records efficiently in a single operation. Reports progress during execution.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -641,6 +699,11 @@ export async function createMcpServer(serviceNowClient) {
               type: 'boolean',
               description: 'Stop processing on first error (default: false)',
               default: false
+            },
+            progress: {
+              type: 'boolean',
+              description: 'Report progress notifications (default: true)',
+              default: true
             }
           },
           required: ['updates']
@@ -732,7 +795,7 @@ export async function createMcpServer(serviceNowClient) {
       },
       {
         name: 'SN-Create-Workflow',
-        description: 'Create a complete ServiceNow workflow with activities, transitions, and conditions. This tool orchestrates the entire workflow creation process: base workflow → version → activities → transitions → publish.',
+        description: 'Create a complete ServiceNow workflow with activities, transitions, and conditions. This tool orchestrates the entire workflow creation process: base workflow → version → activities → transitions → publish. Reports progress during creation.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -782,6 +845,11 @@ export async function createMcpServer(serviceNowClient) {
               type: 'boolean',
               description: 'Publish workflow after creation (default: false)',
               default: false
+            },
+            progress: {
+              type: 'boolean',
+              description: 'Report progress notifications (default: true)',
+              default: true
             }
           },
           required: ['name', 'table', 'activities']
@@ -867,7 +935,7 @@ export async function createMcpServer(serviceNowClient) {
       },
       {
         name: 'SN-Move-Records-To-Update-Set',
-        description: 'Move sys_update_xml records to a different update set. Supports filtering by sys_ids, time range, or source update set. Extremely useful when records end up in wrong update set (e.g., "Default" instead of custom set).',
+        description: 'Move sys_update_xml records to a different update set. Supports filtering by sys_ids, time range, or source update set. Extremely useful when records end up in wrong update set (e.g., "Default" instead of custom set). Reports progress during move operation.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -896,6 +964,11 @@ export async function createMcpServer(serviceNowClient) {
               type: 'string',
               description: 'Table name (default: sys_update_xml)',
               default: 'sys_update_xml'
+            },
+            progress: {
+              type: 'boolean',
+              description: 'Report progress notifications (default: true)',
+              default: true
             }
           },
           required: ['update_set_id']
@@ -903,7 +976,7 @@ export async function createMcpServer(serviceNowClient) {
       },
       {
         name: 'SN-Clone-Update-Set',
-        description: 'Clone an entire update set with all its sys_update_xml records. Creates a complete copy for backup, testing, or branching development work.',
+        description: 'Clone an entire update set with all its sys_update_xml records. Creates a complete copy for backup, testing, or branching development work. Reports progress during cloning operation.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -914,9 +987,257 @@ export async function createMcpServer(serviceNowClient) {
             new_name: {
               type: 'string',
               description: 'Name for the new cloned update set (required)'
+            },
+            progress: {
+              type: 'boolean',
+              description: 'Report progress notifications (default: true)',
+              default: true
             }
           },
           required: ['source_update_set_id', 'new_name']
+        }
+      },
+      // Incident convenience tools
+      {
+        name: 'SN-Add-Comment',
+        description: 'Add a comment to an incident. Accepts incident number for better UX.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            incident_number: {
+              type: 'string',
+              description: 'Incident number (e.g., "INC0012345") (required)'
+            },
+            comment: {
+              type: 'string',
+              description: 'Comment text to add (required)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['incident_number', 'comment']
+        }
+      },
+      {
+        name: 'SN-Add-Work-Notes',
+        description: 'Add work notes to an incident. Accepts incident number for better UX.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            incident_number: {
+              type: 'string',
+              description: 'Incident number (e.g., "INC0012345") (required)'
+            },
+            work_notes: {
+              type: 'string',
+              description: 'Work notes text to add (required)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['incident_number', 'work_notes']
+        }
+      },
+      {
+        name: 'SN-Assign-Incident',
+        description: 'Assign an incident to a user and/or group. Resolves user names automatically.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            incident_number: {
+              type: 'string',
+              description: 'Incident number (e.g., "INC0012345") (required)'
+            },
+            assigned_to: {
+              type: 'string',
+              description: 'User name or sys_id to assign to (required)'
+            },
+            assignment_group: {
+              type: 'string',
+              description: 'Assignment group name or sys_id (optional)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['incident_number', 'assigned_to']
+        }
+      },
+      {
+        name: 'SN-Resolve-Incident',
+        description: 'Resolve an incident with resolution notes and code.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            incident_number: {
+              type: 'string',
+              description: 'Incident number (e.g., "INC0012345") (required)'
+            },
+            resolution_notes: {
+              type: 'string',
+              description: 'Resolution notes describing the fix (required)'
+            },
+            resolution_code: {
+              type: 'string',
+              description: 'Resolution code (e.g., "Solved (Permanently)", "Solved (Work Around)") (optional)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['incident_number', 'resolution_notes']
+        }
+      },
+      {
+        name: 'SN-Close-Incident',
+        description: 'Close an incident with close notes and code.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            incident_number: {
+              type: 'string',
+              description: 'Incident number (e.g., "INC0012345") (required)'
+            },
+            close_notes: {
+              type: 'string',
+              description: 'Close notes (required)'
+            },
+            close_code: {
+              type: 'string',
+              description: 'Close code (e.g., "Solved (Permanently)", "Solved (Work Around)") (optional)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['incident_number', 'close_notes']
+        }
+      },
+      // Change Request convenience tools
+      {
+        name: 'SN-Add-Change-Comment',
+        description: 'Add a comment to a change request. Accepts change number for better UX.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            change_number: {
+              type: 'string',
+              description: 'Change request number (e.g., "CHG0012345") (required)'
+            },
+            comment: {
+              type: 'string',
+              description: 'Comment text to add (required)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['change_number', 'comment']
+        }
+      },
+      {
+        name: 'SN-Assign-Change',
+        description: 'Assign a change request to a user and/or group.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            change_number: {
+              type: 'string',
+              description: 'Change request number (e.g., "CHG0012345") (required)'
+            },
+            assigned_to: {
+              type: 'string',
+              description: 'User name or sys_id to assign to (required)'
+            },
+            assignment_group: {
+              type: 'string',
+              description: 'Assignment group name or sys_id (optional)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['change_number', 'assigned_to']
+        }
+      },
+      {
+        name: 'SN-Approve-Change',
+        description: 'Approve a change request.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            change_number: {
+              type: 'string',
+              description: 'Change request number (e.g., "CHG0012345") (required)'
+            },
+            approval_comments: {
+              type: 'string',
+              description: 'Comments for the approval (optional)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['change_number']
+        }
+      },
+      // Problem convenience tools
+      {
+        name: 'SN-Add-Problem-Comment',
+        description: 'Add a comment to a problem. Accepts problem number for better UX.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            problem_number: {
+              type: 'string',
+              description: 'Problem number (e.g., "PRB0012345") (required)'
+            },
+            comment: {
+              type: 'string',
+              description: 'Comment text to add (required)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['problem_number', 'comment']
+        }
+      },
+      {
+        name: 'SN-Close-Problem',
+        description: 'Close a problem with resolution information.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            problem_number: {
+              type: 'string',
+              description: 'Problem number (e.g., "PRB0012345") (required)'
+            },
+            resolution_notes: {
+              type: 'string',
+              description: 'Resolution notes (required)'
+            },
+            resolution_code: {
+              type: 'string',
+              description: 'Resolution code (optional)'
+            },
+            instance: {
+              type: 'string',
+              description: 'Instance name (optional, uses default if not specified)'
+            }
+          },
+          required: ['problem_number', 'resolution_notes']
         }
       }
     ];
@@ -1330,6 +1651,83 @@ export async function createMcpServer(serviceNowClient) {
           };
         }
 
+        case 'SN-Natural-Language-Search': {
+          const { query, table = 'incident', limit = 25, fields, order_by, show_patterns = true } = args;
+
+          console.error(`🔍 Natural language search: "${query}" on ${table}`);
+
+          // Parse natural language query
+          const parseResult = parseNaturalLanguage(query, table);
+
+          // Check if parsing succeeded
+          if (!parseResult.encodedQuery) {
+            return {
+              content: [{
+                type: 'text',
+                text: `❌ Unable to parse query: "${query}"
+
+${parseResult.suggestions.join('\n')}
+
+Unmatched text: "${parseResult.unmatchedText}"
+
+${show_patterns ? `\n## Supported Patterns:\n${JSON.stringify(getSupportedPatterns(), null, 2)}` : ''}`
+              }]
+            };
+          }
+
+          // Execute the encoded query
+          const queryParams = {
+            sysparm_limit: limit,
+            sysparm_query: parseResult.encodedQuery,
+            sysparm_fields: fields,
+            sysparm_offset: 0
+          };
+
+          if (order_by) {
+            queryParams.sysparm_order_by = order_by;
+          }
+
+          const results = await serviceNowClient.getRecords(table, queryParams);
+
+          // Build response
+          let responseText = `✅ Natural Language Search Results
+
+**Original Query:** "${query}"
+**Target Table:** ${table}
+**Parsed Encoded Query:** \`${parseResult.encodedQuery}\`
+**Records Found:** ${results.length}/${limit}
+
+`;
+
+          // Add pattern matching details if requested
+          if (show_patterns && parseResult.matchedPatterns.length > 0) {
+            responseText += `## Matched Patterns:\n`;
+            parseResult.matchedPatterns.forEach((p, idx) => {
+              responseText += `${idx + 1}. **"${p.matched}"** → \`${p.condition}\`\n`;
+            });
+            responseText += `\n`;
+          }
+
+          // Add warnings for unmatched text
+          if (parseResult.unmatchedText && parseResult.unmatchedText.length > 3) {
+            responseText += `⚠️ **Unrecognized:** "${parseResult.unmatchedText}"\n\n`;
+          }
+
+          // Add results
+          if (results.length > 0) {
+            responseText += `## Results:\n\`\`\`json\n${JSON.stringify(results, null, 2)}\n\`\`\``;
+          } else {
+            responseText += `## No records found matching the query.\n\nTry adjusting your search criteria or use SN-Query-Table for more control.`;
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: responseText
+            }]
+          };
+        }
+
         case 'SN-Set-Update-Set': {
           const { update_set_sys_id } = args;
 
@@ -1685,10 +2083,10 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
         }
 
         case 'SN-Batch-Create': {
-          const { operations, transaction = true } = args;
+          const { operations, transaction = true, progress = true } = args;
 
-          console.error(`📦 Batch creating ${operations.length} records (transaction: ${transaction})`);
-          const result = await serviceNowClient.batchCreate(operations, transaction);
+          console.error(`📦 Batch creating ${operations.length} records (transaction: ${transaction}, progress: ${progress})`);
+          const result = await serviceNowClient.batchCreate(operations, transaction, progress);
 
           return {
             content: [{
@@ -1699,10 +2097,10 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
         }
 
         case 'SN-Batch-Update': {
-          const { updates, stop_on_error = false } = args;
+          const { updates, stop_on_error = false, progress = true } = args;
 
-          console.error(`📦 Batch updating ${updates.length} records`);
-          const result = await serviceNowClient.batchUpdate(updates, stop_on_error);
+          console.error(`📦 Batch updating ${updates.length} records (progress: ${progress})`);
+          const result = await serviceNowClient.batchUpdate(updates, stop_on_error, progress);
 
           return {
             content: [{
@@ -1758,9 +2156,9 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
         }
 
         case 'SN-Create-Workflow': {
-          const { name, description, table, condition, activities, transitions, publish = false } = args;
+          const { name, description, table, condition, activities, transitions, publish = false, progress = true } = args;
 
-          console.error(`🔄 Creating workflow: ${name}`);
+          console.error(`🔄 Creating workflow: ${name} (progress: ${progress})`);
 
           // Build workflow specification
           const workflowSpec = {
@@ -1773,7 +2171,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
             publish
           };
 
-          const result = await serviceNowClient.createCompleteWorkflow(workflowSpec);
+          const result = await serviceNowClient.createCompleteWorkflow(workflowSpec, progress);
 
           return {
             content: [{
@@ -1892,15 +2290,16 @@ The workflow is now active and will trigger based on its configured conditions.`
         }
 
         case 'SN-Move-Records-To-Update-Set': {
-          const { update_set_id, record_sys_ids, time_range, source_update_set, table } = args;
+          const { update_set_id, record_sys_ids, time_range, source_update_set, table, progress = true } = args;
 
-          console.error(`📦 Moving records to update set ${update_set_id}`);
+          console.error(`📦 Moving records to update set ${update_set_id} (progress: ${progress})`);
 
           const result = await serviceNowClient.moveRecordsToUpdateSet(update_set_id, {
             record_sys_ids,
             time_range,
             source_update_set,
-            table
+            table,
+            reportProgress: progress
           });
 
           return {
@@ -1922,11 +2321,11 @@ ${JSON.stringify(result, null, 2)}`
         }
 
         case 'SN-Clone-Update-Set': {
-          const { source_update_set_id, new_name } = args;
+          const { source_update_set_id, new_name, progress = true } = args;
 
-          console.error(`🔄 Cloning update set ${source_update_set_id}`);
+          console.error(`🔄 Cloning update set ${source_update_set_id} (progress: ${progress})`);
 
-          const result = await serviceNowClient.cloneUpdateSet(source_update_set_id, new_name);
+          const result = await serviceNowClient.cloneUpdateSet(source_update_set_id, new_name, progress);
 
           return {
             content: [{
@@ -1942,6 +2341,467 @@ New sys_id: ${result.new_update_set_id}
 Records cloned: ${result.records_cloned} / ${result.total_source_records}
 
 The cloned update set is now in "In Progress" state and ready for use.`
+            }]
+          };
+        }
+
+        // Incident convenience tool handlers
+        case 'SN-Add-Comment': {
+          const { incident_number, comment } = args;
+
+          // Look up incident by number
+          const incidents = await serviceNowClient.getRecords('incident', {
+            sysparm_query: `number=${incident_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!incidents || incidents.length === 0) {
+            throw new Error(`Incident ${incident_number} not found`);
+          }
+
+          const incident = incidents[0];
+
+          // Update comments field
+          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, {
+            comments: comment
+          });
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ Comment added to ${incident_number}
+
+Incident: ${incident_number}
+sys_id: ${incident.sys_id}
+Comment: ${comment}
+Updated: ${new Date().toISOString()}
+
+The comment has been successfully added to the incident.`
+            }]
+          };
+        }
+
+        case 'SN-Add-Work-Notes': {
+          const { incident_number, work_notes } = args;
+
+          // Look up incident by number
+          const incidents = await serviceNowClient.getRecords('incident', {
+            sysparm_query: `number=${incident_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!incidents || incidents.length === 0) {
+            throw new Error(`Incident ${incident_number} not found`);
+          }
+
+          const incident = incidents[0];
+
+          // Update work_notes field
+          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, {
+            work_notes: work_notes
+          });
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ Work notes added to ${incident_number}
+
+Incident: ${incident_number}
+sys_id: ${incident.sys_id}
+Work Notes: ${work_notes}
+Updated: ${new Date().toISOString()}
+
+The work notes have been successfully added to the incident.`
+            }]
+          };
+        }
+
+        case 'SN-Assign-Incident': {
+          const { incident_number, assigned_to, assignment_group } = args;
+
+          // Look up incident by number
+          const incidents = await serviceNowClient.getRecords('incident', {
+            sysparm_query: `number=${incident_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!incidents || incidents.length === 0) {
+            throw new Error(`Incident ${incident_number} not found`);
+          }
+
+          const incident = incidents[0];
+
+          // Resolve user if not a sys_id (32 character hex string)
+          let assignedToId = assigned_to;
+          if (!/^[0-9a-f]{32}$/i.test(assigned_to)) {
+            const users = await serviceNowClient.getRecords('sys_user', {
+              sysparm_query: `name=${assigned_to}^ORuser_name=${assigned_to}`,
+              sysparm_limit: 1
+            });
+
+            if (!users || users.length === 0) {
+              throw new Error(`User "${assigned_to}" not found`);
+            }
+
+            assignedToId = users[0].sys_id;
+          }
+
+          // Resolve group if provided and not a sys_id
+          let assignmentGroupId = assignment_group;
+          if (assignment_group && !/^[0-9a-f]{32}$/i.test(assignment_group)) {
+            const groups = await serviceNowClient.getRecords('sys_user_group', {
+              sysparm_query: `name=${assignment_group}`,
+              sysparm_limit: 1
+            });
+
+            if (!groups || groups.length === 0) {
+              throw new Error(`Group "${assignment_group}" not found`);
+            }
+
+            assignmentGroupId = groups[0].sys_id;
+          }
+
+          // Update assignment fields
+          const updateData = {
+            assigned_to: assignedToId
+          };
+
+          if (assignmentGroupId) {
+            updateData.assignment_group = assignmentGroupId;
+          }
+
+          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, updateData);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ ${incident_number} assigned successfully
+
+Incident: ${incident_number}
+sys_id: ${incident.sys_id}
+Assigned To: ${result.assigned_to?.display_value || assignedToId}
+${assignmentGroupId ? `Assignment Group: ${result.assignment_group?.display_value || assignmentGroupId}` : ''}
+Updated: ${new Date().toISOString()}
+
+The incident has been assigned successfully.`
+            }]
+          };
+        }
+
+        case 'SN-Resolve-Incident': {
+          const { incident_number, resolution_notes, resolution_code } = args;
+
+          // Look up incident by number
+          const incidents = await serviceNowClient.getRecords('incident', {
+            sysparm_query: `number=${incident_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!incidents || incidents.length === 0) {
+            throw new Error(`Incident ${incident_number} not found`);
+          }
+
+          const incident = incidents[0];
+
+          // Update to resolved state (6)
+          const updateData = {
+            state: 6,
+            close_notes: resolution_notes
+          };
+
+          if (resolution_code) {
+            updateData.close_code = resolution_code;
+          }
+
+          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, updateData);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ ${incident_number} resolved successfully
+
+Incident: ${incident_number}
+sys_id: ${incident.sys_id}
+State: Resolved (6)
+Resolution Notes: ${resolution_notes}
+${resolution_code ? `Resolution Code: ${resolution_code}` : ''}
+Updated: ${new Date().toISOString()}
+
+The incident has been resolved successfully.`
+            }]
+          };
+        }
+
+        case 'SN-Close-Incident': {
+          const { incident_number, close_notes, close_code } = args;
+
+          // Look up incident by number
+          const incidents = await serviceNowClient.getRecords('incident', {
+            sysparm_query: `number=${incident_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!incidents || incidents.length === 0) {
+            throw new Error(`Incident ${incident_number} not found`);
+          }
+
+          const incident = incidents[0];
+
+          // Update to closed state (7)
+          const updateData = {
+            state: 7,
+            close_notes: close_notes
+          };
+
+          if (close_code) {
+            updateData.close_code = close_code;
+          }
+
+          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, updateData);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ ${incident_number} closed successfully
+
+Incident: ${incident_number}
+sys_id: ${incident.sys_id}
+State: Closed (7)
+Close Notes: ${close_notes}
+${close_code ? `Close Code: ${close_code}` : ''}
+Updated: ${new Date().toISOString()}
+
+The incident has been closed successfully.`
+            }]
+          };
+        }
+
+        // Change Request convenience tool handlers
+        case 'SN-Add-Change-Comment': {
+          const { change_number, comment } = args;
+
+          // Look up change by number
+          const changes = await serviceNowClient.getRecords('change_request', {
+            sysparm_query: `number=${change_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!changes || changes.length === 0) {
+            throw new Error(`Change request ${change_number} not found`);
+          }
+
+          const change = changes[0];
+
+          // Update comments field
+          const result = await serviceNowClient.updateRecord('change_request', change.sys_id, {
+            comments: comment
+          });
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ Comment added to ${change_number}
+
+Change Request: ${change_number}
+sys_id: ${change.sys_id}
+Comment: ${comment}
+Updated: ${new Date().toISOString()}
+
+The comment has been successfully added to the change request.`
+            }]
+          };
+        }
+
+        case 'SN-Assign-Change': {
+          const { change_number, assigned_to, assignment_group } = args;
+
+          // Look up change by number
+          const changes = await serviceNowClient.getRecords('change_request', {
+            sysparm_query: `number=${change_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!changes || changes.length === 0) {
+            throw new Error(`Change request ${change_number} not found`);
+          }
+
+          const change = changes[0];
+
+          // Resolve user if not a sys_id
+          let assignedToId = assigned_to;
+          if (!/^[0-9a-f]{32}$/i.test(assigned_to)) {
+            const users = await serviceNowClient.getRecords('sys_user', {
+              sysparm_query: `name=${assigned_to}^ORuser_name=${assigned_to}`,
+              sysparm_limit: 1
+            });
+
+            if (!users || users.length === 0) {
+              throw new Error(`User "${assigned_to}" not found`);
+            }
+
+            assignedToId = users[0].sys_id;
+          }
+
+          // Resolve group if provided and not a sys_id
+          let assignmentGroupId = assignment_group;
+          if (assignment_group && !/^[0-9a-f]{32}$/i.test(assignment_group)) {
+            const groups = await serviceNowClient.getRecords('sys_user_group', {
+              sysparm_query: `name=${assignment_group}`,
+              sysparm_limit: 1
+            });
+
+            if (!groups || groups.length === 0) {
+              throw new Error(`Group "${assignment_group}" not found`);
+            }
+
+            assignmentGroupId = groups[0].sys_id;
+          }
+
+          // Update assignment fields
+          const updateData = {
+            assigned_to: assignedToId
+          };
+
+          if (assignmentGroupId) {
+            updateData.assignment_group = assignmentGroupId;
+          }
+
+          const result = await serviceNowClient.updateRecord('change_request', change.sys_id, updateData);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ ${change_number} assigned successfully
+
+Change Request: ${change_number}
+sys_id: ${change.sys_id}
+Assigned To: ${result.assigned_to?.display_value || assignedToId}
+${assignmentGroupId ? `Assignment Group: ${result.assignment_group?.display_value || assignmentGroupId}` : ''}
+Updated: ${new Date().toISOString()}
+
+The change request has been assigned successfully.`
+            }]
+          };
+        }
+
+        case 'SN-Approve-Change': {
+          const { change_number, approval_comments } = args;
+
+          // Look up change by number
+          const changes = await serviceNowClient.getRecords('change_request', {
+            sysparm_query: `number=${change_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!changes || changes.length === 0) {
+            throw new Error(`Change request ${change_number} not found`);
+          }
+
+          const change = changes[0];
+
+          // Update approval field and add comments
+          const updateData = {
+            approval: 'approved'
+          };
+
+          if (approval_comments) {
+            updateData.comments = approval_comments;
+          }
+
+          const result = await serviceNowClient.updateRecord('change_request', change.sys_id, updateData);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ ${change_number} approved successfully
+
+Change Request: ${change_number}
+sys_id: ${change.sys_id}
+Approval: approved
+${approval_comments ? `Comments: ${approval_comments}` : ''}
+Updated: ${new Date().toISOString()}
+
+The change request has been approved successfully.`
+            }]
+          };
+        }
+
+        // Problem convenience tool handlers
+        case 'SN-Add-Problem-Comment': {
+          const { problem_number, comment } = args;
+
+          // Look up problem by number
+          const problems = await serviceNowClient.getRecords('problem', {
+            sysparm_query: `number=${problem_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!problems || problems.length === 0) {
+            throw new Error(`Problem ${problem_number} not found`);
+          }
+
+          const problem = problems[0];
+
+          // Update comments field
+          const result = await serviceNowClient.updateRecord('problem', problem.sys_id, {
+            comments: comment
+          });
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ Comment added to ${problem_number}
+
+Problem: ${problem_number}
+sys_id: ${problem.sys_id}
+Comment: ${comment}
+Updated: ${new Date().toISOString()}
+
+The comment has been successfully added to the problem.`
+            }]
+          };
+        }
+
+        case 'SN-Close-Problem': {
+          const { problem_number, resolution_notes, resolution_code } = args;
+
+          // Look up problem by number
+          const problems = await serviceNowClient.getRecords('problem', {
+            sysparm_query: `number=${problem_number}`,
+            sysparm_limit: 1
+          });
+
+          if (!problems || problems.length === 0) {
+            throw new Error(`Problem ${problem_number} not found`);
+          }
+
+          const problem = problems[0];
+
+          // Update to resolved/closed state
+          const updateData = {
+            state: 3, // Resolved/Closed state for problem
+            resolution_notes: resolution_notes
+          };
+
+          if (resolution_code) {
+            updateData.resolution_code = resolution_code;
+          }
+
+          const result = await serviceNowClient.updateRecord('problem', problem.sys_id, updateData);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ ${problem_number} closed successfully
+
+Problem: ${problem_number}
+sys_id: ${problem.sys_id}
+State: Resolved/Closed (3)
+Resolution Notes: ${resolution_notes}
+${resolution_code ? `Resolution Code: ${resolution_code}` : ''}
+Updated: ${new Date().toISOString()}
+
+The problem has been closed successfully.`
             }]
           };
         }

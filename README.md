@@ -1,4 +1,4 @@
-# ServiceNow MCP Server v2.0 - Multi-Instance Intelligent Architecture
+# ServiceNow MCP Server v2.1 - Multi-Instance Intelligent Architecture
 
 A revolutionary **metadata-driven ServiceNow MCP server** that supports **multiple ServiceNow instances** simultaneously with automatic schema discovery and optimized tool generation. Built with Node.js and Express.
 
@@ -7,10 +7,24 @@ A revolutionary **metadata-driven ServiceNow MCP server** that supports **multip
 - **🌐 Multi-Instance Support**: Connect to multiple ServiceNow instances simultaneously with instance-specific tool routing
 - **🧠 Intelligent Schema Discovery**: Automatically discovers table structures and relationships from your ServiceNow instances
 - **📊 160+ ServiceNow Tables**: Complete coverage including ITSM, CMDB, Service Catalog, Platform Development, and Flow Designer
-- **⚙️ Generic CRUD Operations**: 34 powerful MCP tools that work on **any** ServiceNow table
+- **⚙️ Generic CRUD Operations**: 44 powerful MCP tools that work on **any** ServiceNow table
 - **🔧 Dynamic Schema Loading**: Table metadata discovered at runtime - no hardcoded definitions
 - **📱 Instance-Adaptive**: Automatically handles custom fields, modified tables, and different ServiceNow editions
 - **🎯 Batch Operations**: 43+ parallel operations tested successfully
+- **🎨 Local Script Development**: Sync scripts with Git, watch mode for continuous development
+- **🗣️ Natural Language Search**: Query ServiceNow using plain English queries
+- **📚 MCP Resources**: 8 read-only resource URIs for quick lookups and documentation
+
+## 🆕 What's New in v2.1
+
+**October 2025 Release**
+
+- 🎨 **Local Script Development**: Sync scripts with Git, watch mode for continuous development, full version control integration
+- 🗣️ **Natural Language Search**: Query ServiceNow using plain English (15+ supported patterns)
+- ⚡ **10 Convenience Tools**: Specialized ITSM operations (Add-Comment, Add-Work-Notes, Assign, Resolve, Close incidents/changes/problems)
+- 📚 **MCP Resources**: 8 read-only resource URIs for quick table lookups and API documentation
+- 📊 **Progress Reporting**: Real-time feedback for batch operations and long-running tasks
+- ✅ **Validated Features**: Application scope and update set management thoroughly tested in production environments
 
 ## ⚡ Quick Start (2-3 Minutes)
 
@@ -18,6 +32,8 @@ A revolutionary **metadata-driven ServiceNow MCP server** that supports **multip
 - Node.js 18+
 - ServiceNow instance(s) with API access
 - Valid ServiceNow credentials
+
+**Note:** Version 2.1 includes new local development features. See `CLAUDE.md` for complete workflow documentation.
 
 ### 🎯 Setup Instructions
 
@@ -117,7 +133,7 @@ curl http://localhost:3000/instances
 
 ## 📊 Comprehensive ServiceNow Coverage
 
-### 🎯 **34 MCP Tools** Supporting **160+ ServiceNow Tables**
+### 🎯 **44 MCP Tools** Supporting **160+ ServiceNow Tables**
 
 *Generic tools work on any ServiceNow table through dynamic schema discovery*
 
@@ -125,12 +141,16 @@ curl http://localhost:3000/instances
 |-------------------|-----------|------------------|
 | **Generic CRUD** | 7 tools | Query, Create, Get, Update on **any** table |
 | **Specialized ITSM** | 8 tools | Incident, Change, Problem convenience wrappers |
+| **Convenience Tools** | 10 tools | Add-Comment, Add-Work-Notes, Assign, Resolve, Close operations |
+| **Natural Language** | 1 tool | Query using plain English instead of encoded queries |
 | **Update Set Management** | 6 tools | Set, list, move, clone, inspect update sets |
 | **Background Scripts** | 2 tools | Execute scripts, create fix scripts |
+| **Script Synchronization** | 3 tools | Sync scripts with local files, watch mode, Git integration |
 | **Workflows** | 4 tools | Create workflows, activities, transitions |
 | **Batch Operations** | 2 tools | Batch create/update across tables |
 | **Schema Discovery** | 3 tools | Get table schemas, field info, relationships |
 | **Multi-Instance** | 2 tools | Switch instances, get current instance |
+| **MCP Resources** | 8 resources | Read-only URIs for table lists, common tables, field info |
 
 ### 📋 **Supported Table Categories (160+ Total)**
 
@@ -186,6 +206,128 @@ SN-Batch-Update({ "updates": [...] })
 // Workflow creation
 SN-Create-Workflow({ "name": "Auto-Approve", "table": "change_request", "activities": [...] })
 ```
+
+### 🎨 **Local Development Workflow (NEW!)**
+
+Develop ServiceNow scripts locally with Git integration and automatic synchronization:
+
+```javascript
+// Sync local script to ServiceNow
+SN-Sync-Script-From-Local({
+  "local_path": "./scripts/my_business_rule.js",
+  "table": "sys_script",
+  "sys_id": "abc123...",
+  "instance": "dev"
+})
+
+// Watch directory for changes (continuous development)
+SN-Watch-Scripts({
+  "directory": "./scripts",
+  "instance": "dev",
+  "auto_sync": true
+})
+
+// Sync entire directory
+SN-Sync-Scripts-Directory({
+  "directory": "./scripts",
+  "instance": "dev",
+  "dry_run": false
+})
+```
+
+**Benefits:**
+- Version control your ServiceNow scripts with Git
+- Local IDE development with syntax highlighting
+- Automatic sync on file save
+- Backup and restore scripts easily
+- Team collaboration via Git workflows
+
+See **CLAUDE.md** for complete local development workflow.
+
+### 🗣️ **Natural Language Search (NEW!)**
+
+Query ServiceNow using plain English instead of encoded queries:
+
+```javascript
+// Natural language queries
+SN-Natural-Language-Search({
+  "table": "incident",
+  "nl_query": "all high priority incidents assigned to me",
+  "instance": "dev"
+})
+
+SN-Natural-Language-Search({
+  "table": "change_request",
+  "nl_query": "emergency changes created this week",
+  "instance": "prod"
+})
+
+SN-Natural-Language-Search({
+  "table": "problem",
+  "nl_query": "unresolved problems from network team",
+  "instance": "dev"
+})
+```
+
+**Supported Patterns (15+):**
+- "high priority incidents assigned to me"
+- "emergency changes created this week"
+- "open problems from database team"
+- "resolved incidents updated yesterday"
+- "active change requests for production"
+
+**When to Use:**
+- Use NL search for quick exploratory queries
+- Use encoded queries for complex automation
+- NL search translates to encoded queries automatically
+
+### ⚡ **Convenience Tools (NEW!)**
+
+Specialized operations for common ITSM tasks:
+
+```javascript
+// Add comments (visible to users)
+SN-Incident-Add-Comment({
+  "sys_id": "abc123...",
+  "comment": "Issue resolved, monitoring for 24 hours",
+  "instance": "dev"
+})
+
+// Add work notes (internal)
+SN-Incident-Add-Work-Notes({
+  "sys_id": "abc123...",
+  "work_notes": "Restarted application server, logs attached",
+  "instance": "dev"
+})
+
+// Assign incident
+SN-Incident-Assign({
+  "sys_id": "abc123...",
+  "assigned_to": "user_sys_id",
+  "assignment_group": "group_sys_id",
+  "instance": "dev"
+})
+
+// Resolve incident
+SN-Incident-Resolve({
+  "sys_id": "abc123...",
+  "resolution_code": "Solved (Permanently)",
+  "resolution_notes": "Fixed configuration error",
+  "instance": "dev"
+})
+
+// Close incident
+SN-Incident-Close({
+  "sys_id": "abc123...",
+  "close_code": "Solved (Permanently)",
+  "close_notes": "User confirmed resolution",
+  "instance": "dev"
+})
+```
+
+**Available for:** Incidents, Change Requests, Problems
+
+**Operations:** Add-Comment, Add-Work-Notes, Assign, Resolve, Close
 
 ### 📋 **Complete Table Coverage**
 
@@ -378,10 +520,16 @@ DEBUG=true npm run dev
 # Filter by source: "Script execution"
 ```
 
-## Performance
+## Performance & Statistics
 
 - **Cold start:** ~1-2 seconds
 - **Tool execution:** ~200-500ms average (depends on ServiceNow instance)
 - **Memory usage:** ~50MB baseline per instance
 - **Concurrent sessions:** 100+ supported
 - **Background scripts:** Execute in ~1 second via sys_trigger
+- **MCP Tools:** 44 total (34 tools + 10 convenience tools)
+- **MCP Resources:** 8 read-only resource URIs
+- **Natural Language Patterns:** 15+ supported query patterns
+- **Convenience Operations:** 10+ specialized ITSM operations (5 operations × 3 table types)
+- **Tables Supported:** 160+ ServiceNow tables via generic tools
+- **Batch Operations:** 43+ parallel calls tested successfully

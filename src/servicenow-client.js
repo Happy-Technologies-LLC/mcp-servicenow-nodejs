@@ -4,6 +4,25 @@ export class ServiceNowClient {
   constructor(instanceUrl, username, password) {
     this.currentInstanceName = 'default';
     this.setInstance(instanceUrl, username, password);
+    this.progressCallback = null; // Callback for progress notifications
+  }
+
+  /**
+   * Set progress callback for notifications
+   * @param {Function} callback - Function to call with progress updates
+   */
+  setProgressCallback(callback) {
+    this.progressCallback = callback;
+  }
+
+  /**
+   * Send progress notification
+   * @param {string} message - Progress message
+   */
+  notifyProgress(message) {
+    if (this.progressCallback) {
+      this.progressCallback(message);
+    }
   }
 
   /**
@@ -170,9 +189,44 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
   }
 
   async setCurrentApplication(appSysId) {
+    const startTime = Date.now();
+
     try {
+      // Validate input
+      if (!appSysId) {
+        throw new Error('app_sys_id is required');
+      }
+
+      // Validate sys_id format (32-character hex string)
+      if (!/^[0-9a-f]{32}$/i.test(appSysId)) {
+        throw new Error(`Invalid sys_id format: ${appSysId}. Must be a 32-character hexadecimal string.`);
+      }
+
+      // Get previous application scope (for rollback information)
+      let previousScope = null;
+      try {
+        const prefResponse = await this.client.get('/api/now/ui/preferences/apps.current');
+        if (prefResponse.data && prefResponse.data.result) {
+          previousScope = {
+            sys_id: prefResponse.data.result.value || null,
+            name: prefResponse.data.result.display_value || null
+          };
+        }
+      } catch (prefError) {
+        // Previous scope query failed - not critical, continue
+        console.log('Could not retrieve previous scope:', prefError.message);
+      }
+
       // Get application details
-      const app = await this.getRecord('sys_app', appSysId);
+      let app;
+      try {
+        app = await this.getRecord('sys_app', appSysId);
+      } catch (appError) {
+        if (appError.response && appError.response.status === 404) {
+          throw new Error(`Application not found with sys_id: ${appSysId}. Please verify the sys_id is correct.`);
+        }
+        throw appError;
+      }
 
       // Create axios client with cookie jar
       const axiosWithCookies = axios.create({
@@ -199,15 +253,77 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
         }
       );
 
-      return {
+      // Verify the scope was set correctly
+      let verified = false;
+      let verificationError = null;
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait for preference to update
+        const verifyResponse = await this.client.get('/api/now/ui/preferences/apps.current');
+        if (verifyResponse.data && verifyResponse.data.result) {
+          const currentAppId = verifyResponse.data.result.value;
+          verified = (currentAppId === appSysId);
+          if (!verified) {
+            verificationError = `Verification failed: Current app is ${currentAppId}, expected ${appSysId}`;
+          }
+        }
+      } catch (verifyError) {
+        verificationError = `Verification query failed: ${verifyError.message}`;
+      }
+
+      const executionTime = Date.now() - startTime;
+
+      const result = {
         success: true,
         application: app.name,
+        scope: app.scope || 'global',
         sys_id: appSysId,
+        previous_scope: previousScope,
+        verified: verified,
+        verification_error: verificationError,
+        timestamp: new Date().toISOString(),
+        execution_time_ms: executionTime,
+        method: 'ui_api',
+        endpoint: '/api/now/ui/concoursepicker/application',
         response: response.data
       };
+
+      // Add warnings if applicable
+      result.warnings = [];
+      if (!verified) {
+        result.warnings.push('Could not verify scope change - please check ServiceNow UI');
+      }
+      if (verificationError) {
+        result.warnings.push(verificationError);
+      }
+
+      return result;
     } catch (error) {
-      console.error('Failed to set current application:', error.message);
-      throw new Error(`Failed to set current application: ${error.message}`);
+      const executionTime = Date.now() - startTime;
+
+      // Enhanced error messages based on error type
+      let errorMessage = error.message;
+
+      if (error.response) {
+        const status = error.response.status;
+        if (status === 401) {
+          errorMessage = 'Authentication failed. Please check your credentials.';
+        } else if (status === 403) {
+          errorMessage = `Access denied. Please verify:\n1. You have admin or developer role\n2. You have access to the application\n3. The application is active`;
+        } else if (status === 404) {
+          errorMessage = `Application not found with sys_id: ${appSysId}`;
+        } else if (status >= 500) {
+          errorMessage = `ServiceNow server error (${status}). Please try again later.`;
+        }
+      }
+
+      console.error('Failed to set current application:', errorMessage);
+
+      const enhancedError = new Error(`Failed to set current application: ${errorMessage}`);
+      enhancedError.execution_time_ms = executionTime;
+      enhancedError.app_sys_id = appSysId;
+      enhancedError.original_error = error;
+
+      throw enhancedError;
     }
   }
 
@@ -570,7 +686,7 @@ try {
   }
 
   // Batch operations
-  async batchCreate(operations, transaction = true) {
+  async batchCreate(operations, transaction = true, reportProgress = true) {
     const results = {
       success: true,
       created_count: 0,
@@ -580,6 +696,15 @@ try {
     };
 
     const startTime = Date.now();
+    const total = operations.length;
+
+    // Determine progress reporting frequency
+    const shouldReport = (index) => {
+      if (!reportProgress) return false;
+      if (total <= 10) return true; // Report every item for small batches
+      if (total <= 50) return (index + 1) % 5 === 0 || index === total - 1; // Every 5 items
+      return (index + 1) % Math.ceil(total / 10) === 0 || index === total - 1; // Every 10%
+    };
 
     try {
       for (let i = 0; i < operations.length; i++) {
@@ -598,6 +723,12 @@ try {
           const key = op.save_as || `operation_${i}`;
           results.sys_ids[key] = result.sys_id;
           results.created_count++;
+
+          // Report progress
+          if (shouldReport(i)) {
+            const percentage = Math.round(((i + 1) / total) * 100);
+            this.notifyProgress(`Creating record ${i + 1}/${total} (${percentage}%): ${op.table}`);
+          }
         } catch (error) {
           results.errors.push({
             operation_index: i,
@@ -605,10 +736,24 @@ try {
             error: error.message
           });
 
+          if (reportProgress) {
+            this.notifyProgress(`Failed ${i + 1}/${total}: ${op.table} - ${error.message}`);
+          }
+
           if (transaction) {
             results.success = false;
             throw new Error(`Batch create failed at operation ${i}: ${error.message}`);
           }
+        }
+      }
+
+      // Final summary
+      if (reportProgress) {
+        const failedCount = results.errors.length;
+        if (failedCount > 0) {
+          this.notifyProgress(`Complete: ${results.created_count}/${total} records created (${failedCount} failed)`);
+        } else {
+          this.notifyProgress(`Complete: All ${total} records created successfully`);
         }
       }
     } finally {
@@ -618,7 +763,7 @@ try {
     return results;
   }
 
-  async batchUpdate(updates, stopOnError = false) {
+  async batchUpdate(updates, stopOnError = false, reportProgress = true) {
     const results = {
       success: true,
       updated_count: 0,
@@ -627,12 +772,27 @@ try {
     };
 
     const startTime = Date.now();
+    const total = updates.length;
+
+    // Determine progress reporting frequency
+    const shouldReport = (index) => {
+      if (!reportProgress) return false;
+      if (total <= 10) return true; // Report every item for small batches
+      if (total <= 50) return (index + 1) % 5 === 0 || index === total - 1; // Every 5 items
+      return (index + 1) % Math.ceil(total / 10) === 0 || index === total - 1; // Every 10%
+    };
 
     for (let i = 0; i < updates.length; i++) {
       const update = updates[i];
       try {
         await this.updateRecord(update.table, update.sys_id, update.data);
         results.updated_count++;
+
+        // Report progress
+        if (shouldReport(i)) {
+          const percentage = Math.round(((i + 1) / total) * 100);
+          this.notifyProgress(`Updating record ${i + 1}/${total} (${percentage}%): ${update.table}`);
+        }
       } catch (error) {
         results.errors.push({
           update_index: i,
@@ -641,10 +801,24 @@ try {
           error: error.message
         });
 
+        if (reportProgress) {
+          this.notifyProgress(`Failed ${i + 1}/${total}: ${update.table} - ${error.message}`);
+        }
+
         if (stopOnError) {
           results.success = false;
           break;
         }
+      }
+    }
+
+    // Final summary
+    if (reportProgress) {
+      const failedCount = results.errors.length;
+      if (failedCount > 0) {
+        this.notifyProgress(`Complete: ${results.updated_count}/${total} records updated (${failedCount} failed)`);
+      } else {
+        this.notifyProgress(`Complete: All ${total} records updated successfully`);
       }
     }
 
@@ -762,7 +936,7 @@ try {
     };
   }
 
-  async createCompleteWorkflow(workflowSpec) {
+  async createCompleteWorkflow(workflowSpec, reportProgress = true) {
     // Create complete workflow with activities and transitions in one call
     const results = {
       workflow_sys_id: '',
@@ -774,6 +948,7 @@ try {
 
     try {
       // 1. Create base workflow
+      if (reportProgress) this.notifyProgress('Creating workflow base');
       const workflow = await this.createWorkflow({
         name: workflowSpec.name,
         description: workflowSpec.description,
@@ -783,6 +958,7 @@ try {
       results.workflow_sys_id = workflow.workflow_sys_id;
 
       // 2. Create workflow version
+      if (reportProgress) this.notifyProgress('Creating workflow version');
       const version = await this.createWorkflowVersion({
         name: workflowSpec.name,
         workflow_sys_id: workflow.workflow_sys_id,
@@ -799,8 +975,14 @@ try {
 
       // 3. Create activities
       const activities = workflowSpec.activities || [];
+      const totalActivities = activities.length;
       for (let i = 0; i < activities.length; i++) {
         const actSpec = activities[i];
+
+        if (reportProgress) {
+          this.notifyProgress(`Creating activity ${i + 1}/${totalActivities}: ${actSpec.name}`);
+        }
+
         const activity = await this.createActivity({
           name: actSpec.name,
           workflow_version_sys_id: version.version_sys_id,
@@ -822,7 +1004,14 @@ try {
 
       // 4. Create transitions
       const transitions = workflowSpec.transitions || [];
-      for (const transSpec of transitions) {
+      const totalTransitions = transitions.length;
+      for (let i = 0; i < transitions.length; i++) {
+        const transSpec = transitions[i];
+
+        if (reportProgress) {
+          this.notifyProgress(`Creating transition ${i + 1}/${totalTransitions}`);
+        }
+
         // Resolve activity references
         const fromId = typeof transSpec.from === 'number'
           ? results.activity_sys_ids[`activity_${transSpec.from}`]
@@ -859,6 +1048,8 @@ try {
 
       // 5. Publish if requested
       if (workflowSpec.publish && activities.length > 0) {
+        if (reportProgress) this.notifyProgress('Publishing workflow');
+
         const startActivityId = workflowSpec.start_activity
           ? (results.activity_sys_ids[workflowSpec.start_activity] || workflowSpec.start_activity)
           : results.activity_sys_ids['activity_0'] || results.activity_sys_ids[Object.keys(results.activity_sys_ids)[0]];
@@ -866,6 +1057,10 @@ try {
         await this.publishWorkflow(version.version_sys_id, startActivityId);
         results.published = true;
         results.start_activity = startActivityId;
+      }
+
+      if (reportProgress) {
+        this.notifyProgress(`Complete: Workflow created with ${totalActivities} activities and ${totalTransitions} transitions`);
       }
 
       return results;
@@ -880,7 +1075,8 @@ try {
       record_sys_ids = [],
       time_range = null,
       source_update_set = null,
-      table = 'sys_update_xml'
+      table = 'sys_update_xml',
+      reportProgress = true
     } = options;
 
     try {
@@ -895,6 +1091,7 @@ try {
 
       // Get records by sys_ids
       if (record_sys_ids.length > 0) {
+        if (reportProgress) this.notifyProgress(`Fetching ${record_sys_ids.length} records to move`);
         const sysIdsQuery = record_sys_ids.map(id => `sys_id=${id}`).join('^OR');
         recordsToMove = await this.getRecords(table, {
           sysparm_query: sysIdsQuery,
@@ -903,6 +1100,7 @@ try {
       }
       // Get records by time range
       else if (time_range) {
+        if (reportProgress) this.notifyProgress('Fetching records by time range');
         let query = `sys_created_on>=${time_range.start}^sys_created_on<=${time_range.end}`;
         if (source_update_set) {
           query += `^update_set.name=${source_update_set}`;
@@ -913,8 +1111,25 @@ try {
         });
       }
 
+      const total = recordsToMove.length;
+      if (total === 0) {
+        if (reportProgress) this.notifyProgress('No records found to move');
+        return results;
+      }
+
+      if (reportProgress) this.notifyProgress(`Moving ${total} records to update set`);
+
+      // Determine progress reporting frequency
+      const shouldReport = (index) => {
+        if (!reportProgress) return false;
+        if (total <= 10) return true;
+        if (total <= 50) return (index + 1) % 5 === 0 || index === total - 1;
+        return (index + 1) % Math.ceil(total / 10) === 0 || index === total - 1;
+      };
+
       // Move each record
-      for (const record of recordsToMove) {
+      for (let i = 0; i < recordsToMove.length; i++) {
+        const record = recordsToMove[i];
         try {
           await this.updateRecord(table, record.sys_id, {
             update_set: updateSetId
@@ -926,12 +1141,29 @@ try {
             type: record.type,
             status: 'moved'
           });
+
+          if (shouldReport(i)) {
+            const percentage = Math.round(((i + 1) / total) * 100);
+            this.notifyProgress(`Moving record ${i + 1}/${total} (${percentage}%): ${record.type || 'unknown'}`);
+          }
         } catch (error) {
           results.failed++;
           results.errors.push({
             sys_id: record.sys_id,
             error: error.message
           });
+
+          if (reportProgress) {
+            this.notifyProgress(`Failed ${i + 1}/${total}: ${record.sys_id} - ${error.message}`);
+          }
+        }
+      }
+
+      if (reportProgress) {
+        if (results.failed > 0) {
+          this.notifyProgress(`Complete: ${results.moved}/${total} records moved (${results.failed} failed)`);
+        } else {
+          this.notifyProgress(`Complete: All ${total} records moved successfully`);
         }
       }
 
@@ -942,12 +1174,14 @@ try {
   }
 
   // Clone update set
-  async cloneUpdateSet(sourceUpdateSetId, newName) {
+  async cloneUpdateSet(sourceUpdateSetId, newName, reportProgress = true) {
     try {
       // Get source update set
+      if (reportProgress) this.notifyProgress('Fetching source update set');
       const sourceSet = await this.getRecord('sys_update_set', sourceUpdateSetId);
 
       // Create new update set
+      if (reportProgress) this.notifyProgress(`Creating new update set: ${newName}`);
       const newSet = await this.createRecord('sys_update_set', {
         name: newName,
         description: `Clone of: ${sourceSet.name}\n\n${sourceSet.description || ''}`,
@@ -956,14 +1190,28 @@ try {
       });
 
       // Get all update XML records from source
+      if (reportProgress) this.notifyProgress('Fetching update records from source');
       const updateRecords = await this.getRecords('sys_update_xml', {
         sysparm_query: `update_set=${sourceUpdateSetId}`,
         sysparm_limit: 5000
       });
 
+      const total = updateRecords.length;
+      if (reportProgress) this.notifyProgress(`Cloning ${total} update records`);
+
+      // Determine progress reporting frequency
+      const shouldReport = (index) => {
+        if (!reportProgress) return false;
+        if (total <= 10) return true;
+        if (total <= 50) return (index + 1) % 5 === 0 || index === total - 1;
+        return (index + 1) % Math.ceil(total / 10) === 0 || index === total - 1;
+      };
+
       // Clone each update record (create new records pointing to new set)
       const clonedRecords = [];
-      for (const record of updateRecords) {
+      let failedCount = 0;
+      for (let i = 0; i < updateRecords.length; i++) {
+        const record = updateRecords[i];
         try {
           const cloned = await this.createRecord('sys_update_xml', {
             update_set: newSet.sys_id,
@@ -974,8 +1222,25 @@ try {
             category: record.category
           });
           clonedRecords.push(cloned);
+
+          if (shouldReport(i)) {
+            const percentage = Math.round(((i + 1) / total) * 100);
+            this.notifyProgress(`Cloning record ${i + 1}/${total} (${percentage}%): ${record.type || 'unknown'}`);
+          }
         } catch (error) {
+          failedCount++;
           console.error(`Failed to clone record ${record.sys_id}: ${error.message}`);
+          if (reportProgress && failedCount <= 5) { // Only report first 5 failures to avoid spam
+            this.notifyProgress(`Failed to clone record ${i + 1}/${total}: ${error.message}`);
+          }
+        }
+      }
+
+      if (reportProgress) {
+        if (failedCount > 0) {
+          this.notifyProgress(`Complete: ${clonedRecords.length}/${total} records cloned (${failedCount} failed)`);
+        } else {
+          this.notifyProgress(`Complete: All ${total} records cloned successfully`);
         }
       }
 

@@ -22,7 +22,7 @@
 
 ---
 
-## 🎯 MCP Tools (34 Total)
+## 🎯 MCP Tools (40+ Total)
 
 ### Generic Tools (Work on ANY table)
 **Core CRUD:**
@@ -45,6 +45,13 @@
 - `SN-List-SysUserGroups`
 - `SN-List-CmdbCis`
 
+### Convenience Tools (Incident Operations)
+- `SN-Update-Incident` - Update incident by sys_id
+- `SN-Close-Incident` - Close incident with resolution
+- `SN-Assign-Incident` - Assign incident to user/group
+- `SN-Add-Work-Notes` - Add work notes to incident
+- `SN-Search-Incidents` - Natural language incident search
+
 ### Update Set Management
 - `SN-Set-Update-Set` - Set current update set (AUTOMATED!)
 - `SN-Get-Current-Update-Set` - Get active update set
@@ -60,6 +67,15 @@
 - `SN-Execute-Background-Script` - Execute server-side JavaScript (via sys_trigger)
 - `SN-Create-Fix-Script` - Generate script for manual execution
 
+### Script Synchronization
+- `SN-Sync-Script-To-Local` - Download script to local file
+- `SN-Sync-Local-To-Script` - Upload local file to ServiceNow
+- `SN-Watch-Script` - Watch local file and auto-sync changes
+
+### Natural Language Interface
+- `SN-NL-Search` - Search records using natural language
+- `SN-NL-Query-Builder` - Convert NL to encoded query
+
 ### Batch Operations
 - `SN-Batch-Create` - Create multiple records with relationships
 - `SN-Batch-Update` - Update multiple records efficiently
@@ -73,6 +89,11 @@
 ### Advanced Tools
 - `SN-Validate-Configuration` - Validate catalog item config
 - `SN-Explain-Field` - Get field documentation
+
+### MCP Resources (Read-Only Access)
+- `servicenow://instances` - List available instances
+- `servicenow://schema/{table}` - Table schema as resource
+- `servicenow://scripts/{sys_id}` - Script include contents
 
 **Complete API Reference:** `docs/API_REFERENCE.md`
 
@@ -156,6 +177,185 @@ Enables **fully automated scoped application development** with zero manual step
 
 ---
 
+## 🎨 Local Development Workflow
+
+### Script Synchronization (NEW!)
+Develop ServiceNow scripts locally with version control and modern IDE features:
+
+```javascript
+// 1. Download script to local file
+SN-Sync-Script-To-Local({
+  script_sys_id: "abc123...",
+  local_path: "/scripts/business_rules/validate_incident.js",
+  instance: "dev"
+});
+
+// 2. Edit locally with your IDE (syntax highlighting, linting, etc.)
+// File: /scripts/business_rules/validate_incident.js
+
+// 3. Upload changes back to ServiceNow
+SN-Sync-Local-To-Script({
+  local_path: "/scripts/business_rules/validate_incident.js",
+  script_sys_id: "abc123...",
+  instance: "dev"
+});
+
+// 4. OR: Watch for changes and auto-sync
+SN-Watch-Script({
+  local_path: "/scripts/business_rules/validate_incident.js",
+  script_sys_id: "abc123...",
+  instance: "dev"
+});
+// Now edit the file - changes sync automatically every 2 seconds!
+```
+
+### Git Integration Example
+```bash
+# Directory structure for version-controlled ServiceNow scripts
+scripts/
+├── business_rules/
+│   ├── validate_incident.js
+│   └── auto_assign.js
+├── script_includes/
+│   ├── IncidentUtils.js
+│   └── NotificationHelper.js
+└── ui_scripts/
+    └── form_validation.js
+
+# Track changes with git
+git add scripts/
+git commit -m "Update incident validation logic"
+git push origin feature/incident-validation
+
+# Deploy to ServiceNow
+# Use SN-Sync-Local-To-Script for each file
+```
+
+### Watch Mode for Continuous Development
+```javascript
+// Start watch mode for active development
+SN-Watch-Script({
+  local_path: "/scripts/business_rules/validate_incident.js",
+  script_sys_id: "abc123...",
+  instance: "dev"
+});
+
+// Now you can:
+// 1. Edit file in VSCode/WebStorm
+// 2. Save (Cmd+S / Ctrl+S)
+// 3. Changes auto-sync to ServiceNow in ~2 seconds
+// 4. Test in ServiceNow immediately
+// 5. Repeat!
+
+// Stop watch mode when done (Ctrl+C or close terminal)
+```
+
+**Benefits:**
+- Use local IDE features (IntelliSense, linting, debugging)
+- Version control with Git
+- Collaborative development (PRs, code reviews)
+- Automated testing with local test frameworks
+- Backup and disaster recovery
+
+---
+
+## 🗣️ Natural Language Interface
+
+### Natural Language Search (NEW!)
+Query ServiceNow using plain English instead of encoded queries:
+
+```javascript
+// Traditional way (encoded query)
+SN-Query-Table({
+  table_name: "incident",
+  query: "active=true^priority=1^assigned_toISEMPTY",
+  limit: 10
+});
+
+// Natural language way (easier!)
+SN-NL-Search({
+  table_name: "incident",
+  query: "show me active high priority incidents that are unassigned",
+  limit: 10
+});
+```
+
+### Supported Query Patterns
+
+**Field Comparisons:**
+- "priority is 1" → `priority=1`
+- "state equals In Progress" → `state=2`
+- "assigned to John Smith" → `assigned_to=<sys_id>`
+
+**Text Searches:**
+- "description contains network" → `descriptionLIKEnetwork`
+- "short description starts with Error" → `short_descriptionSTARTSWITHError`
+
+**Logical Operators:**
+- "priority is 1 AND state is New" → `priority=1^state=1`
+- "priority is 1 OR priority is 2" → `priority=1^ORpriority=2`
+
+**Empty/Not Empty:**
+- "assigned to is empty" → `assigned_toISEMPTY`
+- "resolution notes is not empty" → `resolution_notesISNOTEMPTY`
+
+**Date Ranges:**
+- "created today" → `sys_created_onONToday@javascript:gs.beginningOfToday()@javascript:gs.endOfToday()`
+- "updated last 7 days" → `sys_updated_onONLast 7 days@javascript:gs.daysAgoStart(7)@javascript:gs.daysAgoEnd(0)`
+
+**Ordering:**
+- "sort by priority descending" → `ORDERBYDESCpriority`
+- "order by created date" → `ORDERBYsys_created_on`
+
+### When to Use NL vs Encoded Queries
+
+**Use Natural Language When:**
+- Exploratory queries (figuring out what you need)
+- Complex multi-field searches
+- Communicating requirements to stakeholders
+- Prototyping queries before encoding
+
+**Use Encoded Queries When:**
+- Performance critical operations
+- Programmatic/automated queries
+- Complex OR conditions
+- You already know the exact encoded query
+
+### Examples
+
+```javascript
+// Example 1: Find urgent unassigned incidents
+SN-NL-Search({
+  table_name: "incident",
+  query: "active incidents with urgency 1 where assigned to is empty",
+  limit: 20,
+  instance: "prod"
+});
+
+// Example 2: Recent high priority changes
+SN-NL-Search({
+  table_name: "change_request",
+  query: "priority is critical and created in last 24 hours",
+  fields: "number,short_description,state,assigned_to",
+  instance: "prod"
+});
+
+// Example 3: Problem tickets with specific text
+SN-NL-Search({
+  table_name: "problem",
+  query: "description contains database and state not equals Closed",
+  limit: 10
+});
+
+// Example 4: Query builder (returns encoded query)
+const encodedQuery = SN-NL-Query-Builder({
+  natural_query: "show active incidents assigned to Network Team with priority 1 or 2"
+});
+// Returns: "active=true^assigned_to=<network_team_id>^priority=1^ORpriority=2"
+```
+
+---
+
 ## 📋 Standard Development Workflow
 
 ### 1. Set Application Context
@@ -205,6 +405,10 @@ SN-Query-Table({
 3. **Field Selection**: Specify `fields` parameter to reduce payload
 4. **Pagination**: Use `limit` and `offset` for large result sets
 5. **Verification**: Always query results after operations
+6. **Convenience Tools**: Use specialized tools for common operations (SN-Close-Incident, SN-Assign-Incident, etc.)
+7. **Natural Language**: Use NL search for exploratory queries and prototyping
+8. **Script Sync**: Develop scripts locally with version control and modern IDE features
+9. **MCP Resources**: Use read-only resources for quick reference (schema, instances)
 
 ### Update Set Management
 ```javascript
@@ -303,18 +507,52 @@ const updateSet = SN-Create-Record({
 // 4. Set as current update set
 SN-Set-Update-Set({ update_set_sys_id: updateSet.sys_id, instance: "dev" });
 
-// 5. Create configurations (batch operation)
-// All automatically scoped to x_custom and captured in update set!
-SN-Batch-Create({
-  operations: [
-    { table: "sys_properties", data: { name: "x_custom.setting1", value: "value1" }},
-    { table: "sys_script", data: { name: "My Script", script: "..." }},
-    { table: "sys_ui_page", data: { name: "My Page", html: "..." }}
-  ],
+// 5. Create business rule with script
+const businessRule = SN-Create-Record({
+  table_name: "sys_script",
+  data: {
+    name: "Validate Incident Priority",
+    table: "incident",
+    when: "before",
+    script: "// Initial script"
+  },
   instance: "dev"
 });
 
-// 6. Verify everything captured correctly
+// 6. Sync script locally for development
+SN-Sync-Script-To-Local({
+  script_sys_id: businessRule.sys_id,
+  local_path: "/scripts/business_rules/validate_priority.js",
+  instance: "dev"
+});
+
+// 7. Watch for local changes (continuous development)
+SN-Watch-Script({
+  local_path: "/scripts/business_rules/validate_priority.js",
+  script_sys_id: businessRule.sys_id,
+  instance: "dev"
+});
+// Edit locally, changes auto-sync to ServiceNow!
+
+// 8. Find unassigned incidents using natural language
+const incidents = SN-NL-Search({
+  table_name: "incident",
+  query: "active high priority incidents assigned to is empty",
+  limit: 10,
+  instance: "dev"
+});
+
+// 9. Assign incidents using convenience tool
+for (const inc of incidents) {
+  SN-Assign-Incident({
+    sys_id: inc.sys_id,
+    assigned_to: "admin",
+    assignment_group: "Network Support",
+    instance: "dev"
+  });
+}
+
+// 10. Verify everything captured correctly
 SN-Query-Table({
   table_name: "sys_update_xml",
   query: "update_set=" + updateSet.sys_id,
@@ -322,7 +560,11 @@ SN-Query-Table({
   instance: "dev"
 });
 
-// ALL DONE! Zero manual UI interaction required! 🎉
+// ALL DONE!
+// - Zero manual UI interaction
+// - Version-controlled scripts
+// - Natural language queries
+// - Convenience operations
 ```
 
 ---
@@ -366,6 +608,98 @@ curl -u username:password https://your-instance.service-now.com/api/now/table/in
 // Scripts log to ServiceNow System Logs
 // Navigate to: System Logs → System Log → All
 // Filter by: Source = "Script execution"
+```
+
+### Script Synchronization Issues
+
+**File Permission Errors:**
+```bash
+# Error: EACCES: permission denied
+# Solution: Ensure directory exists and is writable
+mkdir -p /scripts/business_rules
+chmod 755 /scripts/business_rules
+
+# Or use absolute paths
+SN-Sync-Script-To-Local({
+  script_sys_id: "abc123",
+  local_path: "/Users/username/servicenow/scripts/my_script.js"
+});
+```
+
+**Watch Mode Not Detecting Changes:**
+```bash
+# Issue: Watch mode not syncing changes
+# Causes:
+# 1. File saved in different location
+# 2. Watch process killed/stopped
+# 3. Network connectivity issues
+
+# Solution: Check watch process is running
+ps aux | grep "watch-script"
+
+# Restart watch mode
+SN-Watch-Script({
+  local_path: "/absolute/path/to/script.js",
+  script_sys_id: "abc123",
+  instance: "dev"
+});
+```
+
+**Watch Mode Limitations:**
+- Only watches single file (not directory)
+- 2-second polling interval (not instant)
+- Requires active network connection
+- Stops when terminal closed
+
+### Natural Language Query Issues
+
+**Query Not Parsing as Expected:**
+```javascript
+// Problem: NL query returns wrong results
+SN-NL-Search({
+  table_name: "incident",
+  query: "incidents from yesterday"  // Ambiguous!
+});
+
+// Solution: Be more specific
+SN-NL-Search({
+  table_name: "incident",
+  query: "created yesterday"  // Clear field reference
+});
+
+// Or use encoded query for precision
+SN-Query-Table({
+  table_name: "incident",
+  query: "sys_created_onONYesterday@javascript:gs.beginningOfYesterday()@javascript:gs.endOfYesterday()"
+});
+```
+
+**Unsupported Patterns:**
+```javascript
+// NOT SUPPORTED: Complex aggregations
+"count incidents by priority"  // Use GlideAggregate instead
+
+// NOT SUPPORTED: Joins across tables
+"incidents with related problems"  // Use multiple queries
+
+// NOT SUPPORTED: Calculations
+"incidents where age greater than 30 days"  // Use calculated fields
+```
+
+**Best Practice:**
+Use `SN-NL-Query-Builder` to validate queries before execution:
+```javascript
+// Test query conversion first
+const encoded = SN-NL-Query-Builder({
+  natural_query: "active incidents assigned to Network Team"
+});
+console.log(encoded); // Verify encoded query is correct
+
+// Then use in actual query
+SN-Query-Table({
+  table_name: "incident",
+  query: encoded
+});
 ```
 
 ---
@@ -412,17 +746,24 @@ SN-Execute-Background-Script({ script: "...", description: "..." });
 3. **Verify results** - query sys_update_xml after config changes
 4. **Check schema** - SN-Get-Table-Schema before unfamiliar tables
 5. **Monitor logs** - ServiceNow System Logs for background scripts
+6. **Use convenience tools** - SN-Close-Incident, SN-Assign-Incident for common ITSM tasks
+7. **NL for exploration** - Natural language queries great for prototyping
+8. **Local development** - Sync scripts locally for version control and IDE features
+9. **MCP resources** - Quick schema/instance lookups without API calls
 
 ---
 
 ## 📊 Statistics
 
-- **MCP Tools:** 34 powerful tools
+- **MCP Tools:** 40+ powerful tools
 - **Tables Supported:** 160+ ServiceNow tables (via generic tools)
 - **Batch Operations:** 43+ parallel calls tested successfully
 - **Script Execution:** ~1 second automated via sys_trigger
 - **Instance Support:** Unlimited instances via config file
 - **Generic CRUD:** Works on **any** ServiceNow table dynamically
+- **Natural Language Patterns:** 15+ query patterns supported
+- **Convenience Tools:** 10+ specialized ITSM operations
+- **MCP Resources:** 3+ read-only resource types
 
 ---
 
