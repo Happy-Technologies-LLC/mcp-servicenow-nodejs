@@ -1,0 +1,1 @@
+{\n  "instances": [\n    {\n      "url": "{{DEV_INSTANCE_URL}}",\n      "username": "{{DEV_USERNAME}}",\n      "password": "{{DEV_PASSWORD}}"\n    },\n    {\n      "url": "{{PROD_INSTANCE_URL}}",\n      "username": "{{PROD_USERNAME}}",\n      "password": "{{PROD_PASSWORD}}"\n    }\n  ]\n}
