@@ -32,12 +32,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/mcp-servicenow-nodejs.git"
+    "url": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/mcp-servicenow-nodejs/issues"
+    "url": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs/issues"
   },
-  "homepage": "https://github.com/yourusername/mcp-servicenow-nodejs#readme",
+  "homepage": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs#readme",
   "keywords": [
     "servicenow",
     "mcp",
