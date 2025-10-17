@@ -1,6 +1,21 @@
-# ServiceNow MCP Server v2.1 - Multi-Instance Intelligent Architecture
+<div align="center">
+  <img src="assets/logo.svg" alt="ServiceNow MCP Server" width="200"/>
 
-A revolutionary **metadata-driven ServiceNow MCP server** that supports **multiple ServiceNow instances** simultaneously with automatic schema discovery and optimized tool generation. Built with Node.js and Express.
+  # ServiceNow MCP Server v2.1
+
+  **Multi-Instance Intelligent Architecture**
+
+  A revolutionary metadata-driven ServiceNow MCP server that supports multiple ServiceNow instances simultaneously with automatic schema discovery and optimized tool generation.
+
+  *Part of the [Happy Technologies](https://happy-tech.biz) composable service ecosystem*
+
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+  [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+  [![ServiceNow](https://img.shields.io/badge/ServiceNow-Compatible-00a3ba)](https://www.servicenow.com)
+
+</div>
+
+---
 
 ## 🚀 Revolutionary Features
 
