@@ -28,6 +28,23 @@
     "jest": "^30.2.0",
     "nodemon": "^3.0.2"
   },
-  "author": "Your Name",
-  "license": "MIT"
+  "author": "ServiceNow MCP Server Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/mcp-servicenow-nodejs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/mcp-servicenow-nodejs/issues"
+  },
+  "homepage": "https://github.com/yourusername/mcp-servicenow-nodejs#readme",
+  "keywords": [
+    "servicenow",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "automation",
+    "itsm",
+    "rest-api"
+  ]
 }

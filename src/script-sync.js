@@ -1,5 +1,8 @@
 /**
- * ServiceNow Script Sync Module
+ * ServiceNow MCP Server - Script Synchronization
+ *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
  *
  * Enables local script development with Git integration.
  * Supports bidirectional sync between local files and ServiceNow.

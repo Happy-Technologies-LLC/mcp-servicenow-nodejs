@@ -1,3 +1,10 @@
+/**
+ * ServiceNow MCP Server - Express HTTP Server
+ *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
+ */
+
 import express from 'express';
 import dotenv from 'dotenv';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';

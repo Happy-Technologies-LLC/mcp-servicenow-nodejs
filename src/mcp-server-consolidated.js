@@ -1,3 +1,10 @@
+/**
+ * ServiceNow MCP Server - MCP Tool Registration
+ *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
+ */
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'fs/promises';

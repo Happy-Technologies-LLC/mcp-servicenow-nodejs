@@ -1,6 +1,10 @@
 /**
- * Natural Language to ServiceNow Encoded Query Parser
+ * ServiceNow MCP Server - Natural Language Query Processing
  *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
+ *
+ * Natural Language to ServiceNow Encoded Query Parser
  * Converts human-readable queries into ServiceNow encoded query strings.
  * Uses pattern matching for reliability and speed.
  *

@@ -1,3 +1,10 @@
+/**
+ * ServiceNow MCP Server - Multi-Instance Configuration Manager
+ *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

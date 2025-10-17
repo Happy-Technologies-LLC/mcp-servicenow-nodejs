@@ -1,5 +1,9 @@
 /**
- * MCP Resources implementation for ServiceNow MCP Server
+ * ServiceNow MCP Server - MCP Resources Implementation
+ *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
+ *
  * Provides read-only, cacheable access to ServiceNow data
  */
 

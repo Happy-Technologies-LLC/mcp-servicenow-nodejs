@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 
+/**
+ * ServiceNow MCP Server - Stdio Transport
+ *
+ * Copyright (c) 2025 Happy Technologies LLC
+ * Licensed under the MIT License - see LICENSE file for details
+ */
+
 import dotenv from 'dotenv';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ServiceNowClient } from './servicenow-client.js';
