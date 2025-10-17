@@ -6,6 +6,9 @@
 *.log
 npm-debug.log*
 
+# MCP Registry tokens
+.mcpregistry_*
+
 # Config with credentials (keep example only)
 config/servicenow-instances.json
 
