@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   servicenow-mcp-server:
-    image: happytechnologies/mcp-servicenow-nodejs:latest
+    image: nczitzer/mcp-servicenow-nodejs:latest
     build:
       context: .
       dockerfile: Dockerfile

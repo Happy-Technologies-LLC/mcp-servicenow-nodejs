@@ -1,4 +1,5 @@
 # ServiceNow MCP Server - Docker Image
+# Author: nczitzer
 # Part of Happy Technologies composable service ecosystem
 
 FROM node:18-alpine
