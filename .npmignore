@@ -1,0 +1,42 @@
+# Development files
+.env
+.env.*
+.env.backup
+.DS_Store
+*.log
+npm-debug.log*
+
+# Config with credentials (keep example only)
+config/servicenow-instances.json
+
+# Test files
+tests/
+coverage/
+*.test.js
+__tests__/
+
+# Development tools
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (keep only essential)
+docs/research/
+
+# Examples and scripts
+examples/
+scripts/extract-table-metadata.js
+
+# Git
+.git/
+.gitignore
+
+# Config examples (keep in package)
+# config/servicenow-instances.example.json should be included
+
+# Node modules
+node_modules/
+
+# CI/CD
+.github/

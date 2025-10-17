@@ -1,9 +1,13 @@
 {
   "name": "servicenow-mcp-server",
-  "version": "2.0.0",
-  "description": "Consolidated ServiceNow MCP Server with Schema Lookup and Generic Tools",
+  "version": "2.1.0",
+  "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
   "main": "src/server.js",
   "type": "module",
+  "mcpName": "io.github.happy-technologies-llc/mcp-servicenow-nodejs",
+  "bin": {
+    "servicenow-mcp-server": "./src/stdio-server.js"
+  },
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
@@ -28,7 +32,7 @@
     "jest": "^30.2.0",
     "nodemon": "^3.0.2"
   },
-  "author": "ServiceNow MCP Server Contributors",
+  "author": "Happy Technologies LLC",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -39,12 +43,19 @@
   },
   "homepage": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs#readme",
   "keywords": [
-    "servicenow",
     "mcp",
-    "model-context-protocol",
+    "modelcontextprotocol",
+    "servicenow",
+    "itsm",
+    "claude",
     "ai",
     "automation",
-    "itsm",
-    "rest-api"
+    "rest-api",
+    "service-catalog",
+    "cmdb",
+    "workflow",
+    "flow-designer",
+    "update-set",
+    "multi-instance"
   ]
 }
