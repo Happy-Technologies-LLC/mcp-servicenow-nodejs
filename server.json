@@ -1,0 +1,57 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.happy-technologies-llc/servicenow-nodejs",
+  "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
+  "repository": {
+    "url": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs",
+    "source": "github"
+  },
+  "version": "2.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "servicenow-mcp-server",
+      "version": "2.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "ServiceNow instance URL (e.g., https://dev123456.service-now.com)",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "SERVICENOW_INSTANCE_URL"
+        },
+        {
+          "description": "ServiceNow username",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "SERVICENOW_USERNAME"
+        },
+        {
+          "description": "ServiceNow password",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "SERVICENOW_PASSWORD"
+        },
+        {
+          "description": "Authentication type (default: basic)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "SERVICENOW_AUTH_TYPE"
+        },
+        {
+          "description": "Specific instance name from config file (optional)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "SERVICENOW_INSTANCE"
+        }
+      ]
+    }
+  ]
+}
