@@ -4,7 +4,7 @@
   "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
   "main": "src/server.js",
   "type": "module",
-  "mcpName": "io.github.happy-technologies-llc/mcp-servicenow-nodejs",
+  "mcpName": "io.github.nickzitzer/servicenow-nodejs",
   "bin": {
     "servicenow-mcp-server": "./src/stdio-server.js"
   },

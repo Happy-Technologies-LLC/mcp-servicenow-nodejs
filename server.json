@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
-  "name": "io.github.happy-technologies-llc/servicenow-nodejs",
-  "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
+  "name": "io.github.nickzitzer/servicenow-nodejs",
+  "description": "Multi-instance ServiceNow MCP server with 40+ tools and intelligent schema discovery",
   "repository": {
     "url": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs",
     "source": "github"
