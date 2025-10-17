@@ -1,0 +1,51 @@
+# Node modules (will be installed in container)
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Development files
+.env
+.env.*
+.env.backup
+.DS_Store
+*.log
+
+# Git
+.git/
+.gitignore
+.github/
+
+# MCP Registry tokens
+.mcpregistry_*
+
+# Config with credentials
+config/servicenow-instances.json
+
+# Tests
+tests/
+coverage/
+*.test.js
+__tests__/
+
+# Development tools
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (keep essential only)
+docs/research/
+
+# Examples and scripts
+examples/
+scripts/extract-table-metadata.js
+scripts/background_script_*.js
+scripts/link_ui_policy_actions_*.js
+scripts/set_update_set_*.js
+scripts/test_*.js
+
+# Setup files
+setup/
+
+# IDE
+.claude/
