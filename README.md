@@ -549,6 +549,20 @@ DEBUG=true npm run dev
 - **Tables Supported:** 160+ ServiceNow tables via generic tools
 - **Batch Operations:** 43+ parallel calls tested successfully
 
+## 🙏 Acknowledgments
+
+This project was inspired by and built upon ideas from the [Echelon AI Labs ServiceNow MCP Server](https://github.com/echelon-ai-labs/servicenow-mcp). We're grateful for their pioneering work in bringing Model Context Protocol capabilities to ServiceNow, which provided valuable insights and inspiration for developing this multi-instance, metadata-driven implementation.
+
+**Key innovations we've added:**
+- Multi-instance support with dynamic routing
+- 40+ tools with natural language search
+- Local script development with Git integration
+- Automated background script execution via sys_trigger
+- Dynamic schema discovery across 160+ tables
+- Convenience tools for common ITSM operations
+
+We encourage the community to explore both implementations and contribute to advancing ServiceNow automation through MCP.
+
 ## 📄 License
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
