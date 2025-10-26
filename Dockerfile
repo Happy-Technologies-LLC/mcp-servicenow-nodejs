@@ -2,16 +2,36 @@
 # Author: nczitzer
 # Part of Happy Technologies composable service ecosystem
 
-FROM node:18-alpine
+# Stage 1: Dependencies
+FROM node:22-alpine AS dependencies
 
-# Set working directory
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (production only)
-RUN npm install --omit=dev
+# Install all dependencies (including dev for build)
+RUN npm install && \
+    npm cache clean --force
+
+# Stage 2: Production
+FROM node:22-alpine AS production
+
+# Set working directory
+WORKDIR /app
+
+# Security: Update Alpine packages to patch vulnerabilities
+RUN apk update && \
+    apk upgrade --no-cache && \
+    rm -rf /var/cache/apk/*
+
+# Copy package.json only (not package-lock to avoid dev dependency references)
+COPY package.json ./
+
+# Install only production dependencies and generate clean lockfile
+RUN npm install --package-lock-only --omit=dev && \
+    npm ci --omit=dev && \
+    npm cache clean --force
 
 # Copy application source
 COPY src/ ./src/

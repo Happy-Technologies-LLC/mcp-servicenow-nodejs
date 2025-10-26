@@ -1,7 +1,8 @@
 # Node modules (will be installed in container)
 node_modules/
 npm-debug.log
-package-lock.json
+# Keep package-lock.json for reproducible builds
+# package-lock.json
 
 # Development files
 .env
