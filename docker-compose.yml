@@ -18,6 +18,9 @@ services:
 
       # Multi-instance mode (specify instance name)
       - SERVICENOW_INSTANCE=${SERVICENOW_INSTANCE}
+
+      # SSE Configuration
+      - SSE_KEEPALIVE_INTERVAL=${SSE_KEEPALIVE_INTERVAL:-15000}
     volumes:
       # Mount config file for multi-instance support
       - ./config/servicenow-instances.json:/app/config/servicenow-instances.json:ro

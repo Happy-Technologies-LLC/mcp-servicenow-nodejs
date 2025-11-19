@@ -30,9 +30,16 @@
 - **🗣️ Natural Language Search**: Query ServiceNow using plain English queries
 - **📚 MCP Resources**: 8 read-only resource URIs for quick lookups and documentation
 
-## 🆕 What's New in v2.1
+## 🆕 What's New in v2.1.4
 
-**October 2025 Release**
+**November 2025 Release**
+
+- 💓 **SSE Keepalive Fix**: Automatic heartbeat mechanism prevents Docker SSE connection drops (15s default, configurable)
+- 🔒 **Security Patches**: Fixed high-severity glob vulnerability (CVE-2025-64756)
+- 🐳 **Docker Improvements**: Optimized SSE configuration for production deployments
+- 📖 **SSE Documentation**: Comprehensive Docker setup guide with nginx/proxy configurations
+
+**October 2025 Release (v2.1)**
 
 - 🎨 **Local Script Development**: Sync scripts with Git, watch mode for continuous development, full version control integration
 - 🗣️ **Natural Language Search**: Query ServiceNow using plain English (15+ supported patterns)

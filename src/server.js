@@ -15,6 +15,9 @@ import { configManager } from './config-manager.js';
 // Load environment variables
 dotenv.config();
 
+// SSE configuration
+const SSE_KEEPALIVE_INTERVAL = parseInt(process.env.SSE_KEEPALIVE_INTERVAL || '15000', 10); // Default: 15 seconds
+
 const app = express();
 app.use(express.json());
 
@@ -39,22 +42,58 @@ serviceNowClient.currentInstanceName = defaultInstance.name;
  */
 app.get('/mcp', async (req, res) => {
   try {
+    // SSE-specific headers to prevent buffering and timeouts
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.setHeader('Connection', 'keep-alive');
+
+    // Disable timeout for SSE endpoint (0 = infinite)
+    req.setTimeout(0);
+    res.setTimeout(0);
+
     // Create transport and start SSE connection
     const transport = new SSEServerTransport('/mcp', res);
 
     // Create and configure new MCP server instance
     const server = await createMcpServer(serviceNowClient);
 
+    // Set up keepalive heartbeat to prevent connection timeout
+    // Send a comment every N seconds to keep connection alive
+    const keepaliveInterval = setInterval(() => {
+      try {
+        // Send SSE comment (starts with :) to keep connection alive
+        res.write(': keepalive\n\n');
+      } catch (error) {
+        console.error('❌ Keepalive failed, clearing interval:', error.message);
+        clearInterval(keepaliveInterval);
+      }
+    }, SSE_KEEPALIVE_INTERVAL);
+
     // Set up transport cleanup
     transport.onclose = () => {
       if (sessions[transport.sessionId]) {
+        clearInterval(keepaliveInterval);
         delete sessions[transport.sessionId];
         console.log(`🧹 Cleaned up session ${transport.sessionId}`);
       }
     };
 
+    // Clean up on request close/error
+    req.on('close', () => {
+      clearInterval(keepaliveInterval);
+      if (sessions[transport.sessionId]) {
+        delete sessions[transport.sessionId];
+        console.log(`🔌 Client disconnected: ${transport.sessionId}`);
+      }
+    });
+
+    req.on('error', (error) => {
+      console.error('❌ Request error:', error);
+      clearInterval(keepaliveInterval);
+    });
+
     // Store the session
-    sessions[transport.sessionId] = { server, transport };
+    sessions[transport.sessionId] = { server, transport, keepaliveInterval };
     console.log(`🔗 New session established: ${transport.sessionId}`);
 
     // Connect server to transport and start SSE
@@ -63,7 +102,9 @@ app.get('/mcp', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error establishing SSE connection:', error);
-    res.status(500).json({ error: 'Failed to establish SSE connection' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to establish SSE connection' });
+    }
   }
 });
 
@@ -112,14 +153,14 @@ app.get('/instances', (req, res) => {
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`ServiceNow MCP Server listening on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
-
-  console.log(`Available instances: http://localhost:${PORT}/instances`);
+  console.log(`🚀 ServiceNow MCP Server listening on port ${PORT}`);
+  console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`🔌 MCP SSE endpoint: http://localhost:${PORT}/mcp`);
+  console.log(`📋 Available instances: http://localhost:${PORT}/instances`);
+  console.log(`💓 SSE keepalive interval: ${SSE_KEEPALIVE_INTERVAL}ms`);
 
   if (process.env.DEBUG === 'true') {
-    console.log('Debug mode enabled');
-    console.log(`Active ServiceNow instance: ${defaultInstance.name} - ${defaultInstance.url}`);
+    console.log('🐛 Debug mode enabled');
+    console.log(`🔗 Active ServiceNow instance: ${defaultInstance.name} - ${defaultInstance.url}`);
   }
 });
