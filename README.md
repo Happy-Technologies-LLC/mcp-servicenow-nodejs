@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/logo.svg" alt="ServiceNow MCP Server" width="200"/>
 
-  # ServiceNow MCP Server v2.1
+  # ServiceNow MCP Server v2.1.5
 
   **Multi-Instance Intelligent Architecture**
 
@@ -30,14 +30,15 @@
 - **🗣️ Natural Language Search**: Query ServiceNow using plain English queries
 - **📚 MCP Resources**: 8 read-only resource URIs for quick lookups and documentation
 
-## 🆕 What's New in v2.1.4
+## 🆕 What's New in v2.1.5
 
 **November 2025 Release**
 
 - 💓 **SSE Keepalive Fix**: Automatic heartbeat mechanism prevents Docker SSE connection drops (15s default, configurable)
 - 🔒 **Security Patches**: Fixed high-severity glob vulnerability (CVE-2025-64756)
-- 🐳 **Docker Improvements**: Optimized SSE configuration for production deployments
-- 📖 **SSE Documentation**: Comprehensive Docker setup guide with nginx/proxy configurations
+- 🐳 **Production Ready**: Optimized SSE configuration for Docker, Kubernetes, and proxy deployments
+- 📖 **Complete Documentation**: Comprehensive SSE setup guide with nginx/Traefik/HAProxy configurations
+- 🔍 **Connection Monitoring**: Automatic cleanup and lifecycle logging for debugging
 
 **October 2025 Release (v2.1)**
 
