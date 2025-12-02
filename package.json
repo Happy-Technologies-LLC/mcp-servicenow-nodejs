@@ -20,7 +20,7 @@
     "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0",
+    "@modelcontextprotocol/sdk": "^1.24.0",
     "axios": "^1.6.0",
     "chokidar": "^4.0.3",
     "dotenv": "^16.3.1",
