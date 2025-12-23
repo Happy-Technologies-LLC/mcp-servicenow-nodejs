@@ -1,0 +1,101 @@
+name: Security Patch Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'package-lock.json'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  check-security-update:
+    if: github.event_name == 'push' || (github.event.pull_request.merged == true && contains(github.event.pull_request.title, 'security'))
+    runs-on: ubuntu-latest
+    outputs:
+      has-vulnerabilities: ${{ steps.audit.outputs.has-vulnerabilities }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for vulnerabilities
+        id: audit
+        run: |
+          if npm audit --audit-level=moderate --json > audit.json; then
+            echo "has-vulnerabilities=false" >> $GITHUB_OUTPUT
+            echo "No vulnerabilities found"
+          else
+            VULN_COUNT=$(jq '.metadata.vulnerabilities.total' audit.json)
+            if [ "$VULN_COUNT" -gt 0 ]; then
+              echo "has-vulnerabilities=true" >> $GITHUB_OUTPUT
+              echo "Found $VULN_COUNT vulnerabilities"
+            else
+              echo "has-vulnerabilities=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+        continue-on-error: true
+
+      - name: Upload audit results
+        if: steps.audit.outputs.has-vulnerabilities == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit
+          path: audit.json
+
+  auto-patch:
+    needs: check-security-update
+    if: needs.check-security-update.outputs.has-vulnerabilities == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply security patches
+        run: npm audit fix --audit-level=moderate
+
+      - name: Bump patch version
+        run: npm version patch -m "Security patch: %s"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: apply security patches'
+          title: 'Security: Automated vulnerability patches'
+          body: |
+            This PR was automatically generated to fix security vulnerabilities.
+
+            - Applied `npm audit fix` to patch vulnerabilities
+            - Bumped patch version
+            - All tests passed
+
+            Please review and merge if appropriate.
+          branch: security-patch-${{ github.run_number }}
+          delete-branch: true
