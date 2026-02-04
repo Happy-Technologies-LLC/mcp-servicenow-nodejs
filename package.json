@@ -1,6 +1,6 @@
 {
   "name": "servicenow-mcp-server",
-  "version": "2.1.5",
+  "version": "2.1.7",
   "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
   "main": "src/server.js",
   "type": "module",
@@ -20,12 +20,12 @@
     "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.1",
-    "axios": "^1.6.0",
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "axios": "^1.13.4",
     "chokidar": "^4.0.3",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "zod": "^3.22.4"
+    "dotenv": "^16.6.1",
+    "express": "^4.22.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
