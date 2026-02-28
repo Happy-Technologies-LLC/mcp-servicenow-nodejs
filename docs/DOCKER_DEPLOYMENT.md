@@ -55,7 +55,7 @@ For multi-instance support, mount your config file:
 
 ```bash
 # Create config file
-cp config/servicenow-instances.example.json config/servicenow-instances.json
+cp config/servicenow-instances.json.example config/servicenow-instances.json
 # Edit with your instances
 
 # Run with mounted config

@@ -106,13 +106,13 @@ The Docker image is published with multiple tags:
 Example usage:
 ```bash
 # Always get the latest
-docker pull USERNAME/servicenow-mcp-server:latest
+docker pull USERNAME/mcp-servicenow-nodejs:latest
 
 # Pin to specific version
-docker pull USERNAME/servicenow-mcp-server:2.1.5
+docker pull USERNAME/mcp-servicenow-nodejs:2.1.5
 
 # Pin to minor version (receives patches)
-docker pull USERNAME/servicenow-mcp-server:2.1
+docker pull USERNAME/mcp-servicenow-nodejs:2.1
 ```
 
 ## Setting Up Secrets

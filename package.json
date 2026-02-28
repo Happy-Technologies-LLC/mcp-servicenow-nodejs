@@ -1,6 +1,6 @@
 {
   "name": "servicenow-mcp-server",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
   "main": "src/server.js",
   "type": "module",
@@ -20,8 +20,8 @@
     "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.3",
-    "axios": "^1.13.4",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "axios": "^1.13.6",
     "chokidar": "^4.0.3",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
@@ -30,7 +30,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "jest": "^30.2.0",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.1.14"
   },
   "author": "Happy Technologies LLC",
   "license": "MIT",

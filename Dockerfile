@@ -3,7 +3,7 @@
 # Part of Happy Technologies composable service ecosystem
 
 # Stage 1: Dependencies
-FROM node:22-alpine AS dependencies
+FROM node:24-alpine AS dependencies
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN npm install && \
     npm cache clean --force
 
 # Stage 2: Production
-FROM node:22-alpine AS production
+FROM node:24-alpine AS production
 
 # Set working directory
 WORKDIR /app
@@ -32,6 +32,10 @@ COPY package.json ./
 RUN npm install --package-lock-only --omit=dev && \
     npm ci --omit=dev && \
     npm cache clean --force
+
+# Runtime doesn't need package managers; remove them to reduce attack surface
+RUN rm -rf /usr/local/lib/node_modules/npm && \
+    rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 # Copy application source
 COPY src/ ./src/

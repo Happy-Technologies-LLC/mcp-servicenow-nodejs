@@ -130,7 +130,7 @@ To enable this, use the JSON config file instead of ENV variables:
 
 ```bash
 # Copy example config
-cp config/servicenow-instances.example.json config/servicenow-instances.json
+cp config/servicenow-instances.json.example config/servicenow-instances.json
 
 # Edit with your instances
 nano config/servicenow-instances.json

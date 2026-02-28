@@ -96,9 +96,8 @@ app.get('/mcp', async (req, res) => {
     sessions[transport.sessionId] = { server, transport, keepaliveInterval };
     console.log(`🔗 New session established: ${transport.sessionId}`);
 
-    // Connect server to transport and start SSE
+    // connect() starts the transport automatically in current MCP SDK
     await server.connect(transport);
-    await transport.start();
 
   } catch (error) {
     console.error('❌ Error establishing SSE connection:', error);
@@ -122,7 +121,8 @@ app.post('/mcp', async (req, res) => {
     }
 
     const { transport } = sessions[sessionId];
-    await transport.handlePostMessage(req, res);
+    // express.json() already consumed the stream, so pass parsed body
+    await transport.handlePostMessage(req, res, req.body);
 
   } catch (error) {
     console.error('❌ Error handling POST message:', error);

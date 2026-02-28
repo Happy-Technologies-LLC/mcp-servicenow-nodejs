@@ -113,7 +113,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/servicenow-mcp-server
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-servicenow-nodejs
           tags: |
             type=semver,pattern={{version}},value=v${{ needs.check-version.outputs.version }}
             type=semver,pattern={{major}}.{{minor}},value=v${{ needs.check-version.outputs.version }}
@@ -136,5 +136,5 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/servicenow-mcp-server
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-servicenow-nodejs
           readme-filepath: ./README.md

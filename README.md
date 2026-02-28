@@ -72,7 +72,7 @@
    **Option A: Multi-Instance Setup (Recommended)**
    ```bash
    # Create config file
-   cp config/servicenow-instances.example.json config/servicenow-instances.json
+   cp config/servicenow-instances.json.example config/servicenow-instances.json
 
    # Edit with your instances
    nano config/servicenow-instances.json
