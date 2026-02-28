@@ -1,12 +1,12 @@
 {
   "name": "servicenow-mcp-server",
-  "version": "2.1.8",
+  "version": "2.1.9",
   "description": "Multi-instance ServiceNow MCP server with 40+ tools, natural language search, and local script development",
   "main": "src/server.js",
   "type": "module",
   "mcpName": "io.github.nickzitzer/servicenow-nodejs",
   "bin": {
-    "servicenow-mcp-server": "./src/stdio-server.js"
+    "servicenow-mcp-server": "src/stdio-server.js"
   },
   "scripts": {
     "dev": "nodemon src/server.js",
@@ -37,7 +37,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs.git"
+    "url": "git+https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs.git"
   },
   "bugs": {
     "url": "https://github.com/Happy-Technologies-LLC/mcp-servicenow-nodejs/issues"

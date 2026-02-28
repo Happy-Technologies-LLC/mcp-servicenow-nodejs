@@ -29,7 +29,15 @@ docs/research/
 
 # Examples and scripts
 examples/
-scripts/extract-table-metadata.js
+scripts/
+
+# Claude Code / Claude Flow
+.claude/
+.claude-flow/
+CLAUDE.md
+
+# Setup artifacts
+setup/
 
 # Git
 .git/
