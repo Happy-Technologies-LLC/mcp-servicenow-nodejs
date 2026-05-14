@@ -45,24 +45,36 @@ export class ConfigManager {
    * Fallback: Load single instance from .env file (backward compatibility)
    */
   loadFromEnv() {
-    if (!process.env.SERVICENOW_INSTANCE_URL || !process.env.SERVICENOW_USERNAME || !process.env.SERVICENOW_PASSWORD) {
-      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env');
+    const isOAuth = process.env.SERVICENOW_AUTH_TYPE === 'oauth';
+    const grantType = process.env.SERVICENOW_OAUTH_GRANT_TYPE;
+    // Username and password are not required for the OAuth client_credentials
+    // grant - the client authenticates with clientId/clientSecret only.
+    const requiresUserPass = !(isOAuth && grantType === 'client_credentials');
+
+    if (!process.env.SERVICENOW_INSTANCE_URL) {
+      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD unless SERVICENOW_OAUTH_GRANT_TYPE=client_credentials) in .env');
+    }
+    if (requiresUserPass && (!process.env.SERVICENOW_USERNAME || !process.env.SERVICENOW_PASSWORD)) {
+      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env (USERNAME and PASSWORD not required when SERVICENOW_AUTH_TYPE=oauth and SERVICENOW_OAUTH_GRANT_TYPE=client_credentials)');
     }
 
     const instance = {
       name: 'default',
       url: process.env.SERVICENOW_INSTANCE_URL,
-      username: process.env.SERVICENOW_USERNAME,
-      password: process.env.SERVICENOW_PASSWORD,
+      username: process.env.SERVICENOW_USERNAME || '',
+      password: process.env.SERVICENOW_PASSWORD || '',
       default: true,
       description: 'Loaded from .env'
     };
 
-    if (process.env.SERVICENOW_AUTH_TYPE === 'oauth') {
+    if (isOAuth) {
       instance.authType = 'oauth';
       instance.clientId = process.env.SERVICENOW_CLIENT_ID;
       instance.clientSecret = process.env.SERVICENOW_CLIENT_SECRET;
       instance.scope = process.env.SERVICENOW_OAUTH_SCOPE;
+      if (grantType) {
+        instance.grantType = grantType;
+      }
     }
 
     this.instances = [instance];
