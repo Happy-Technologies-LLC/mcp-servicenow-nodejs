@@ -7,6 +7,68 @@
 
 import axios from 'axios';
 
+/**
+ * Improve a failed axios error's message by surfacing ServiceNow's structured REST error
+ * body — `{ error: { message, detail }, status }` — instead of the opaque
+ * "Request failed with status code NNN". Mutates and returns the same error object so
+ * callers keep `error.response` (and the stack) intact.
+ * @param {Error} error - An axios error.
+ * @returns {Error} The same error, with an enriched `.message` when a body is present.
+ */
+export function enrichServiceNowError(error) {
+  const status = error?.response?.status;
+  const data = error?.response?.data;
+  const sn = data?.error;
+  let message;
+  if (sn && (sn.message || sn.detail)) {
+    message = `${status} ${sn.message || ''}${sn.detail ? ' — ' + sn.detail : ''}`.trim();
+  } else if (typeof data === 'string' && data.trim()) {
+    message = `${status}: ${data.trim()}`;
+  }
+  if (message) {
+    error.message = message;
+  }
+  return error;
+}
+
+/**
+ * Build a self-contained wrapper around a user background script that captures its
+ * return value, any thrown error, and (best-effort) its `gs.info(...)` output, then
+ * emits a single JSON-encoded result line to syslog tagged with a unique marker. The
+ * caller reads that one line back to return script output synchronously.
+ * @param {string} script - The user's script body.
+ * @param {string} marker - A unique marker to tag and later find the result line.
+ * @returns {string} The wrapped script.
+ */
+export function buildOutputCaptureScript(script, marker) {
+  return `// MCP output-capturing harness (marker ${marker})
+var __mcpBuf = [];
+var __mcpOrigInfo = null;
+try {
+  __mcpOrigInfo = gs.info;
+  gs.info = function (m) { try { __mcpBuf.push('' + m); } catch (e) {} return __mcpOrigInfo.call(gs, m); };
+} catch (e) { /* gs.info not overridable here; user logs still land in syslog */ }
+var __mcpResult;
+var __mcpError = null;
+try {
+  __mcpResult = (function () {
+${script}
+  })();
+} catch (e) {
+  __mcpError = (e && e.message) ? e.message : ('' + e);
+}
+try { if (__mcpOrigInfo) gs.info = __mcpOrigInfo; } catch (e) {}
+var __mcpPayload = {
+  marker: '${marker}',
+  ok: __mcpError === null,
+  error: __mcpError,
+  result: (__mcpResult === undefined ? null : __mcpResult),
+  output: __mcpBuf
+};
+gs.info('${marker} ' + new JSON().encode(__mcpPayload));
+`;
+}
+
 export class ServiceNowClient {
   constructor(instanceUrl, username, password, options = {}) {
     this.currentInstanceName = 'default';
@@ -97,7 +159,8 @@ export class ServiceNowClient {
       return config;
     });
 
-    // Response interceptor — refresh on 401 and retry once
+    // Response interceptor — refresh the token and retry once on a 401, and surface
+    // ServiceNow's error body on everything else.
     this.client.interceptors.response.use(
       (response) => response,
       async (error) => {
@@ -115,7 +178,7 @@ export class ServiceNowClient {
           originalRequest.headers['Authorization'] = `Bearer ${token}`;
           return this.client.request(originalRequest);
         }
-        throw error;
+        throw enrichServiceNowError(error);
       }
     );
   }
@@ -1097,6 +1160,96 @@ try {
       };
     } catch (error) {
       throw new Error(`Failed to create script trigger: ${error.message}`);
+    }
+  }
+
+  /**
+   * Execute a background script and return its output synchronously.
+   *
+   * Wraps the script in an output-capturing harness, schedules it via sys_trigger (the
+   * only execution path available to a non-interactive integration user), then polls
+   * syslog for the harness's single result line — so the caller gets the script's return
+   * value, any thrown error, and its gs.info output back in one call instead of having to
+   * do a separate, time-bounded syslog read.
+   *
+   * Note on writes: a GlideRecord write that fails inside the sys_trigger context (e.g. a
+   * data policy or mandatory-field violation) surfaces here via `ok`/`error`/`output`
+   * rather than as a silent no-op, so callers can tell a real failure from success.
+   *
+   * @param {string} script - Script body to run.
+   * @param {string} description - sys_trigger description.
+   * @param {object} options - { timeoutMs = 15000, pollIntervalMs = 1500 }.
+   * @returns {Promise<object>} Scheduling metadata plus captured output when available.
+   */
+  async executeScriptWithOutput(script, description = 'MCP Script Execution', options = {}) {
+    const timeoutMs = options.timeoutMs || 15000;
+    const pollIntervalMs = options.pollIntervalMs || 1500;
+    const marker = `MCPOUT_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const wrapped = buildOutputCaptureScript(script, marker);
+    const scheduled = await this.executeScriptViaTrigger(wrapped, description, true);
+
+    // Poll syslog for the single result line the harness emits. Bound to today to avoid
+    // the unbounded-syslog 500, and match on the unique marker.
+    const query =
+      `sys_created_onONToday@javascript:gs.daysAgoStart(0)@javascript:gs.daysAgoEnd(0)` +
+      `^messageSTARTSWITH${marker} ^ORDERBYDESCsys_created_on`;
+    const deadline = Date.now() + timeoutMs;
+    let rawMessage = null;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      try {
+        const rows = await this.getRecords('syslog', {
+          sysparm_query: query,
+          sysparm_limit: 1,
+          sysparm_fields: 'message,sys_created_on'
+        });
+        if (rows && rows.length) {
+          rawMessage = rows[0].message;
+          break;
+        }
+      } catch (e) {
+        // Ignore transient read errors and keep polling until the deadline.
+      }
+    }
+
+    const base = {
+      scheduled: true,
+      trigger_sys_id: scheduled.trigger_sys_id,
+      trigger_name: scheduled.trigger_name,
+      next_action: scheduled.next_action
+    };
+
+    if (!rawMessage) {
+      return {
+        ...base,
+        captured: false,
+        message: `Script scheduled but no output captured within ${Math.round(timeoutMs / 1000)}s. ` +
+          `It may still be running, or it may produce no output.`
+      };
+    }
+
+    // Strip the marker prefix and parse the JSON payload the harness encoded.
+    const json = rawMessage.slice(rawMessage.indexOf(marker) + marker.length).trim();
+    try {
+      const payload = JSON.parse(json);
+      return {
+        ...base,
+        captured: true,
+        ok: payload.ok,
+        error: payload.error,
+        result: payload.result,
+        output: payload.output || [],
+        raw: rawMessage
+      };
+    } catch (e) {
+      return {
+        ...base,
+        captured: true,
+        ok: null,
+        raw: rawMessage,
+        message: 'Captured a result line but could not parse its payload.'
+      };
     }
   }
 

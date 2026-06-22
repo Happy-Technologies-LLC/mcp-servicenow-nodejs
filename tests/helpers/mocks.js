@@ -32,6 +32,7 @@ export function createMockServiceNowClient() {
 
     // Background script execution
     executeScriptViaTrigger: jest.fn(),
+    executeScriptWithOutput: jest.fn(),
 
     // Schema discovery
     discoverTableSchema: jest.fn(),
