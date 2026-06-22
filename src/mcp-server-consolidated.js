@@ -586,6 +586,11 @@ export async function createMcpServer(serviceNowClient, options = {}) {
               description: 'Execution method: "trigger" (default - most reliable), "ui" (UI endpoint), "auto" (try trigger then ui then fix script)',
               enum: ['trigger', 'ui', 'auto'],
               default: 'trigger'
+            },
+            return_output: {
+              type: 'boolean',
+              description: 'When true (default), capture and return the script\'s output (return value, thrown error, and gs.info logs) synchronously by reading it back from syslog, instead of returning only scheduling metadata.',
+              default: true
             }
           },
           required: ['script']
@@ -2048,12 +2053,56 @@ Please verify:
         }
 
         case 'SN-Execute-Background-Script': {
-          const { script, description } = args;
+          const { script, description, return_output = true } = args;
 
           console.error(`🚀 Executing background script via sys_trigger...`);
 
           try {
-            // Primary method: sys_trigger (ONLY working method)
+            if (return_output) {
+              // Schedule via sys_trigger AND read the script's output back synchronously.
+              const result = await serviceNowClient.executeScriptWithOutput(script, description);
+
+              if (!result.captured) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: `⏳ Script scheduled via sys_trigger, but no output was captured in time.
+
+${description ? `Description: ${description}\n` : ''}- Trigger sys_id: ${result.trigger_sys_id}
+- Trigger name: ${result.trigger_name}
+- Scheduled time: ${result.next_action}
+
+${result.message}
+
+🔍 Script:
+${script.substring(0, 300)}${script.length > 300 ? '...' : ''}`
+                  }]
+                };
+              }
+
+              const status = result.ok === false ? '❌ Script threw an error' : '✅ Script executed';
+              const logs = (result.output && result.output.length)
+                ? result.output.join('\n')
+                : '(no gs.info output)';
+              return {
+                content: [{
+                  type: 'text',
+                  text: `${status} (via sys_trigger, output captured)
+
+${description ? `Description: ${description}\n` : ''}- Trigger name: ${result.trigger_name}
+- ok: ${result.ok}
+${result.error ? `- error: ${result.error}\n` : ''}- return value: ${JSON.stringify(result.result)}
+
+📤 Output (gs.info):
+${logs}
+
+🔍 Script:
+${script.substring(0, 300)}${script.length > 300 ? '...' : ''}`
+                }]
+              };
+            }
+
+            // return_output === false: fire-and-forget, return scheduling metadata only.
             const result = await serviceNowClient.executeScriptViaTrigger(script, description, true);
 
             return {
