@@ -12,6 +12,28 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Map a loaded instance config to the options object ServiceNowClient expects.
+ * Single source of truth so every call site (server, stdio, resources,
+ * instance-switch) forwards the same auth fields — including the per-user
+ * authorization_code loopback config.
+ * @param {object} instance
+ * @returns {object} ServiceNowClient options
+ */
+export function instanceToClientOptions(instance) {
+  return {
+    authType: instance.authType || 'basic',
+    clientId: instance.clientId,
+    clientSecret: instance.clientSecret,
+    grantType: instance.grantType,
+    scope: instance.scope,
+    authorizeUrl: instance.authorizeUrl,
+    tokenUrl: instance.tokenUrl,
+    redirectPort: instance.redirectPort,
+    callbackPath: instance.callbackPath
+  };
+}
+
 export class ConfigManager {
   constructor() {
     this.configPath = path.join(__dirname, '../config/servicenow-instances.json');
@@ -47,15 +69,17 @@ export class ConfigManager {
   loadFromEnv() {
     const isOAuth = process.env.SERVICENOW_AUTH_TYPE === 'oauth';
     const grantType = process.env.SERVICENOW_OAUTH_GRANT_TYPE;
-    // Username and password are not required for the OAuth client_credentials
-    // grant - the client authenticates with clientId/clientSecret only.
-    const requiresUserPass = !(isOAuth && grantType === 'client_credentials');
+    // Username and password are not required for grants that don't use ROPC:
+    // client_credentials (client id/secret only) and authorization_code
+    // (identity comes from the interactive browser sign-in).
+    const passwordlessGrant = grantType === 'client_credentials' || grantType === 'authorization_code';
+    const requiresUserPass = !(isOAuth && passwordlessGrant);
 
     if (!process.env.SERVICENOW_INSTANCE_URL) {
-      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD unless SERVICENOW_OAUTH_GRANT_TYPE=client_credentials) in .env');
+      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD unless SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code) in .env');
     }
     if (requiresUserPass && (!process.env.SERVICENOW_USERNAME || !process.env.SERVICENOW_PASSWORD)) {
-      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env (USERNAME and PASSWORD not required when SERVICENOW_AUTH_TYPE=oauth and SERVICENOW_OAUTH_GRANT_TYPE=client_credentials)');
+      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env (USERNAME and PASSWORD not required when SERVICENOW_AUTH_TYPE=oauth and SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code)');
     }
 
     const instance = {
@@ -74,6 +98,20 @@ export class ConfigManager {
       instance.scope = process.env.SERVICENOW_OAUTH_SCOPE;
       if (grantType) {
         instance.grantType = grantType;
+      }
+      // Per-user authorization_code config (loopback + PKCE). All optional —
+      // the client derives authorize/token URLs from the instance URL if unset.
+      if (grantType === 'authorization_code') {
+        instance.authorizeUrl = process.env.SERVICENOW_OAUTH_AUTHORIZE_URL;
+        instance.tokenUrl = process.env.SERVICENOW_OAUTH_TOKEN_URL;
+        if (process.env.SERVICENOW_OAUTH_REDIRECT_PORT) {
+          const port = parseInt(process.env.SERVICENOW_OAUTH_REDIRECT_PORT, 10);
+          if (Number.isNaN(port) || port < 0 || port > 65535) {
+            throw new Error(`Invalid SERVICENOW_OAUTH_REDIRECT_PORT: "${process.env.SERVICENOW_OAUTH_REDIRECT_PORT}" is not a valid redirect port (0-65535).`);
+          }
+          instance.redirectPort = port;
+        }
+        instance.callbackPath = process.env.SERVICENOW_OAUTH_CALLBACK_PATH;
       }
     }
 

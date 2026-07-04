@@ -94,4 +94,26 @@ describe('stdio docs-only startup', () => {
     );
     expect(createServer).toHaveBeenCalledWith(expect.any(ServiceNowClientClass));
   });
+
+  test('does NOT silently fall back to docs-only when a passwordless (authorization_code) config errors', async () => {
+    const manager = {
+      getInstanceOrDefault: jest.fn(() => {
+        throw new Error('Missing ServiceNow credentials. Set SERVICENOW_INSTANCE_URL, ...');
+      })
+    };
+    const createServer = jest.fn(async () => ({ id: 'server' }));
+
+    // A passwordless grant is configured → the user clearly intends real SN,
+    // so a config error must surface, not vanish into docs-only mode.
+    await expect(createConfiguredMcpServer({
+      env: {
+        SERVICENOW_INSTANCE_URL: 'https://example.service-now.com',
+        SERVICENOW_AUTH_TYPE: 'oauth',
+        SERVICENOW_OAUTH_GRANT_TYPE: 'authorization_code'
+      },
+      manager,
+      createServer
+    })).rejects.toThrow(/Missing ServiceNow credentials/);
+    expect(createServer).not.toHaveBeenCalled();
+  });
 });

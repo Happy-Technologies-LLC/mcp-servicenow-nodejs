@@ -9,7 +9,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'fs/promises';
 import path from 'path';
-import { configManager } from './config-manager.js';
+import { configManager, instanceToClientOptions } from './config-manager.js';
 import { syncScript, syncAllScripts, SCRIPT_TYPES } from './script-sync.js';
 import { parseNaturalLanguage, getSupportedPatterns } from './natural-language.js';
 import { docsToolDefinitions } from './docs/tool-definitions.js';
@@ -1407,13 +1407,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
           const instance = configManager.getInstance(instance_name);
 
           // Switch the client to the new instance
-          serviceNowClient.setInstance(instance.url, instance.username, instance.password, instance.name, {
-            authType: instance.authType || 'basic',
-            clientId: instance.clientId,
-            clientSecret: instance.clientSecret,
-            grantType: instance.grantType,
-            scope: instance.scope
-          });
+          serviceNowClient.setInstance(instance.url, instance.username, instance.password, instance.name, instanceToClientOptions(instance));
 
           console.error(`🔄 Switched to instance: ${instance.name} (${instance.url})`);
 

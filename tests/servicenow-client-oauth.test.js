@@ -1,0 +1,121 @@
+/**
+ * Tests for the authorization_code grant path in ServiceNowClient._getOAuthToken().
+ *
+ * Per-user sign-in with a persisted refresh token. Critically, when the stored
+ * refresh token is rejected the client must fail loud and re-prompt the browser
+ * sign-in — it must NEVER silently fall back to a password/client_credentials
+ * grant (that would re-introduce shared-principal attribution). The auth-code
+ * flow and the refresh HTTP POST are injected so the path is testable offline.
+ */
+
+import { ServiceNowClient } from '../src/servicenow-client.js';
+import { InMemoryTokenStore } from '../src/token-store.js';
+
+function makeClient({ store, flow, postToken } = {}) {
+  return new ServiceNowClient('https://ex.service-now.com', null, null, {
+    authType: 'oauth',
+    grantType: 'authorization_code',
+    clientId: 'cid',
+    scope: 'useraccount',
+    tokenStore: store,
+    performAuthCodeFlow: flow,
+    postToken
+  });
+}
+
+describe('ServiceNowClient authorization_code grant', () => {
+  it('runs the interactive flow when no refresh token is stored, and persists the new refresh token', async () => {
+    const store = new InMemoryTokenStore();
+    let calls = 0;
+    const flow = async () => { calls++; return { access_token: 'at1', refresh_token: 'rt1', expires_in: 1800 }; };
+    const client = makeClient({ store, flow });
+
+    const token = await client._getOAuthToken();
+
+    expect(token).toBe('at1');
+    expect(calls).toBe(1);
+    expect(await store.getRefreshToken('default')).toBe('rt1');
+  });
+
+  it('does not re-run the flow while the cached access token is still valid', async () => {
+    const store = new InMemoryTokenStore();
+    let calls = 0;
+    const flow = async () => { calls++; return { access_token: 'at1', refresh_token: 'rt1', expires_in: 1800 }; };
+    const client = makeClient({ store, flow });
+
+    await client._getOAuthToken();
+    await client._getOAuthToken();
+
+    expect(calls).toBe(1);
+  });
+
+  it('refreshes from a stored refresh token without prompting the browser', async () => {
+    const store = new InMemoryTokenStore();
+    await store.setRefreshToken('default', 'rt-stored');
+    let flowCalls = 0;
+    const flow = async () => { flowCalls++; return { access_token: 'fromflow' }; };
+    const postToken = async (_url, params) => {
+      expect(params.grant_type).toBe('refresh_token');
+      expect(params.refresh_token).toBe('rt-stored');
+      return { access_token: 'at-refreshed', refresh_token: 'rt-new', expires_in: 1800 };
+    };
+    const client = makeClient({ store, flow, postToken });
+
+    const token = await client._getOAuthToken();
+
+    expect(token).toBe('at-refreshed');
+    expect(flowCalls).toBe(0);
+    expect(await store.getRefreshToken('default')).toBe('rt-new');
+  });
+
+  it('re-runs the interactive flow (never password) when the server REJECTS the refresh token (400/invalid_grant)', async () => {
+    const store = new InMemoryTokenStore();
+    await store.setRefreshToken('default', 'rt-expired');
+    let flowCalls = 0;
+    const flow = async () => { flowCalls++; return { access_token: 'at-reauth', refresh_token: 'rt-fresh', expires_in: 1800 }; };
+    const postToken = async () => {
+      const err = new Error('invalid_grant');
+      err.response = { status: 400 };
+      throw err;
+    };
+    const client = makeClient({ store, flow, postToken });
+
+    const token = await client._getOAuthToken();
+
+    expect(token).toBe('at-reauth');
+    expect(flowCalls).toBe(1);
+    expect(await store.getRefreshToken('default')).toBe('rt-fresh');
+  });
+
+  it('does NOT discard the refresh token or re-auth on a transient error (network / 5xx)', async () => {
+    const store = new InMemoryTokenStore();
+    await store.setRefreshToken('default', 'rt-good');
+    let flowCalls = 0;
+    const flow = async () => { flowCalls++; return { access_token: 'should-not-happen' }; };
+    const postToken = async () => { throw new Error('ECONNREFUSED'); }; // no .response → transient
+    const client = makeClient({ store, flow, postToken });
+
+    await expect(client._getOAuthToken()).rejects.toThrow(/ECONNREFUSED/);
+    expect(flowCalls).toBe(0);
+    expect(await store.getRefreshToken('default')).toBe('rt-good'); // token preserved
+  });
+
+  it('does not re-persist a stale refresh token when a refresh response omits refresh_token (rotation)', async () => {
+    let setCalls = 0;
+    const store = new InMemoryTokenStore();
+    const countingStore = {
+      getRefreshToken: (a) => store.getRefreshToken(a),
+      setRefreshToken: (a, t) => { setCalls++; return store.setRefreshToken(a, t); },
+      clearRefreshToken: (a) => store.clearRefreshToken(a)
+    };
+    await store.setRefreshToken('default', 'rt-old');
+    const postToken = async () => ({ access_token: 'at-refreshed', expires_in: 1800 }); // no refresh_token
+    const client = makeClient({ store: countingStore, flow: async () => ({}), postToken });
+
+    const token = await client._getOAuthToken();
+
+    expect(token).toBe('at-refreshed');
+    expect(setCalls).toBe(0); // nothing new to persist; old token left untouched
+    expect(await store.getRefreshToken('default')).toBe('rt-old');
+  });
+});
