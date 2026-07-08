@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/happy-technologies-llc-happy-platform-mcp-badge.png)](https://mseep.ai/app/happy-technologies-llc-happy-platform-mcp)
+
 <p align="center">
   <img src="https://happy-tech.biz/images/logo.svg" alt="Happy MCP Server" width="120" height="120">
 </p>
