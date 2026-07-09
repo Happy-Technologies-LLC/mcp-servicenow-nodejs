@@ -118,4 +118,45 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(setCalls).toBe(0); // nothing new to persist; old token left untouched
     expect(await store.getRefreshToken('default')).toBe('rt-old');
   });
+
+  it('does not re-persist when a refresh response echoes the SAME refresh token', async () => {
+    // ServiceNow commonly returns the existing (unrotated) refresh token on every
+    // refresh. Re-writing an identical value is a logical no-op, but some OS keychain
+    // backends recreate the item on write (macOS resets its ACL), so an unchanged
+    // token must NOT be written.
+    let setCalls = 0;
+    const store = new InMemoryTokenStore();
+    const countingStore = {
+      getRefreshToken: (a) => store.getRefreshToken(a),
+      setRefreshToken: (a, t) => { setCalls++; return store.setRefreshToken(a, t); },
+      clearRefreshToken: (a) => store.clearRefreshToken(a)
+    };
+    await store.setRefreshToken('default', 'rt-same');
+    const postToken = async () => ({ access_token: 'at-refreshed', refresh_token: 'rt-same', expires_in: 1800 });
+    const client = makeClient({ store: countingStore, flow: async () => ({}), postToken });
+
+    const token = await client._getOAuthToken();
+
+    expect(token).toBe('at-refreshed');
+    expect(setCalls).toBe(0); // identical value → no keychain rewrite
+    expect(await store.getRefreshToken('default')).toBe('rt-same');
+  });
+
+  it('DOES persist when a refresh response returns a genuinely rotated refresh token', async () => {
+    let setCalls = 0;
+    const store = new InMemoryTokenStore();
+    const countingStore = {
+      getRefreshToken: (a) => store.getRefreshToken(a),
+      setRefreshToken: (a, t) => { setCalls++; return store.setRefreshToken(a, t); },
+      clearRefreshToken: (a) => store.clearRefreshToken(a)
+    };
+    await store.setRefreshToken('default', 'rt-old');
+    const postToken = async () => ({ access_token: 'at-refreshed', refresh_token: 'rt-rotated', expires_in: 1800 });
+    const client = makeClient({ store: countingStore, flow: async () => ({}), postToken });
+
+    await client._getOAuthToken();
+
+    expect(setCalls).toBe(1); // changed value → exactly one write
+    expect(await store.getRefreshToken('default')).toBe('rt-rotated');
+  });
 });

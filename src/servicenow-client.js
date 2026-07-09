@@ -302,11 +302,19 @@ export class ServiceNowClient {
    */
   async _acceptAuthCodeTokens(data, account) {
     this._handleTokenResponse(data);
-    // Persist only when the response actually carried a (new) refresh token.
-    // If the server rotated without returning one, re-writing the old value is
-    // pointless and masks rotation — leave the store untouched.
+    // Persist only when the response carried a refresh token that DIFFERS from
+    // what is already stored. If the server rotated without returning one, or
+    // simply echoed the existing token (ServiceNow's usual behaviour), there is
+    // nothing new to save. Crucially, re-writing an identical value is not a
+    // harmless no-op: some OS keychain backends recreate the item on write
+    // (macOS resets the item's ACL to the writing process), so a redundant write
+    // on every refresh churns the credential's access control. Only write on a
+    // genuine change.
     if (data.refresh_token) {
-      await this._tokenStore.setRefreshToken(account, data.refresh_token);
+      const stored = await this._tokenStore.getRefreshToken(account);
+      if (data.refresh_token !== stored) {
+        await this._tokenStore.setRefreshToken(account, data.refresh_token);
+      }
     }
     return this.oauthToken;
   }
