@@ -103,6 +103,12 @@ PORT=3000
 DEBUG=true
 ```
 
+HTTP/SSE binds to `127.0.0.1` by default. For a non-loopback `HAPPY_MCP_BIND_HOST`, set `HAPPY_MCP_API_TOKEN` and require clients to send it as a bearer token:
+```
+HAPPY_MCP_BIND_HOST=0.0.0.0
+HAPPY_MCP_API_TOKEN=replace-with-a-high-entropy-secret
+```
+
 ### OAuth Environment Variables (Optional)
 
 For OAuth authentication via `.env` (single-instance fallback), add:

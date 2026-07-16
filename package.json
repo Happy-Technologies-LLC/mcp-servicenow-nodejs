@@ -1,6 +1,6 @@
 {
   "name": "happy-platform-mcp",
-  "version": "3.2.3",
+  "version": "3.3.0",
   "description": "Happy MCP Server — Model Context Protocol server for the ServiceNow platform with 480+ auto-generated tools, multi-instance support, and natural language search",
   "main": "src/server.js",
   "type": "module",
@@ -26,7 +26,7 @@
     "axios": "^1.15.0",
     "chokidar": "^4.0.3",
     "dotenv": "^16.6.1",
-    "express": "^4.22.1",
+    "express": "^5.2.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
