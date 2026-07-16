@@ -130,11 +130,16 @@ npm run dev
 npm run stdio
 ```
 
+HTTP/SSE listens on `127.0.0.1` by default. To expose it through a reverse proxy or network interface, set both `HAPPY_MCP_BIND_HOST` and a high-entropy `HAPPY_MCP_API_TOKEN`; clients must send `Authorization: Bearer <token>`.
+
 ### Verify
 
 ```bash
 curl http://localhost:3000/health
 curl http://localhost:3000/instances
+
+# Required when HAPPY_MCP_API_TOKEN is set
+curl -H "Authorization: Bearer $HAPPY_MCP_API_TOKEN" http://localhost:3000/health
 ```
 
 ## Multi-Instance Routing

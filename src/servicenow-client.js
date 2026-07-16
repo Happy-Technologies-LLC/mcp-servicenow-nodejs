@@ -7,6 +7,26 @@
 
 import axios from 'axios';
 
+export function enrichServiceNowError(error) {
+  const status = error?.response?.status;
+  const data = error?.response?.data;
+  const serviceNowError = data?.error;
+  let message;
+
+  if (serviceNowError?.message || serviceNowError?.detail) {
+    message = [status, serviceNowError.message, serviceNowError.detail]
+      .filter(Boolean)
+      .join(' ');
+  } else if (typeof data === 'string' && data.trim()) {
+    message = [status, data.trim()].filter(Boolean).join(': ');
+  }
+
+  if (message) {
+    error.message = message;
+  }
+  return error;
+}
+
 export class ServiceNowClient {
   constructor(instanceUrl, username, password, options = {}) {
     this.currentInstanceName = 'default';
@@ -115,7 +135,7 @@ export class ServiceNowClient {
           originalRequest.headers['Authorization'] = `Bearer ${token}`;
           return this.client.request(originalRequest);
         }
-        throw error;
+        throw enrichServiceNowError(error);
       }
     );
   }
