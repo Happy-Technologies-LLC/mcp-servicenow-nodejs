@@ -6,6 +6,7 @@
  */
 
 import axios from 'axios';
+import { userInfo } from 'node:os';
 import { performAuthorizationCodeFlow } from './oauth-authorization-code.js';
 import { KeychainTokenStore } from './token-store.js';
 
@@ -234,7 +235,7 @@ export class ServiceNowClient {
    * interactive browser sign-in. A rejected refresh token FAILS LOUD: it never
    * falls back to a password/client_credentials grant (that would re-introduce
    * shared-principal attribution). Instead it re-prompts the browser sign-in.
-   * Refresh tokens are persisted per instance in the injected token store.
+   * Refresh tokens are persisted per local OS user and instance in the injected token store.
    * @returns {Promise<string>} Access token
    */
   async _getAuthorizationCodeToken() {
@@ -243,7 +244,7 @@ export class ServiceNowClient {
       return this.oauthToken;
     }
 
-    const account = this.currentInstanceName;
+    const account = `${userInfo().username}@${this.currentInstanceName}`;
     const tokenUrl = this.oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
     const authorizeUrl = this.oauthConfig.authorizeUrl || `${this.instanceUrl}/oauth_auth.do`;
 

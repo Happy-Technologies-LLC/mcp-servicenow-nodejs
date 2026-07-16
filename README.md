@@ -39,7 +39,7 @@
 ## Features
 
 - **Multi-Instance Support** — Connect to multiple ServiceNow&reg; instances simultaneously with per-request routing
-- **OAuth 2.0 & Basic Auth** — Per-instance authentication with Resource Owner Password Credentials grant, automatic token refresh, and seamless fallback
+- **OAuth 2.0 & Basic Auth** — Per-instance Client Credentials, Resource Owner Password Credentials, and per-user Authorization Code with PKCE
 - **Intelligent Schema Discovery** — Automatically discovers table structures and relationships at runtime
 - **160+ Tables** — Complete coverage including ITSM, CMDB, Service Catalog, Platform Development, and Flow Designer
 - **53 MCP Tools** — Generic CRUD operations that work on any table, plus specialized convenience tools
@@ -111,7 +111,7 @@ Edit `config/servicenow-instances.json`:
 }
 ```
 
-Each instance can use `"authType": "basic"` (default) or `"authType": "oauth"`. OAuth instances require `clientId` and `clientSecret` from your ServiceNow OAuth Application Registry. See [Authentication](#authentication) for details.
+Each instance can use `"authType": "basic"` (default) or `"authType": "oauth"`. OAuth instances require `clientId`; `clientSecret` is optional only for an `authorization_code` public client. See [Authentication](#authentication) for details.
 
 **Option B: Single Instance (via Environment)**
 
@@ -318,7 +318,7 @@ No extra configuration needed. Provide `username` and `password`:
 
 ### OAuth 2.0
 
-Supports both **Client Credentials** (recommended) and **Resource Owner Password Credentials** grant types. Tokens are automatically requested, cached, and refreshed.
+Supports **Client Credentials**, **Resource Owner Password Credentials**, and per-user **Authorization Code with PKCE**. Tokens are automatically requested, cached, and refreshed.
 
 **Client Credentials (recommended)** — no user credentials needed, ideal for service-to-service integrations and federated identity environments:
 
@@ -348,14 +348,32 @@ Supports both **Client Credentials** (recommended) and **Resource Owner Password
 }
 ```
 
+**Authorization Code with PKCE** — signs each developer in through their browser. Use a ServiceNow **Public Client** with a matching loopback redirect URL. `clientSecret` is optional and must be omitted for a public client:
+
+```json
+{
+  "name": "developer",
+  "url": "https://dev.service-now.com",
+  "authType": "oauth",
+  "grantType": "authorization_code",
+  "clientId": "your-public-client-id",
+  "authorizeUrl": "https://dev.service-now.com/oauth_auth.do",
+  "tokenUrl": "https://dev.service-now.com/oauth_token.do",
+  "redirectPort": 8202,
+  "callbackPath": "/callback"
+}
+```
+
+On first use, the server opens the authorization URL and receives the callback on `127.0.0.1`. Refresh tokens are stored in the operating system keychain under the current OS user and instance name.
+
 If `grantType` is omitted, it defaults to `client_credentials` when no username is provided, or `password` when username is present.
 
 **ServiceNow setup:**
 
-1. Navigate to **System OAuth > Application Registry**
-2. Click **New** and select **Create an OAuth API endpoint for external clients**
-3. Set a name (e.g., "MCP Server") and note the generated **Client ID** and **Client Secret**
-4. Add those values to your instance configuration
+1. Navigate to **System OAuth > Application Registry**.
+2. For Client Credentials or password grants, create an OAuth API endpoint for external clients and configure its client ID and secret.
+3. For Authorization Code with PKCE, create a public client and register `http://127.0.0.1:<redirectPort><callbackPath>` as its redirect URL.
+4. Add the matching values to your instance configuration.
 
 **How it works:**
 

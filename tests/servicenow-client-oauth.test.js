@@ -8,8 +8,11 @@
  * flow and the refresh HTTP POST are injected so the path is testable offline.
  */
 
+import { userInfo } from 'node:os';
 import { ServiceNowClient } from '../src/servicenow-client.js';
 import { InMemoryTokenStore } from '../src/token-store.js';
+
+const DEFAULT_ACCOUNT = `${userInfo().username}@default`;
 
 function makeClient({ store, flow, postToken } = {}) {
   return new ServiceNowClient('https://ex.service-now.com', null, null, {
@@ -34,7 +37,21 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     expect(token).toBe('at1');
     expect(calls).toBe(1);
-    expect(await store.getRefreshToken('default')).toBe('rt1');
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt1');
+  });
+
+  it('scopes persisted refresh tokens to the local OS user and instance name', async () => {
+    const store = new InMemoryTokenStore();
+    const client = makeClient({
+      store,
+      flow: async () => ({ access_token: 'at1', refresh_token: 'rt1', expires_in: 1800 })
+    });
+    client.currentInstanceName = 'dev';
+
+    await client._getOAuthToken();
+
+    expect(await store.getRefreshToken(`${userInfo().username}@dev`)).toBe('rt1');
+    expect(await store.getRefreshToken('dev')).toBeNull();
   });
 
   it('does not re-run the flow while the cached access token is still valid', async () => {
@@ -51,7 +68,7 @@ describe('ServiceNowClient authorization_code grant', () => {
 
   it('refreshes from a stored refresh token without prompting the browser', async () => {
     const store = new InMemoryTokenStore();
-    await store.setRefreshToken('default', 'rt-stored');
+    await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-stored');
     let flowCalls = 0;
     const flow = async () => { flowCalls++; return { access_token: 'fromflow' }; };
     const postToken = async (_url, params) => {
@@ -65,12 +82,12 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     expect(token).toBe('at-refreshed');
     expect(flowCalls).toBe(0);
-    expect(await store.getRefreshToken('default')).toBe('rt-new');
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-new');
   });
 
   it('re-runs the interactive flow (never password) when the server REJECTS the refresh token (400/invalid_grant)', async () => {
     const store = new InMemoryTokenStore();
-    await store.setRefreshToken('default', 'rt-expired');
+    await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-expired');
     let flowCalls = 0;
     const flow = async () => { flowCalls++; return { access_token: 'at-reauth', refresh_token: 'rt-fresh', expires_in: 1800 }; };
     const postToken = async () => {
@@ -84,12 +101,12 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     expect(token).toBe('at-reauth');
     expect(flowCalls).toBe(1);
-    expect(await store.getRefreshToken('default')).toBe('rt-fresh');
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-fresh');
   });
 
   it('does NOT discard the refresh token or re-auth on a transient error (network / 5xx)', async () => {
     const store = new InMemoryTokenStore();
-    await store.setRefreshToken('default', 'rt-good');
+    await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-good');
     let flowCalls = 0;
     const flow = async () => { flowCalls++; return { access_token: 'should-not-happen' }; };
     const postToken = async () => { throw new Error('ECONNREFUSED'); }; // no .response → transient
@@ -97,7 +114,7 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     await expect(client._getOAuthToken()).rejects.toThrow(/ECONNREFUSED/);
     expect(flowCalls).toBe(0);
-    expect(await store.getRefreshToken('default')).toBe('rt-good'); // token preserved
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-good'); // token preserved
   });
 
   it('does not re-persist a stale refresh token when a refresh response omits refresh_token (rotation)', async () => {
@@ -108,7 +125,7 @@ describe('ServiceNowClient authorization_code grant', () => {
       setRefreshToken: (a, t) => { setCalls++; return store.setRefreshToken(a, t); },
       clearRefreshToken: (a) => store.clearRefreshToken(a)
     };
-    await store.setRefreshToken('default', 'rt-old');
+    await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-old');
     const postToken = async () => ({ access_token: 'at-refreshed', expires_in: 1800 }); // no refresh_token
     const client = makeClient({ store: countingStore, flow: async () => ({}), postToken });
 
@@ -116,7 +133,7 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     expect(token).toBe('at-refreshed');
     expect(setCalls).toBe(0); // nothing new to persist; old token left untouched
-    expect(await store.getRefreshToken('default')).toBe('rt-old');
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-old');
   });
 
   it('does not re-persist when a refresh response echoes the SAME refresh token', async () => {
@@ -131,7 +148,7 @@ describe('ServiceNowClient authorization_code grant', () => {
       setRefreshToken: (a, t) => { setCalls++; return store.setRefreshToken(a, t); },
       clearRefreshToken: (a) => store.clearRefreshToken(a)
     };
-    await store.setRefreshToken('default', 'rt-same');
+    await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-same');
     const postToken = async () => ({ access_token: 'at-refreshed', refresh_token: 'rt-same', expires_in: 1800 });
     const client = makeClient({ store: countingStore, flow: async () => ({}), postToken });
 
@@ -139,7 +156,7 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     expect(token).toBe('at-refreshed');
     expect(setCalls).toBe(0); // identical value → no keychain rewrite
-    expect(await store.getRefreshToken('default')).toBe('rt-same');
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-same');
   });
 
   it('DOES persist when a refresh response returns a genuinely rotated refresh token', async () => {
@@ -150,13 +167,13 @@ describe('ServiceNowClient authorization_code grant', () => {
       setRefreshToken: (a, t) => { setCalls++; return store.setRefreshToken(a, t); },
       clearRefreshToken: (a) => store.clearRefreshToken(a)
     };
-    await store.setRefreshToken('default', 'rt-old');
+    await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-old');
     const postToken = async () => ({ access_token: 'at-refreshed', refresh_token: 'rt-rotated', expires_in: 1800 });
     const client = makeClient({ store: countingStore, flow: async () => ({}), postToken });
 
     await client._getOAuthToken();
 
     expect(setCalls).toBe(1); // changed value → exactly one write
-    expect(await store.getRefreshToken('default')).toBe('rt-rotated');
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-rotated');
   });
 });

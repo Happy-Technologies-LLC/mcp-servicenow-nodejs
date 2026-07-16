@@ -41,6 +41,20 @@ describe('instanceToClientOptions()', () => {
   });
 });
 
+describe('ConfigManager.validateInstance()', () => {
+  it('accepts a public authorization_code client without a secret or password', () => {
+    const cm = new ConfigManager();
+
+    expect(cm.validateInstance({
+      name: 'public-oauth',
+      url: 'https://example.service-now.com',
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'public-client-id'
+    })).toBe(true);
+  });
+});
+
 describe('ConfigManager.loadFromEnv()', () => {
   const originalEnv = process.env;
   const basicAuthFixture = {

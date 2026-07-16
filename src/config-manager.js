@@ -202,11 +202,15 @@ export class ConfigManager {
       if (!instance.clientId) {
         throw new Error(`OAuth instance '${instance.name}' missing required field: clientId`);
       }
-      if (!instance.clientSecret) {
+      const publicAuthorizationCodeClient = instance.grantType === 'authorization_code';
+      if (!publicAuthorizationCodeClient && !instance.clientSecret) {
         throw new Error(`OAuth instance '${instance.name}' missing required field: clientSecret`);
       }
-      // client_credentials grant doesn't need username/password
-      if (instance.grantType !== 'client_credentials' && (!instance.username || !instance.password)) {
+      if (
+        instance.grantType !== 'client_credentials' &&
+        !publicAuthorizationCodeClient &&
+        (!instance.username || !instance.password)
+      ) {
         throw new Error(`OAuth instance '${instance.name}' using password grant requires username and password`);
       }
     } else {

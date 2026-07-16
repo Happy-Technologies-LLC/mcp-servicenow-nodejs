@@ -118,4 +118,17 @@ SERVICENOW_CLIENT_ID=your-oauth-client-id
 SERVICENOW_CLIENT_SECRET=your-oauth-client-secret
 ```
 
+For per-user Authorization Code with PKCE, configure a ServiceNow public client and add:
+```
+SERVICENOW_AUTH_TYPE=oauth
+SERVICENOW_OAUTH_GRANT_TYPE=authorization_code
+SERVICENOW_CLIENT_ID=your-public-client-id
+SERVICENOW_OAUTH_AUTHORIZE_URL=https://your-instance.service-now.com/oauth_auth.do
+SERVICENOW_OAUTH_TOKEN_URL=https://your-instance.service-now.com/oauth_token.do
+SERVICENOW_OAUTH_REDIRECT_PORT=8202
+SERVICENOW_OAUTH_CALLBACK_PATH=/callback
+```
+
+Register `http://127.0.0.1:8202/callback` as the public client's redirect URL. Do not set `SERVICENOW_CLIENT_SECRET` for a public client.
+
 For multi-instance setups, configure OAuth per-instance in `config/servicenow-instances.json` instead. See [Multi-Instance Configuration](MULTI_INSTANCE_CONFIGURATION.md#oauth-authentication).
