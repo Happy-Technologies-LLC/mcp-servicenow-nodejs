@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import crypto from 'node:crypto';
-import { createHttpApp, validateHttpTransportSecurity } from '../src/http-server.js';
+import { createDefaultClient, createHttpApp, validateHttpTransportSecurity } from '../src/http-server.js';
 
 describe('validateHttpTransportSecurity', () => {
   test('rejects a network-visible HTTP listener without an access token', () => {
@@ -48,6 +48,29 @@ class FakeSseTransport {
     this.sessionId = crypto.randomUUID();
   }
 }
+
+test('creates an authorization_code client with every OAuth option', () => {
+  const client = createDefaultClient({
+    name: 'public-oauth',
+    url: 'https://example.service-now.com',
+    authType: 'oauth',
+    grantType: 'authorization_code',
+    clientId: 'public-client',
+    authorizeUrl: 'https://example.service-now.com/oauth_auth.do',
+    tokenUrl: 'https://example.service-now.com/oauth_token.do',
+    redirectPort: 8455,
+    callbackPath: '/callback'
+  });
+
+  expect(client.oauthConfig).toMatchObject({
+    grantType: 'authorization_code',
+    clientId: 'public-client',
+    authorizeUrl: 'https://example.service-now.com/oauth_auth.do',
+    tokenUrl: 'https://example.service-now.com/oauth_token.do',
+    redirectPort: 8455,
+    callbackPath: '/callback'
+  });
+});
 
 describe('HTTP authorization', () => {
   test('rejects unauthenticated requests when an API token is configured', async () => {

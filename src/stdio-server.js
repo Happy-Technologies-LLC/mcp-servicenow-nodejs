@@ -12,7 +12,7 @@ import { pathToFileURL } from 'url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ServiceNowClient } from './servicenow-client.js';
 import { createMcpServer } from './mcp-server-consolidated.js';
-import { configManager } from './config-manager.js';
+import { configManager, instanceToClientOptions } from './config-manager.js';
 
 // Load environment variables
 dotenv.config();
@@ -22,6 +22,14 @@ function booleanEnv(value) {
 }
 
 function hasServiceNowEnvCredentials(env = process.env) {
+  // Passwordless OAuth grants (client_credentials, authorization_code) don't set
+  // USERNAME/PASSWORD — an instance URL + a passwordless grant is a real intent
+  // to connect, so a config error should surface rather than fall to docs-only.
+  const grant = env.SERVICENOW_OAUTH_GRANT_TYPE;
+  const passwordlessGrant = grant === 'client_credentials' || grant === 'authorization_code';
+  if (env.SERVICENOW_INSTANCE_URL && passwordlessGrant) {
+    return true;
+  }
   return Boolean(env.SERVICENOW_INSTANCE_URL && env.SERVICENOW_USERNAME && env.SERVICENOW_PASSWORD);
 }
 
@@ -77,13 +85,7 @@ export async function createConfiguredMcpServer({
     instance.url,
     instance.username,
     instance.password,
-    {
-      authType: instance.authType || 'basic',
-      clientId: instance.clientId,
-      clientSecret: instance.clientSecret,
-      grantType: instance.grantType,
-      scope: instance.scope
-    }
+    instanceToClientOptions(instance)
   );
   serviceNowClient.currentInstanceName = instance.name;
 

@@ -1,5 +1,20 @@
 # Changelog
 
+
+## 4.0.0 - 2026-07-16
+
+### Breaking changes
+
+- HTTP/SSE deployments on a non-loopback `HAPPY_MCP_BIND_HOST` must set `HAPPY_MCP_API_TOKEN`; clients must send it in `Authorization: Bearer <token>`.
+
+### Added
+
+- Per-user OAuth `authorization_code` authentication with PKCE and a loopback callback. Refresh tokens are stored in the operating system keychain under the current OS user and instance name.
+
+### Contributors
+
+- Thanks to [@cbonitz8](https://github.com/cbonitz8) for the authorization-code OAuth implementation in PR #43.
+
 ## 3.3.0 - 2026-07-16
 
 ### Security

@@ -39,13 +39,17 @@ Create `config/servicenow-instances.json` with your instance credentials:
 |-------|----------|---------|-------------|
 | `name` | Yes | — | Unique instance identifier |
 | `url` | Yes | — | ServiceNow instance URL |
-| `username` | Yes | — | Username for authentication |
-| `password` | Yes | — | Password for authentication |
+| `username` | Basic or OAuth password grant | — | Username for authentication |
+| `password` | Basic or OAuth password grant | — | Password for authentication |
 | `authType` | No | `"basic"` | `"basic"` or `"oauth"` |
-| `grantType` | No | auto | `"client_credentials"` or `"password"` (auto-detected if omitted) |
+| `grantType` | No | auto | `"client_credentials"`, `"password"`, or `"authorization_code"` |
 | `clientId` | OAuth only | — | OAuth Client ID from Application Registry |
-| `clientSecret` | OAuth only | — | OAuth Client Secret |
+| `clientSecret` | OAuth except public authorization-code clients | — | OAuth Client Secret |
 | `scope` | No | — | OAuth scope (optional) |
+| `authorizeUrl` | No | derived from instance URL | Authorization endpoint for `authorization_code` |
+| `tokenUrl` | No | derived from instance URL | Token endpoint for `authorization_code` |
+| `redirectPort` | No | ephemeral OS-assigned port (`0`) | Loopback port for `authorization_code`; set a fixed port when the registered redirect URL requires one |
+| `callbackPath` | No | `"/callback"` | Loopback callback path for `authorization_code` |
 | `default` | No | `false` | Mark as default instance |
 | `description` | No | — | Human-readable description |
 
@@ -177,24 +181,25 @@ const instances = configManager.listInstances();
 
 ## OAuth Authentication
 
-Each instance can independently use basic auth or OAuth 2.0. Two OAuth grant types are supported:
+Each instance can independently use basic auth or OAuth 2.0. Three OAuth grant types are supported:
 
-- **Client Credentials** (recommended) — service-to-service, no user credentials needed. Works with federated identity environments.
-- **Resource Owner Password Credentials** — when user context is required. Requires username/password.
+- **Client Credentials** (recommended for services) — service-to-service, no user credentials needed.
+- **Resource Owner Password Credentials** — requires username/password.
+- **Authorization Code with PKCE** — signs in an individual developer through a browser and uses a loopback callback. Public clients require no client secret.
 
 ### ServiceNow Setup
 
-1. Navigate to **System OAuth > Application Registry**
-2. Click **New** > **Create an OAuth API endpoint for external clients**
-3. Set a name and note the **Client ID** and **Client Secret**
-4. Add those values to your instance config with `"authType": "oauth"`
+1. Navigate to **System OAuth > Application Registry**.
+2. For Client Credentials or password grants, create an OAuth API endpoint for external clients and configure its client ID and secret.
+3. For Authorization Code with PKCE, create a public client and register `http://127.0.0.1:<redirectPort><callbackPath>` as its redirect URL.
+4. Add the matching values to your instance config with `"authType": "oauth"`.
 
 ### Token Lifecycle
 
-- Tokens are requested automatically on the first API call via `/oauth_token.do`
-- Cached in memory and refreshed before expiry (30-second buffer)
-- On 401 response, the token is refreshed and the request retried once
-- If the refresh token is expired, a fresh token grant is issued
+- Client Credentials and password-grant tokens are cached in memory and refreshed before expiry.
+- Authorization Code with PKCE opens a browser on the first use, then stores the refresh token in the operating system keychain under the current OS user and instance name.
+- On a 401 response, the token is refreshed and the request retried once.
+- A rejected authorization-code refresh token starts browser sign-in again; it never falls back to shared credentials.
 
 ### Mixing Auth Types
 
@@ -227,6 +232,14 @@ You can freely mix basic auth, client credentials, and password grant instances:
       "clientSecret": "xyz...",
       "username": "integration_user",
       "password": "password"
+    },
+    {
+      "name": "developer",
+      "url": "https://dev.service-now.com",
+      "authType": "oauth",
+      "grantType": "authorization_code",
+      "clientId": "public-client-id",
+      "redirectPort": 8202
     }
   ]
 }

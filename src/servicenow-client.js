@@ -6,6 +6,17 @@
  */
 
 import axios from 'axios';
+import { userInfo } from 'node:os';
+import { performAuthorizationCodeFlow } from './oauth-authorization-code.js';
+import { KeychainTokenStore } from './token-store.js';
+
+/** Default token-endpoint POST: form-encode params via axios, return the body. */
+async function defaultTokenPost(url, params) {
+  const response = await axios.post(url, new URLSearchParams(params).toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+  return response.data;
+}
 
 export function enrichServiceNowError(error) {
   const status = error?.response?.status;
@@ -79,8 +90,17 @@ export class ServiceNowClient {
         clientId: options.clientId,
         clientSecret: options.clientSecret,
         grantType: options.grantType,
-        scope: options.scope
+        scope: options.scope,
+        // authorization_code (per-user) config — all optional, sensible defaults below
+        authorizeUrl: options.authorizeUrl,
+        tokenUrl: options.tokenUrl,
+        redirectPort: options.redirectPort,
+        callbackPath: options.callbackPath
       };
+      // Injectable seams (defaults for production; overridden in tests)
+      this._tokenStore = options.tokenStore || new KeychainTokenStore();
+      this._performAuthCodeFlow = options.performAuthCodeFlow || performAuthorizationCodeFlow;
+      this._postToken = options.postToken || defaultTokenPost;
       // Clear any stale token so the next request triggers a fresh grant
       this.oauthToken = null;
       this.oauthRefreshToken = null;
@@ -146,6 +166,12 @@ export class ServiceNowClient {
    * @returns {Promise<string>} Access token
    */
   async _getOAuthToken() {
+    // Per-user authorization_code grant has its own token lifecycle (persisted
+    // refresh token + fail-loud re-auth), handled separately.
+    if (this.oauthConfig?.grantType === 'authorization_code') {
+      return this._getAuthorizationCodeToken();
+    }
+
     // Return cached token if still valid (with 30s buffer)
     if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
       return this.oauthToken;
@@ -200,6 +226,98 @@ export class ServiceNowClient {
       const detail = error.response?.data?.error_description || error.message;
       throw new Error(`OAuth ${grantType} token request failed: ${detail}`);
     }
+  }
+
+  /**
+   * Per-user authorization_code token lifecycle.
+   *
+   * Order: valid cached token → refresh from the persisted refresh token →
+   * interactive browser sign-in. A rejected refresh token FAILS LOUD: it never
+   * falls back to a password/client_credentials grant (that would re-introduce
+   * shared-principal attribution). Instead it re-prompts the browser sign-in.
+   * Refresh tokens are persisted per local OS user and instance in the injected token store.
+   * @returns {Promise<string>} Access token
+   */
+  async _getAuthorizationCodeToken() {
+    // Return cached token if still valid (with 30s buffer)
+    if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
+      return this.oauthToken;
+    }
+
+    const account = `${userInfo().username}@${this.currentInstanceName}`;
+    const tokenUrl = this.oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
+    const authorizeUrl = this.oauthConfig.authorizeUrl || `${this.instanceUrl}/oauth_auth.do`;
+
+    // Load a persisted refresh token if we don't have one in memory yet.
+    if (!this.oauthRefreshToken) {
+      this.oauthRefreshToken = await this._tokenStore.getRefreshToken(account);
+    }
+
+    // Try the refresh token first — avoids a browser round-trip.
+    if (this.oauthRefreshToken) {
+      try {
+        const params = {
+          grant_type: 'refresh_token',
+          client_id: this.oauthConfig.clientId,
+          refresh_token: this.oauthRefreshToken
+        };
+        if (this.oauthConfig.clientSecret) {
+          params.client_secret = this.oauthConfig.clientSecret;
+        }
+        const data = await this._postToken(tokenUrl, params);
+        return this._acceptAuthCodeTokens(data, account);
+      } catch (refreshError) {
+        // Only a genuine token REJECTION (400/401 invalid_grant) means the
+        // refresh token is dead → discard it and re-prompt interactive sign-in.
+        // A transient failure (network, 5xx) must NOT nuke a valid token or
+        // trigger a browser prompt — surface it so the caller can retry.
+        const status = refreshError.response?.status;
+        if (status !== 400 && status !== 401) {
+          throw refreshError;
+        }
+        // FAIL LOUD, but never fall back to password: re-prompt sign-in.
+        console.error('OAuth refresh token rejected; re-authenticating via browser sign-in:', refreshError.message);
+        this.oauthRefreshToken = null;
+        await this._tokenStore.clearRefreshToken(account);
+      }
+    }
+
+    // Interactive authorization_code + PKCE + loopback sign-in.
+    const data = await this._performAuthCodeFlow({
+      authorizeUrl,
+      tokenUrl,
+      clientId: this.oauthConfig.clientId,
+      clientSecret: this.oauthConfig.clientSecret,
+      scope: this.oauthConfig.scope,
+      redirectPort: this.oauthConfig.redirectPort,
+      callbackPath: this.oauthConfig.callbackPath
+    });
+    return this._acceptAuthCodeTokens(data, account);
+  }
+
+  /**
+   * Cache an authorization_code token response and persist the refresh token.
+   * @param {object} data - Token endpoint response
+   * @param {string} account - Token-store account key
+   * @returns {Promise<string>} Access token
+   */
+  async _acceptAuthCodeTokens(data, account) {
+    this._handleTokenResponse(data);
+    // Persist only when the response carried a refresh token that DIFFERS from
+    // what is already stored. If the server rotated without returning one, or
+    // simply echoed the existing token (ServiceNow's usual behaviour), there is
+    // nothing new to save. Crucially, re-writing an identical value is not a
+    // harmless no-op: some OS keychain backends recreate the item on write
+    // (macOS resets the item's ACL to the writing process), so a redundant write
+    // on every refresh churns the credential's access control. Only write on a
+    // genuine change.
+    if (data.refresh_token) {
+      const stored = await this._tokenStore.getRefreshToken(account);
+      if (data.refresh_token !== stored) {
+        await this._tokenStore.setRefreshToken(account, data.refresh_token);
+      }
+    }
+    return this.oauthToken;
   }
 
   /**

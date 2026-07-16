@@ -3,6 +3,7 @@ import express from 'express';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ServiceNowClient } from './servicenow-client.js';
 import { createMcpServer } from './mcp-server-consolidated.js';
+import { instanceToClientOptions } from './config-manager.js';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
@@ -12,18 +13,12 @@ export function validateHttpTransportSecurity({ host = '127.0.0.1', apiToken } =
   }
 }
 
-function createDefaultClient(instance) {
+export function createDefaultClient(instance) {
   const client = new ServiceNowClient(
     instance.url,
     instance.username,
     instance.password,
-    {
-      authType: instance.authType || 'basic',
-      clientId: instance.clientId,
-      clientSecret: instance.clientSecret,
-      grantType: instance.grantType,
-      scope: instance.scope
-    }
+    instanceToClientOptions(instance)
   );
   client.currentInstanceName = instance.name;
   return client;

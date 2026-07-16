@@ -946,7 +946,7 @@ Set up multiple instances in `config/servicenow-instances.json`. Each instance c
 }
 ```
 
-OAuth instances use the Resource Owner Password Credentials grant against `/oauth_token.do`. Tokens are cached, auto-refreshed, and retried on 401. See `docs/MULTI_INSTANCE_CONFIGURATION.md` for full details.
+OAuth instances support Client Credentials, Resource Owner Password Credentials, and per-user Authorization Code with PKCE. Tokens are refreshed before expiry and retried once on 401. See `docs/MULTI_INSTANCE_CONFIGURATION.md` for configuration and migration details.
 
 ### Usage
 
