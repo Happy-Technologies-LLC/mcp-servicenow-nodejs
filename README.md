@@ -41,8 +41,8 @@
 
 If you find this project useful, consider supporting its development. Contributions support Happy Technologies LLC.
 
-[Buy Me a Coffee](https://buymeacoffee.com/nickzitzer)
-
+- [GitHub Sponsors](https://github.com/sponsors/Happy-Technologies-LLC)
+- [Buy Me a Coffee](https://buymeacoffee.com/nickzitzer)
 ## Features
 
 - **Multi-Instance Support** — Connect to multiple ServiceNow&reg; instances simultaneously with per-request routing

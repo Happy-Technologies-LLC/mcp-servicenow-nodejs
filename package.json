@@ -45,7 +45,16 @@
     "url": "https://github.com/Happy-Technologies-LLC/happy-platform-mcp/issues"
   },
   "homepage": "https://github.com/Happy-Technologies-LLC/happy-platform-mcp#readme",
-  "funding": "https://buymeacoffee.com/nickzitzer",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/Happy-Technologies-LLC"
+    },
+    {
+      "type": "buy_me_a_coffee",
+      "url": "https://buymeacoffee.com/nickzitzer"
+    }
+  ],
   "keywords": [
     "mcp",
     "model-context-protocol",
