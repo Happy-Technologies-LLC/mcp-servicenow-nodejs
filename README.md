@@ -22,7 +22,8 @@
   <a href="https://github.com/Happy-Technologies-LLC/happy-platform-mcp">GitHub</a> |
   <a href="https://www.npmjs.com/package/happy-platform-mcp">npm</a> |
   <a href="#tool-overview">Tools</a> |
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="CONTRIBUTING.md">Contributing</a> |
+  <a href="#support">Support</a>
 </p>
 
 ---
@@ -35,6 +36,12 @@
 > # Docker
 > docker pull nczitzer/happy-platform-mcp:latest
 > ```
+
+## Support
+
+If you find this project useful, consider supporting its development. Contributions support Happy Technologies LLC.
+
+[Buy Me a Coffee](https://buymeacoffee.com/nickzitzer)
 
 ## Features
 
