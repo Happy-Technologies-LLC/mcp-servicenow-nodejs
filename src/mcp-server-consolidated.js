@@ -15,6 +15,28 @@ import { parseNaturalLanguage, getSupportedPatterns } from './natural-language.j
 import { docsToolDefinitions } from './docs/tool-definitions.js';
 import { handleDocsTool } from './docs/tool-handlers.js';
 
+const INSTANCE_MANAGEMENT_TOOLS = new Set([
+  'SN-Set-Instance',
+  'SN-Get-Current-Instance'
+]);
+
+const INSTANCE_PARAMETER_SCHEMA = Object.freeze({
+  type: 'string',
+  description: 'Configured ServiceNow instance name. Optional; uses the current instance when omitted.'
+});
+
+function addInstanceParameter(tools) {
+  for (const tool of tools) {
+    if (tool.name.startsWith('SN-Docs-') || INSTANCE_MANAGEMENT_TOOLS.has(tool.name)) {
+      continue;
+    }
+
+    tool.inputSchema.properties.instance = INSTANCE_PARAMETER_SCHEMA;
+  }
+
+  return tools;
+}
+
 export async function createMcpServer(serviceNowClient, options = {}) {
   const docsOnly = options.docsOnly === true;
   const server = new Server(
@@ -1369,7 +1391,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     ];
 
     console.error(`✅ Returning ${tools.length} consolidated tools to Claude Code`);
-    return { tools };
+    return { tools: addInstanceParameter(tools) };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
