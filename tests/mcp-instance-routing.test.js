@@ -186,6 +186,25 @@ describe('per-call instance routing', () => {
     expect(primaryClient.createRecord).not.toHaveBeenCalled();
   });
 
+  test('routes SN-Create-Incident without including instance in the record payload', async () => {
+    const { primaryClient, clients, callTool } = await createHarness();
+    const incident = { short_description: 'Created through prod' };
+
+    await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Create-Incident',
+        arguments: {
+          instance: 'prod',
+          ...incident
+        }
+      }
+    }, {});
+
+    expect(clients.prod.createRecord).toHaveBeenCalledWith('incident', incident);
+    expect(primaryClient.createRecord).not.toHaveBeenCalled();
+  });
+
   test('routes SN-Catalog-Get-Categories through the explicitly selected prod client', async () => {
     const { primaryClient, clients, callTool } = await createHarness();
 

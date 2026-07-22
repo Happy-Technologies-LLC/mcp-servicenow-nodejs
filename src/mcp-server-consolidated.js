@@ -1696,7 +1696,8 @@ export async function createMcpServer(serviceNowClient, options = {}) {
         }
 
         case 'SN-Create-Incident': {
-          const result = await requestClient.createRecord('incident', args);
+          const { instance: _instance, ...incidentData } = args;
+          const result = await requestClient.createRecord('incident', incidentData);
           return {
             content: [{
               type: 'text',
