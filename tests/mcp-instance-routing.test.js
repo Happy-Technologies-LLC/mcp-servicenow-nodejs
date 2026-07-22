@@ -16,7 +16,8 @@ function createClient(name = 'primary') {
       url: `https://${name}.service-now.com`
     })),
     getRecords: jest.fn(async () => []),
-    createRecord: jest.fn(async () => ({ sys_id: `${name}-record` }))
+    createRecord: jest.fn(async () => ({ sys_id: `${name}-record` })),
+    getCatalogCategories: jest.fn(async () => [])
   };
 }
 
@@ -184,4 +185,22 @@ describe('per-call instance routing', () => {
     expect(clients.dev.createRecord).toHaveBeenCalledWith('incident', data);
     expect(primaryClient.createRecord).not.toHaveBeenCalled();
   });
+
+  test('routes SN-Catalog-Get-Categories through the explicitly selected prod client', async () => {
+    const { primaryClient, clients, callTool } = await createHarness();
+
+    await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Catalog-Get-Categories',
+        arguments: {
+          instance: 'prod'
+        }
+      }
+    }, {});
+
+    expect(clients.prod.getCatalogCategories).toHaveBeenCalledTimes(1);
+    expect(primaryClient.getCatalogCategories).not.toHaveBeenCalled();
+  });
+
 });

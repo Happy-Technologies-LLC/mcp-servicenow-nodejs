@@ -1544,7 +1544,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
           const queryParams = {};
           if (fields) queryParams.sysparm_fields = fields;
 
-          const result = await serviceNowClient.getRecord(table_name, sys_id, queryParams);
+          const result = await requestClient.getRecord(table_name, sys_id, queryParams);
 
           return {
             content: [{
@@ -1556,7 +1556,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
 
         case 'SN-Update-Record': {
           const { table_name, sys_id, data } = args;
-          const result = await serviceNowClient.updateRecord(table_name, sys_id, data);
+          const result = await requestClient.updateRecord(table_name, sys_id, data);
 
           const metadata = tableMetadata[table_name];
           const keyField = metadata?.key_field || 'sys_id';
@@ -1578,7 +1578,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             // FALLBACK: Try to fetch schema from ServiceNow API
             console.error(`⚠️  Table "${table_name}" not in local metadata, attempting API fallback...`);
             try {
-              const apiSchema = await serviceNowClient.discoverTableSchema(table_name, {
+              const apiSchema = await requestClient.discoverTableSchema(table_name, {
                 include_type_codes: false,
                 include_choice_tables: false,
                 include_relationships: false
@@ -1685,7 +1685,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords('incident', queryParams);
+          const results = await requestClient.getRecords('incident', queryParams);
 
           return {
             content: [{
@@ -1696,7 +1696,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
         }
 
         case 'SN-Create-Incident': {
-          const result = await serviceNowClient.createRecord('incident', args);
+          const result = await requestClient.createRecord('incident', args);
           return {
             content: [{
               type: 'text',
@@ -1706,7 +1706,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
         }
 
         case 'SN-Get-Incident': {
-          const result = await serviceNowClient.getRecord('incident', args.sys_id);
+          const result = await requestClient.getRecord('incident', args.sys_id);
           return {
             content: [{
               type: 'text',
@@ -1729,7 +1729,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords('sys_user', queryParams);
+          const results = await requestClient.getRecords('sys_user', queryParams);
 
           return {
             content: [{
@@ -1753,7 +1753,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords('cmdb_ci', queryParams);
+          const results = await requestClient.getRecords('cmdb_ci', queryParams);
 
           return {
             content: [{
@@ -1777,7 +1777,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords('sys_user_group', queryParams);
+          const results = await requestClient.getRecords('sys_user_group', queryParams);
 
           return {
             content: [{
@@ -1809,7 +1809,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords('change_request', queryParams);
+          const results = await requestClient.getRecords('change_request', queryParams);
 
           return {
             content: [{
@@ -1833,7 +1833,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords('problem', queryParams);
+          const results = await requestClient.getRecords('problem', queryParams);
 
           return {
             content: [{
@@ -1879,7 +1879,7 @@ ${show_patterns ? `\n## Supported Patterns:\n${JSON.stringify(getSupportedPatter
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords(table, queryParams);
+          const results = await requestClient.getRecords(table, queryParams);
 
           // Build response
           let responseText = `✅ Natural Language Search Results
@@ -1927,7 +1927,7 @@ ${show_patterns ? `\n## Supported Patterns:\n${JSON.stringify(getSupportedPatter
 
           try {
             // Try to set via API (UI endpoint or sys_trigger)
-            const result = await serviceNowClient.setCurrentUpdateSet(update_set_sys_id);
+            const result = await requestClient.setCurrentUpdateSet(update_set_sys_id);
 
             if (result.method === 'sys_trigger') {
               return {
@@ -1965,7 +1965,7 @@ The update set has been set as your current update set. Refresh your ServiceNow 
             // If both methods fail, fall back to creating fix script
             console.error('⚠️  Direct update set change failed, creating fix script...');
 
-            const updateSet = await serviceNowClient.getRecord('sys_update_set', update_set_sys_id);
+            const updateSet = await requestClient.getRecord('sys_update_set', update_set_sys_id);
 
             const fs = await import('fs/promises');
             const path = await import('path');
@@ -2030,7 +2030,7 @@ Sys ID: ${update_set_sys_id}
         }
 
         case 'SN-Get-Current-Update-Set': {
-          const result = await serviceNowClient.getCurrentUpdateSet();
+          const result = await requestClient.getCurrentUpdateSet();
 
           return {
             content: [{
@@ -2054,7 +2054,7 @@ Sys ID: ${update_set_sys_id}
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.listUpdateSets(queryParams);
+          const results = await requestClient.listUpdateSets(queryParams);
 
           return {
             content: [{
@@ -2070,7 +2070,7 @@ Sys ID: ${update_set_sys_id}
           console.error(`🔄 Setting current application to: ${app_sys_id}`);
 
           try {
-            const result = await serviceNowClient.setCurrentApplication(app_sys_id);
+            const result = await requestClient.setCurrentApplication(app_sys_id);
 
             return {
               content: [{
@@ -2106,7 +2106,7 @@ Please verify:
 
           try {
             // Primary method: sys_trigger (ONLY working method)
-            const result = await serviceNowClient.executeScriptViaTrigger(script, description, true);
+            const result = await requestClient.executeScriptViaTrigger(script, description, true);
 
             return {
               content: [{
@@ -2257,7 +2257,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
           } = args;
 
           console.error(`🔍 Discovering enhanced schema for ${table_name}`);
-          const schema = await serviceNowClient.discoverTableSchema(table_name, {
+          const schema = await requestClient.discoverTableSchema(table_name, {
             include_type_codes,
             include_choice_tables,
             include_relationships,
@@ -2278,7 +2278,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
           const { operations, transaction = true, progress = true } = args;
 
           console.error(`📦 Batch creating ${operations.length} records (transaction: ${transaction}, progress: ${progress})`);
-          const result = await serviceNowClient.batchCreate(operations, transaction, progress);
+          const result = await requestClient.batchCreate(operations, transaction, progress);
 
           return {
             content: [{
@@ -2292,7 +2292,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
           const { updates, stop_on_error = false, progress = true } = args;
 
           console.error(`📦 Batch updating ${updates.length} records (progress: ${progress})`);
-          const result = await serviceNowClient.batchUpdate(updates, stop_on_error, progress);
+          const result = await requestClient.batchUpdate(updates, stop_on_error, progress);
 
           return {
             content: [{
@@ -2306,7 +2306,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
           const { table, field, include_examples = true } = args;
 
           console.error(`📖 Explaining field ${table}.${field}`);
-          const explanation = await serviceNowClient.explainField(table, field, include_examples);
+          const explanation = await requestClient.explainField(table, field, include_examples);
 
           return {
             content: [{
@@ -2320,7 +2320,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
           const { catalog_item, checks = {} } = args;
 
           console.error(`✅ Validating catalog item ${catalog_item}`);
-          const validation = await serviceNowClient.validateCatalogConfiguration(catalog_item, checks);
+          const validation = await requestClient.validateCatalogConfiguration(catalog_item, checks);
 
           return {
             content: [{
@@ -2334,7 +2334,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
           const { update_set, show_components = true, show_dependencies = false } = args;
 
           console.error(`🔎 Inspecting update set ${update_set}`);
-          const inspection = await serviceNowClient.inspectUpdateSet(update_set, {
+          const inspection = await requestClient.inspectUpdateSet(update_set, {
             show_components,
             show_dependencies
           });
@@ -2363,7 +2363,7 @@ ${script_content.substring(0, 200)}${script_content.length > 200 ? '...' : ''}`
             publish
           };
 
-          const result = await serviceNowClient.createCompleteWorkflow(workflowSpec, progress);
+          const result = await requestClient.createCompleteWorkflow(workflowSpec, progress);
 
           return {
             content: [{
@@ -2402,7 +2402,7 @@ ${JSON.stringify(result, null, 2)}`
             y
           };
 
-          const result = await serviceNowClient.createActivity(activityData);
+          const result = await requestClient.createActivity(activityData);
 
           return {
             content: [{
@@ -2438,12 +2438,12 @@ You can now:
               name: 'Transition Condition',
               condition: condition_script
             };
-            const conditionResult = await serviceNowClient.createCondition(conditionData);
+            const conditionResult = await requestClient.createCondition(conditionData);
             condition_sys_id = conditionResult.condition_sys_id;
             transitionData.condition_sys_id = condition_sys_id;
           }
 
-          const result = await serviceNowClient.createTransition(transitionData);
+          const result = await requestClient.createTransition(transitionData);
 
           return {
             content: [{
@@ -2465,7 +2465,7 @@ The workflow will now transition from the source activity to the target activity
 
           console.error(`🚀 Publishing workflow version ${version_sys_id}`);
 
-          const result = await serviceNowClient.publishWorkflow(version_sys_id, start_activity_sys_id);
+          const result = await requestClient.publishWorkflow(version_sys_id, start_activity_sys_id);
 
           return {
             content: [{
@@ -2486,7 +2486,7 @@ The workflow is now active and will trigger based on its configured conditions.`
 
           console.error(`📦 Moving records to update set ${update_set_id} (progress: ${progress})`);
 
-          const result = await serviceNowClient.moveRecordsToUpdateSet(update_set_id, {
+          const result = await requestClient.moveRecordsToUpdateSet(update_set_id, {
             record_sys_ids,
             time_range,
             source_update_set,
@@ -2517,7 +2517,7 @@ ${JSON.stringify(result, null, 2)}`
 
           console.error(`🔄 Cloning update set ${source_update_set_id} (progress: ${progress})`);
 
-          const result = await serviceNowClient.cloneUpdateSet(source_update_set_id, new_name, progress);
+          const result = await requestClient.cloneUpdateSet(source_update_set_id, new_name, progress);
 
           return {
             content: [{
@@ -2542,7 +2542,7 @@ The cloned update set is now in "In Progress" state and ready for use.`
           const { incident_number, comment } = args;
 
           // Look up incident by number
-          const incidents = await serviceNowClient.getRecords('incident', {
+          const incidents = await requestClient.getRecords('incident', {
             sysparm_query: `number=${incident_number}`,
             sysparm_limit: 1
           });
@@ -2554,7 +2554,7 @@ The cloned update set is now in "In Progress" state and ready for use.`
           const incident = incidents[0];
 
           // Update comments field
-          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, {
+          const result = await requestClient.updateRecord('incident', incident.sys_id, {
             comments: comment
           });
 
@@ -2577,7 +2577,7 @@ The comment has been successfully added to the incident.`
           const { incident_number, work_notes } = args;
 
           // Look up incident by number
-          const incidents = await serviceNowClient.getRecords('incident', {
+          const incidents = await requestClient.getRecords('incident', {
             sysparm_query: `number=${incident_number}`,
             sysparm_limit: 1
           });
@@ -2589,7 +2589,7 @@ The comment has been successfully added to the incident.`
           const incident = incidents[0];
 
           // Update work_notes field
-          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, {
+          const result = await requestClient.updateRecord('incident', incident.sys_id, {
             work_notes: work_notes
           });
 
@@ -2612,7 +2612,7 @@ The work notes have been successfully added to the incident.`
           const { incident_number, assigned_to, assignment_group } = args;
 
           // Look up incident by number
-          const incidents = await serviceNowClient.getRecords('incident', {
+          const incidents = await requestClient.getRecords('incident', {
             sysparm_query: `number=${incident_number}`,
             sysparm_limit: 1
           });
@@ -2626,7 +2626,7 @@ The work notes have been successfully added to the incident.`
           // Resolve user if not a sys_id (32 character hex string)
           let assignedToId = assigned_to;
           if (!/^[0-9a-f]{32}$/i.test(assigned_to)) {
-            const users = await serviceNowClient.getRecords('sys_user', {
+            const users = await requestClient.getRecords('sys_user', {
               sysparm_query: `name=${assigned_to}^ORuser_name=${assigned_to}`,
               sysparm_limit: 1
             });
@@ -2641,7 +2641,7 @@ The work notes have been successfully added to the incident.`
           // Resolve group if provided and not a sys_id
           let assignmentGroupId = assignment_group;
           if (assignment_group && !/^[0-9a-f]{32}$/i.test(assignment_group)) {
-            const groups = await serviceNowClient.getRecords('sys_user_group', {
+            const groups = await requestClient.getRecords('sys_user_group', {
               sysparm_query: `name=${assignment_group}`,
               sysparm_limit: 1
             });
@@ -2662,7 +2662,7 @@ The work notes have been successfully added to the incident.`
             updateData.assignment_group = assignmentGroupId;
           }
 
-          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, updateData);
+          const result = await requestClient.updateRecord('incident', incident.sys_id, updateData);
 
           return {
             content: [{
@@ -2684,7 +2684,7 @@ The incident has been assigned successfully.`
           const { incident_number, resolution_notes, resolution_code } = args;
 
           // Look up incident by number
-          const incidents = await serviceNowClient.getRecords('incident', {
+          const incidents = await requestClient.getRecords('incident', {
             sysparm_query: `number=${incident_number}`,
             sysparm_limit: 1
           });
@@ -2705,7 +2705,7 @@ The incident has been assigned successfully.`
             updateData.close_code = resolution_code;
           }
 
-          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, updateData);
+          const result = await requestClient.updateRecord('incident', incident.sys_id, updateData);
 
           return {
             content: [{
@@ -2728,7 +2728,7 @@ The incident has been resolved successfully.`
           const { incident_number, close_notes, close_code } = args;
 
           // Look up incident by number
-          const incidents = await serviceNowClient.getRecords('incident', {
+          const incidents = await requestClient.getRecords('incident', {
             sysparm_query: `number=${incident_number}`,
             sysparm_limit: 1
           });
@@ -2749,7 +2749,7 @@ The incident has been resolved successfully.`
             updateData.close_code = close_code;
           }
 
-          const result = await serviceNowClient.updateRecord('incident', incident.sys_id, updateData);
+          const result = await requestClient.updateRecord('incident', incident.sys_id, updateData);
 
           return {
             content: [{
@@ -2773,7 +2773,7 @@ The incident has been closed successfully.`
           const { change_number, comment } = args;
 
           // Look up change by number
-          const changes = await serviceNowClient.getRecords('change_request', {
+          const changes = await requestClient.getRecords('change_request', {
             sysparm_query: `number=${change_number}`,
             sysparm_limit: 1
           });
@@ -2785,7 +2785,7 @@ The incident has been closed successfully.`
           const change = changes[0];
 
           // Update comments field
-          const result = await serviceNowClient.updateRecord('change_request', change.sys_id, {
+          const result = await requestClient.updateRecord('change_request', change.sys_id, {
             comments: comment
           });
 
@@ -2808,7 +2808,7 @@ The comment has been successfully added to the change request.`
           const { change_number, assigned_to, assignment_group } = args;
 
           // Look up change by number
-          const changes = await serviceNowClient.getRecords('change_request', {
+          const changes = await requestClient.getRecords('change_request', {
             sysparm_query: `number=${change_number}`,
             sysparm_limit: 1
           });
@@ -2822,7 +2822,7 @@ The comment has been successfully added to the change request.`
           // Resolve user if not a sys_id
           let assignedToId = assigned_to;
           if (!/^[0-9a-f]{32}$/i.test(assigned_to)) {
-            const users = await serviceNowClient.getRecords('sys_user', {
+            const users = await requestClient.getRecords('sys_user', {
               sysparm_query: `name=${assigned_to}^ORuser_name=${assigned_to}`,
               sysparm_limit: 1
             });
@@ -2837,7 +2837,7 @@ The comment has been successfully added to the change request.`
           // Resolve group if provided and not a sys_id
           let assignmentGroupId = assignment_group;
           if (assignment_group && !/^[0-9a-f]{32}$/i.test(assignment_group)) {
-            const groups = await serviceNowClient.getRecords('sys_user_group', {
+            const groups = await requestClient.getRecords('sys_user_group', {
               sysparm_query: `name=${assignment_group}`,
               sysparm_limit: 1
             });
@@ -2858,7 +2858,7 @@ The comment has been successfully added to the change request.`
             updateData.assignment_group = assignmentGroupId;
           }
 
-          const result = await serviceNowClient.updateRecord('change_request', change.sys_id, updateData);
+          const result = await requestClient.updateRecord('change_request', change.sys_id, updateData);
 
           return {
             content: [{
@@ -2880,7 +2880,7 @@ The change request has been assigned successfully.`
           const { change_number, approval_comments } = args;
 
           // Look up change by number
-          const changes = await serviceNowClient.getRecords('change_request', {
+          const changes = await requestClient.getRecords('change_request', {
             sysparm_query: `number=${change_number}`,
             sysparm_limit: 1
           });
@@ -2900,7 +2900,7 @@ The change request has been assigned successfully.`
             updateData.comments = approval_comments;
           }
 
-          const result = await serviceNowClient.updateRecord('change_request', change.sys_id, updateData);
+          const result = await requestClient.updateRecord('change_request', change.sys_id, updateData);
 
           return {
             content: [{
@@ -2923,7 +2923,7 @@ The change request has been approved successfully.`
           const { problem_number, comment } = args;
 
           // Look up problem by number
-          const problems = await serviceNowClient.getRecords('problem', {
+          const problems = await requestClient.getRecords('problem', {
             sysparm_query: `number=${problem_number}`,
             sysparm_limit: 1
           });
@@ -2935,7 +2935,7 @@ The change request has been approved successfully.`
           const problem = problems[0];
 
           // Update comments field
-          const result = await serviceNowClient.updateRecord('problem', problem.sys_id, {
+          const result = await requestClient.updateRecord('problem', problem.sys_id, {
             comments: comment
           });
 
@@ -2958,7 +2958,7 @@ The comment has been successfully added to the problem.`
           const { problem_number, resolution_notes, resolution_code } = args;
 
           // Look up problem by number
-          const problems = await serviceNowClient.getRecords('problem', {
+          const problems = await requestClient.getRecords('problem', {
             sysparm_query: `number=${problem_number}`,
             sysparm_limit: 1
           });
@@ -2979,7 +2979,7 @@ The comment has been successfully added to the problem.`
             updateData.resolution_code = resolution_code;
           }
 
-          const result = await serviceNowClient.updateRecord('problem', problem.sys_id, updateData);
+          const result = await requestClient.updateRecord('problem', problem.sys_id, updateData);
 
           return {
             content: [{
@@ -3002,7 +3002,7 @@ The problem has been closed successfully.`
           const { sys_id } = args;
 
           console.error(`🗂️  Fetching catalog item detail for: ${sys_id}`);
-          const detail = await serviceNowClient.getCatalogItemDetail(sys_id);
+          const detail = await requestClient.getCatalogItemDetail(sys_id);
 
           return {
             content: [{
@@ -3016,7 +3016,7 @@ The problem has been closed successfully.`
           const { keyword, category, active = true, limit = 25, include_producers = true } = args;
 
           console.error(`🔍 Searching catalog items (keyword: ${keyword || 'none'}, category: ${category || 'all'})`);
-          const results = await serviceNowClient.searchCatalogItems({ keyword, category, active, limit, include_producers });
+          const results = await requestClient.searchCatalogItems({ keyword, category, active, limit, include_producers });
 
           return {
             content: [{
@@ -3030,7 +3030,7 @@ The problem has been closed successfully.`
           const { sys_id, variables = {}, requested_for, quantity = 1 } = args;
 
           console.error(`📋 Submitting catalog form: ${sys_id}`);
-          const result = await serviceNowClient.submitCatalogForm(sys_id, variables, { requested_for, quantity });
+          const result = await requestClient.submitCatalogForm(sys_id, variables, { requested_for, quantity });
 
           const requestNumber = result?.request_number || result?.number || result?.sys_id || 'unknown';
           return {
@@ -3045,7 +3045,7 @@ The problem has been closed successfully.`
           const { query, limit = 50 } = args;
 
           console.error(`📂 Fetching catalog categories`);
-          const results = await serviceNowClient.getCatalogCategories({
+          const results = await requestClient.getCatalogCategories({
             sysparm_query: query || 'active=true',
             sysparm_fields: 'sys_id,title,description,parent,active',
             sysparm_limit: limit
