@@ -145,6 +145,25 @@ describe('per-call instance routing', () => {
     expect(primaryClient.getRecords).not.toHaveBeenCalled();
   });
 
+  test('relabels a factory-created client to the explicitly selected instance', async () => {
+    const injectedClient = createClient('default');
+    const createServiceNowClient = jest.fn(() => injectedClient);
+    const { callTool } = await createHarness({ createServiceNowClient });
+
+    await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          instance: 'prod',
+          table_name: 'incident'
+        }
+      }
+    }, {});
+
+    expect(injectedClient.currentInstanceName).toBe('prod');
+  });
+
   test('routes SN-Create-Record through the explicitly selected dev client', async () => {
     const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
     const data = { short_description: 'Created through dev' };

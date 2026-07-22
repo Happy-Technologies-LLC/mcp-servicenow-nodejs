@@ -95,6 +95,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     if (!instanceClients.has(instanceName)) {
       const instance = instanceManager.getInstance(instanceName);
       const client = createServiceNowClient(instance);
+      client.currentInstanceName = instance.name;
       configureProgressNotifications(client);
       instanceClients.set(instanceName, client);
     }
