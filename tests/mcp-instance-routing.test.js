@@ -116,7 +116,7 @@ describe('per-call instance routing', () => {
     expect(createServiceNowClient).not.toHaveBeenCalled();
   });
 
-  test('routes SN-Query-Table through the explicitly selected prod client', async () => {
+  test('reuses the cached prod client across explicit calls', async () => {
     const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
 
     const request = {
@@ -144,6 +144,107 @@ describe('per-call instance routing', () => {
       sysparm_offset: undefined
     });
     expect(primaryClient.getRecords).not.toHaveBeenCalled();
+  });
+
+  test('returns an MCP error for an unknown instance without touching clients', async () => {
+    const { primaryClient, createServiceNowClient, callTool } = await createHarness();
+
+    const result = await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          instance: 'missing',
+          table_name: 'incident',
+          query: 'active=true'
+        }
+      }
+    }, {});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Instance 'missing' not found");
+    expect(primaryClient.getRecords).not.toHaveBeenCalled();
+    expect(createServiceNowClient).not.toHaveBeenCalled();
+  });
+
+  test('isolates concurrent dev and prod queries', async () => {
+    const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
+
+    await Promise.all([
+      callTool({
+        method: 'tools/call',
+        params: {
+          name: 'SN-Query-Table',
+          arguments: {
+            instance: 'dev',
+            table_name: 'incident',
+            query: 'priority=1'
+          }
+        }
+      }, {}),
+      callTool({
+        method: 'tools/call',
+        params: {
+          name: 'SN-Query-Table',
+          arguments: {
+            instance: 'prod',
+            table_name: 'change_request',
+            query: 'active=true'
+          }
+        }
+      }, {})
+    ]);
+
+    expect(createServiceNowClient).toHaveBeenCalledTimes(2);
+    expect(clients.dev.getRecords).toHaveBeenCalledTimes(1);
+    expect(clients.dev.getRecords).toHaveBeenCalledWith('incident', {
+      sysparm_limit: 25,
+      sysparm_query: 'priority=1',
+      sysparm_fields: undefined,
+      sysparm_offset: undefined
+    });
+    expect(clients.prod.getRecords).toHaveBeenCalledTimes(1);
+    expect(clients.prod.getRecords).toHaveBeenCalledWith('change_request', {
+      sysparm_limit: 25,
+      sysparm_query: 'active=true',
+      sysparm_fields: undefined,
+      sysparm_offset: undefined
+    });
+    expect(primaryClient.getRecords).not.toHaveBeenCalled();
+    expect(primaryClient.setInstance).not.toHaveBeenCalled();
+  });
+
+  test('keeps SN-Set-Instance compatible with primary client switching', async () => {
+    const { primaryClient, createServiceNowClient, callTool } = await createHarness();
+
+    await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Set-Instance',
+        arguments: {
+          instance_name: 'prod'
+        }
+      }
+    }, {});
+
+    expect(primaryClient.setInstance).toHaveBeenCalledWith(
+      'https://prod.service-now.com',
+      'prod-user',
+      'prod-password',
+      'prod',
+      {
+        authType: 'basic',
+        clientId: undefined,
+        clientSecret: undefined,
+        grantType: undefined,
+        scope: undefined,
+        authorizeUrl: undefined,
+        tokenUrl: undefined,
+        redirectPort: undefined,
+        callbackPath: undefined
+      }
+    );
+    expect(createServiceNowClient).not.toHaveBeenCalled();
   });
 
   test('relabels a factory-created client to the explicitly selected instance', async () => {
