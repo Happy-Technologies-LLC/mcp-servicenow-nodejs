@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/happy-platform-mcp"><img src="https://img.shields.io/npm/v/happy-platform-mcp.svg?style=flat-square" alt="npm version"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License: Apache 2.0"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg?style=flat-square" alt="Node.js Version"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg?style=flat-square" alt="Node.js Version"></a>
 </p>
 
 <p align="center">
@@ -62,7 +62,7 @@ If you find this project useful, consider supporting its development. Contributi
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - One or more ServiceNow&reg; instances with REST API access
 - Valid credentials for each instance
 
