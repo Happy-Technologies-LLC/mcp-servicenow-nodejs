@@ -90,18 +90,21 @@ Query records from any table with advanced filtering.
   "limit": 25,                     // Optional: Max records (default: 25)
   "offset": 0,                     // Optional: Skip records for pagination
   "order_by": "sys_created_on",    // Optional: Sort field (prefix with - for desc)
-  "instance": "prod"               // Optional: Target instance (uses default if omitted)
+  "instance": "prod"               // Optional: Target instance (uses the session's implicit target if omitted)
 }
 ```
 
 **Example:**
 ```javascript
-SN-Query-Table({
-  "table_name": "incident",
-  "query": "active=true^state=1",
-  "fields": "number,short_description,priority",
-  "limit": 10
-})
+await client.callTool({
+  name: 'SN-Query-Table',
+  arguments: {
+    table_name: 'incident',
+    query: 'active=true^state=1',
+    fields: 'number,short_description,priority',
+    limit: 10
+  }
+});
 ```
 
 ---
@@ -177,11 +180,14 @@ Each major table has specialized tools:
 
 **Example:**
 ```javascript
-SN-List-Incidents({
-  "query": "state=1^priority=1",
-  "limit": 10,
-  "instance": "prod"
-})
+await client.callTool({
+  name: 'SN-List-Incidents',
+  arguments: {
+    query: 'state=1^priority=1',
+    limit: 10,
+    instance: 'prod'
+  }
+});
 ```
 
 ---
@@ -205,10 +211,13 @@ Add a comment to an incident using the incident number.
 
 **Example:**
 ```javascript
-SN-Add-Comment({
-  "incident_number": "INC0012345",
-  "comment": "User confirmed the issue started after last deployment"
-})
+await client.callTool({
+  name: 'SN-Add-Comment',
+  arguments: {
+    incident_number: 'INC0012345',
+    comment: 'User confirmed the issue started after last deployment'
+  }
+});
 ```
 
 ---
@@ -228,10 +237,13 @@ Add work notes to an incident (internal notes not visible to users).
 
 **Example:**
 ```javascript
-SN-Add-Work-Notes({
-  "incident_number": "INC0012345",
-  "work_notes": "Applied hotfix to production server"
-})
+await client.callTool({
+  name: 'SN-Add-Work-Notes',
+  arguments: {
+    incident_number: 'INC0012345',
+    work_notes: 'Applied hotfix to production server'
+  }
+});
 ```
 
 ---
@@ -252,11 +264,14 @@ Assign an incident to a user and/or group. Automatically resolves user names to 
 
 **Example:**
 ```javascript
-SN-Assign-Incident({
-  "incident_number": "INC0012345",
-  "assigned_to": "John Smith",
-  "assignment_group": "IT Support"
-})
+await client.callTool({
+  name: 'SN-Assign-Incident',
+  arguments: {
+    incident_number: 'INC0012345',
+    assigned_to: 'John Smith',
+    assignment_group: 'IT Support'
+  }
+});
 ```
 
 **Features:**
@@ -282,11 +297,14 @@ Resolve an incident with resolution notes.
 
 **Example:**
 ```javascript
-SN-Resolve-Incident({
-  "incident_number": "INC0012345",
-  "resolution_notes": "Database connection pool was exhausted. Increased pool size from 10 to 20.",
-  "resolution_code": "Solved (Permanently)"
-})
+await client.callTool({
+  name: 'SN-Resolve-Incident',
+  arguments: {
+    incident_number: 'INC0012345',
+    resolution_notes: 'Database connection pool was exhausted. Increased pool size from 10 to 20.',
+    resolution_code: 'Solved (Permanently)'
+  }
+});
 ```
 
 **Resolution Codes:**
@@ -313,11 +331,14 @@ Close an incident with close notes.
 
 **Example:**
 ```javascript
-SN-Close-Incident({
-  "incident_number": "INC0012345",
-  "close_notes": "User confirmed issue is resolved. Monitoring for 24 hours showed no recurrence.",
-  "close_code": "Solved (Permanently)"
-})
+await client.callTool({
+  name: 'SN-Close-Incident',
+  arguments: {
+    incident_number: 'INC0012345',
+    close_notes: 'User confirmed issue is resolved. Monitoring for 24 hours showed no recurrence.',
+    close_code: 'Solved (Permanently)'
+  }
+});
 ```
 
 ---
@@ -341,10 +362,13 @@ Add a comment to a change request.
 
 **Example:**
 ```javascript
-SN-Add-Change-Comment({
-  "change_number": "CHG0012345",
-  "comment": "All CAB members have reviewed and approved the change plan"
-})
+await client.callTool({
+  name: 'SN-Add-Change-Comment',
+  arguments: {
+    change_number: 'CHG0012345',
+    comment: 'All CAB members have reviewed and approved the change plan'
+  }
+});
 ```
 
 ---
@@ -365,11 +389,14 @@ Assign a change request to a user and/or group.
 
 **Example:**
 ```javascript
-SN-Assign-Change({
-  "change_number": "CHG0012345",
-  "assigned_to": "Jane Doe",
-  "assignment_group": "Change Management"
-})
+await client.callTool({
+  name: 'SN-Assign-Change',
+  arguments: {
+    change_number: 'CHG0012345',
+    assigned_to: 'Jane Doe',
+    assignment_group: 'Change Management'
+  }
+});
 ```
 
 ---
@@ -389,10 +416,13 @@ Approve a change request.
 
 **Example:**
 ```javascript
-SN-Approve-Change({
-  "change_number": "CHG0012345",
-  "approval_comments": "CAB approved. Proceed with scheduled maintenance window."
-})
+await client.callTool({
+  name: 'SN-Approve-Change',
+  arguments: {
+    change_number: 'CHG0012345',
+    approval_comments: 'CAB approved. Proceed with scheduled maintenance window.'
+  }
+});
 ```
 
 ---
@@ -416,10 +446,13 @@ Add a comment to a problem record.
 
 **Example:**
 ```javascript
-SN-Add-Problem-Comment({
-  "problem_number": "PRB0012345",
-  "comment": "RCA complete. Issue caused by insufficient connection pool size during peak hours."
-})
+await client.callTool({
+  name: 'SN-Add-Problem-Comment',
+  arguments: {
+    problem_number: 'PRB0012345',
+    comment: 'RCA complete. Issue caused by insufficient connection pool size during peak hours.'
+  }
+});
 ```
 
 ---
@@ -440,11 +473,14 @@ Close a problem with resolution information.
 
 **Example:**
 ```javascript
-SN-Close-Problem({
-  "problem_number": "PRB0012345",
-  "resolution_notes": "Permanent fix deployed: increased connection pool from 10 to 50 connections. No incidents reported in 2 weeks.",
-  "resolution_code": "Fix Applied"
-})
+await client.callTool({
+  name: 'SN-Close-Problem',
+  arguments: {
+    problem_number: 'PRB0012345',
+    resolution_notes: 'Permanent fix deployed: increased connection pool from 10 to 50 connections. No incidents reported in 2 weeks.',
+    resolution_code: 'Fix Applied'
+  }
+});
 ```
 
 ---
@@ -918,7 +954,7 @@ curl http://localhost:3000/mcp/resources/servicenow://instance
 
 ## Multi-Instance Support
 
-Every live ServiceNow operation accepts an optional `instance` parameter except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting it retains current/default instance behavior. An explicit `instance` resolves an isolated cached client and is required for safe parallel workstreams. `SN-Set-Instance` remains available for sequential/default workflows; it must not be used to isolate overlapping calls.
+Every live ServiceNow operation accepts an optional `instance` parameter except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting it uses the current session client's implicit target. Explicit routing is required when overlapping work may target different instances or race with `SN-Set-Instance`; concurrent calls against one stable target do not require it. Calls with the same explicit instance name share that named cached client.
 
 ### Configuration
 
@@ -948,19 +984,30 @@ Set up multiple instances in `config/servicenow-instances.json`. Each instance c
 
 OAuth instances support Client Credentials, Resource Owner Password Credentials, and per-user Authorization Code with PKCE. Tokens are refreshed before expiry and retried once on 401. See `docs/MULTI_INSTANCE_CONFIGURATION.md` for configuration and migration details.
 
+At stdio startup, `SERVICENOW_INSTANCE` selects a named JSON entry when set; otherwise the configured `"default": true` entry is selected, or the first configured entry if none is marked. HTTP sessions use the configured default or first entry. If the JSON file is missing, ServiceNow environment credentials can supply the single fallback instance. `SN-Set-Instance` changes only the current session client's implicit target in memory; it does not modify startup configuration, and a new MCP session or server starts from startup selection again.
+
 ### Usage
 
-**Current/default instance:**
+**Current session implicit target:**
 ```javascript
-SN-Query-Table({ "table_name": "incident", "limit": 10 })
+await client.callTool({
+  name: 'SN-Query-Table',
+  arguments: { table_name: 'incident', limit: 10 }
+});
 ```
 
 **Concurrent explicit instances:**
 ```javascript
 await Promise.all([
-  SN-Query-Table({ "table_name": "incident", "instance": "dev", "limit": 10 }),
-  SN-Query-Table({ "table_name": "incident", "instance": "prod", "limit": 10 })
-])
+  client.callTool({
+    name: 'SN-Query-Table',
+    arguments: { table_name: 'incident', instance: 'dev', limit: 10 }
+  }),
+  client.callTool({
+    name: 'SN-Query-Table',
+    arguments: { table_name: 'incident', instance: 'prod', limit: 10 }
+  })
+]);
 ```
 
 ### List Instances
@@ -1034,9 +1081,9 @@ ServiceNow enforces rate limits on API calls:
    - Verify with `SN-Get-Current-Update-Set`
 
 7. **Instance Parameter** to target the correct environment
-   - Use explicit per-call `instance` values whenever operations may overlap
-   - Omit `instance` to retain the current/default instance
-   - Use `SN-Set-Instance` only to change the sequential workflow default
+   - Use explicit per-call `instance` values when overlapping work may target different instances or race with `SN-Set-Instance`
+   - Omit `instance` for concurrent calls against one stable session target
+   - Use `SN-Set-Instance` only to change the current session's implicit target for later calls
 
 8. **Background Scripts** for complex operations
    - Use `SN-Execute-Background-Script` with trigger method

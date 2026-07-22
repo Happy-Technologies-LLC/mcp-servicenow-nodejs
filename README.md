@@ -151,17 +151,28 @@ curl -H "Authorization: Bearer $HAPPY_MCP_API_TOKEN" http://localhost:3000/healt
 
 ## Multi-Instance Routing
 
-Every live ServiceNow operation accepts an optional `instance` parameter, except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting `instance` preserves the current/default instance behavior. Explicit per-call routing uses isolated cached clients and is the recommended pattern; it is required when workstreams can overlap. Use `SN-Set-Instance` only to change the default for sequential workflows, not as parallel isolation.
+Every live ServiceNow operation accepts an optional `instance` parameter, except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting it uses the current session client's implicit target. Explicit routing is required when overlapping work may target different instances or race with `SN-Set-Instance`; concurrent calls against one stable implicit target do not require it. Explicit calls are cached by instance name, so calls to the same named instance share that client.
+
+At stdio startup, `SERVICENOW_INSTANCE` selects a named JSON entry when set; otherwise startup uses the entry marked `"default": true`, or the first configured entry if none is marked. HTTP sessions use the configured default or first entry. If the JSON file is missing, ServiceNow environment credentials can provide the single fallback instance. The `"default": true` flag is startup configuration. `SN-Set-Instance` changes only the current session client in memory; it never edits configuration, and a new MCP session or server starts from startup selection again.
 
 ```javascript
-// Uses the current/default instance
-SN-Query-Table({ "table_name": "incident", "limit": 10 })
+// Uses this session client's current implicit target
+await client.callTool({
+  name: 'SN-Query-Table',
+  arguments: { table_name: 'incident', limit: 10 }
+});
 
 // Safely query dev and prod concurrently
 await Promise.all([
-  SN-Query-Table({ "table_name": "incident", "instance": "dev", "limit": 10 }),
-  SN-Query-Table({ "table_name": "incident", "instance": "prod", "limit": 10 })
-])
+  client.callTool({
+    name: 'SN-Query-Table',
+    arguments: { table_name: 'incident', instance: 'dev', limit: 10 }
+  }),
+  client.callTool({
+    name: 'SN-Query-Table',
+    arguments: { table_name: 'incident', instance: 'prod', limit: 10 }
+  })
+]);
 ```
 
 ## Tool Overview
@@ -184,61 +195,68 @@ await Promise.all([
 
 ### Examples
 
-```javascript
-// Query with filtering
-SN-Query-Table({ "table_name": "incident", "query": "active=true^priority=1", "limit": 10 })
+The following transport-neutral examples show an MCP tool name followed by its arguments:
 
-// Create a record
-SN-Create-Incident({ "short_description": "Email service down", "urgency": 1 })
+```text
+SN-Query-Table
+{ "table_name": "incident", "query": "active=true^priority=1", "limit": 10 }
 
-// Natural language search
-SN-NL-Search({ "table_name": "incident", "query": "high priority incidents assigned to me" })
+SN-Create-Incident
+{ "short_description": "Email service down", "urgency": 1 }
 
-// Background script execution (automated via sys_trigger)
-SN-Execute-Background-Script({ "script": "gs.info('Hello');" })
+SN-NL-Search
+{ "table_name": "incident", "query": "high priority incidents assigned to me" }
 
-// Update set management
-SN-Set-Update-Set({ "update_set_sys_id": "abc123..." })
+SN-Execute-Background-Script
+{ "script": "gs.info('Hello');" }
 
-// Batch operations
-SN-Batch-Update({ "updates": [{ "table": "incident", "sys_id": "id1", "data": {...} }] })
+SN-Set-Update-Set
+{ "update_set_sys_id": "abc123..." }
 
-// Service Catalog AI-submission workflow
-SN-Catalog-Search-Items({ "keyword": "VPN access" })
-SN-Catalog-Get-Item({ "sys_id": "<catalog_item_sys_id>" })
-SN-Catalog-Submit({ "sys_id": "<catalog_item_sys_id>", "variables": { "requested_for": "jsmith", "justification": "Project X" } })
+SN-Batch-Update
+{ "updates": [{ "table": "incident", "sys_id": "id1", "data": { "state": 2 } }] }
 
-// ServiceNow Docs local search workflow
-SN-Docs-Families({})
-SN-Docs-Sync({ "family": "australia" })
-SN-Docs-Search({ "query": "create a Flow Designer action", "family": "australia" })
+SN-Catalog-Search-Items
+{ "keyword": "VPN access" }
+SN-Catalog-Get-Item
+{ "sys_id": "<catalog_item_sys_id>" }
+SN-Catalog-Submit
+{ "sys_id": "<catalog_item_sys_id>", "variables": { "requested_for": "jsmith", "justification": "Project X" } }
+
+SN-Docs-Families
+{}
+SN-Docs-Sync
+{ "family": "australia" }
+SN-Docs-Search
+{ "query": "create a Flow Designer action", "family": "australia" }
 ```
 
 ### Local Script Development
 
 Develop scripts locally with version control and automatic sync:
 
-```javascript
-// Download script to local file
-SN-Sync-Script-To-Local({
+```text
+SN-Sync-Script-To-Local
+{
   "script_sys_id": "abc123...",
   "local_path": "/scripts/business_rules/validate_incident.js"
-})
+}
 
-// Watch for changes and auto-sync
-SN-Watch-Script({
+SN-Watch-Script
+{
   "local_path": "/scripts/business_rules/validate_incident.js",
   "script_sys_id": "abc123..."
-})
+}
 ```
 
 ### Natural Language Search
 
-```javascript
-SN-NL-Search({
+```text
+SN-NL-Search
+{
   "table_name": "incident",
   "query": "active high priority incidents that are unassigned"
-})
+}
 ```
 
 Supports 15+ patterns including field comparisons, text searches, date ranges, logical operators, and ordering.
@@ -247,12 +265,17 @@ Supports 15+ patterns including field comparisons, text searches, date ranges, l
 
 Happy MCP can retrieve official ServiceNowDocs markdown directly from GitHub and optionally localize a docs family into a SQLite FTS5 index for fast local search. Local indexing is disabled by default; enable it with `docs.localIndexEnabled=true` in `config/servicenow-instances.json` or `HAPPY_DOCS_ENABLE_LOCAL_INDEX=true`.
 
-```javascript
-SN-Docs-Families({})
-SN-Docs-Status({})
-SN-Docs-Sync({ "family": "australia" })
-SN-Docs-Search({ "query": "update set best practices", "family": "australia", "limit": 5 })
-SN-Docs-Get({ "family": "australia", "path": "platform/example.md" })
+```text
+SN-Docs-Families
+{}
+SN-Docs-Status
+{}
+SN-Docs-Sync
+{ "family": "australia" }
+SN-Docs-Search
+{ "query": "update set best practices", "family": "australia", "limit": 5 }
+SN-Docs-Get
+{ "family": "australia", "path": "platform/example.md" }
 ```
 
 SQLite local indexing is optional and disabled by default. Vector search is also optional; enable local indexing, set `HAPPY_DOCS_ENABLE_VECTOR=true`, and use `HAPPY_DOCS_EMBEDDING_PROVIDER=local` to build a sqlite-vec index with deterministic local embeddings. See [ServiceNow Docs Search](docs/SERVICENOW_DOCS_SEARCH.md).
