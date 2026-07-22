@@ -10,6 +10,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSche
 import fs from 'fs/promises';
 import path from 'path';
 import { configManager, instanceToClientOptions } from './config-manager.js';
+import { ServiceNowClient } from './servicenow-client.js';
 import { syncScript, syncAllScripts, SCRIPT_TYPES } from './script-sync.js';
 import { parseNaturalLanguage, getSupportedPatterns } from './natural-language.js';
 import { docsToolDefinitions } from './docs/tool-definitions.js';
@@ -39,6 +40,18 @@ function addInstanceParameter(tools) {
 
 export async function createMcpServer(serviceNowClient, options = {}) {
   const docsOnly = options.docsOnly === true;
+  const instanceManager = options.configManager || configManager;
+  const createServiceNowClient = options.createServiceNowClient || ((instance) => {
+    const client = new ServiceNowClient(
+      instance.url,
+      instance.username,
+      instance.password,
+      instanceToClientOptions(instance)
+    );
+    client.currentInstanceName = instance.name;
+    return client;
+  });
+  const instanceClients = new Map();
   const server = new Server(
     {
       name: 'servicenow-server',
@@ -53,9 +66,12 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     }
   );
 
-  // Set up progress callback for ServiceNow client
-  if (serviceNowClient?.setProgressCallback) {
-    serviceNowClient.setProgressCallback((message) => {
+  const configureProgressNotifications = (client) => {
+    if (!client?.setProgressCallback) {
+      return;
+    }
+
+    client.setProgressCallback((message) => {
       try {
         server.notification({
           method: 'notifications/progress',
@@ -67,7 +83,24 @@ export async function createMcpServer(serviceNowClient, options = {}) {
         console.error('Failed to send progress notification:', error.message);
       }
     });
-  }
+  };
+
+  configureProgressNotifications(serviceNowClient);
+
+  const resolveClient = (instanceName) => {
+    if (!instanceName) {
+      return serviceNowClient;
+    }
+
+    if (!instanceClients.has(instanceName)) {
+      const instance = instanceManager.getInstance(instanceName);
+      const client = createServiceNowClient(instance);
+      configureProgressNotifications(client);
+      instanceClients.set(instanceName, client);
+    }
+
+    return instanceClients.get(instanceName);
+  };
 
   // Load table metadata
   let tableMetadata = {};
@@ -1406,13 +1439,15 @@ export async function createMcpServer(serviceNowClient, options = {}) {
         throw new Error(`Tool ${name} is unavailable in docs-only mode`);
       }
 
+      const requestClient = resolveClient(args?.instance);
+
       switch (name) {
         case 'SN-Set-Instance': {
           const { instance_name } = args;
 
           // If no instance name provided, list available instances
           if (!instance_name) {
-            const instances = configManager.listInstances();
+            const instances = instanceManager.listInstances();
             return {
               content: [{
                 type: 'text',
@@ -1426,7 +1461,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
           }
 
           // Get instance configuration
-          const instance = configManager.getInstance(instance_name);
+          const instance = instanceManager.getInstance(instance_name);
 
           // Switch the client to the new instance
           serviceNowClient.setInstance(instance.url, instance.username, instance.password, instance.name, instanceToClientOptions(instance));
@@ -1476,7 +1511,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             queryParams.sysparm_order_by = order_by;
           }
 
-          const results = await serviceNowClient.getRecords(table_name, queryParams);
+          const results = await requestClient.getRecords(table_name, queryParams);
 
           return {
             content: [{
@@ -1488,7 +1523,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
 
         case 'SN-Create-Record': {
           const { table_name, data } = args;
-          const result = await serviceNowClient.createRecord(table_name, data);
+          const result = await requestClient.createRecord(table_name, data);
 
           const metadata = tableMetadata[table_name];
           const keyField = metadata?.key_field || 'sys_id';

@@ -90,3 +90,79 @@ describe('per-call instance schemas', () => {
     }
   });
 });
+
+describe('per-call instance routing', () => {
+  test('uses the primary client and does not invoke the factory when instance is omitted', async () => {
+    const { primaryClient, createServiceNowClient, callTool } = await createHarness();
+
+    await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          table_name: 'incident',
+          query: 'active=true'
+        }
+      }
+    }, {});
+
+    expect(primaryClient.getRecords).toHaveBeenCalledWith('incident', {
+      sysparm_limit: 25,
+      sysparm_query: 'active=true',
+      sysparm_fields: undefined,
+      sysparm_offset: undefined
+    });
+    expect(createServiceNowClient).not.toHaveBeenCalled();
+  });
+
+  test('routes SN-Query-Table through the explicitly selected prod client', async () => {
+    const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
+
+    const request = {
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          instance: 'prod',
+          table_name: 'change_request',
+          query: 'active=true'
+        }
+      }
+    };
+
+    await callTool(request, {});
+    await callTool(request, {});
+
+    expect(createServiceNowClient).toHaveBeenCalledTimes(1);
+    expect(clients.prod.setProgressCallback).toHaveBeenCalledTimes(1);
+    expect(clients.prod.getRecords).toHaveBeenCalledTimes(2);
+    expect(clients.prod.getRecords).toHaveBeenCalledWith('change_request', {
+      sysparm_limit: 25,
+      sysparm_query: 'active=true',
+      sysparm_fields: undefined,
+      sysparm_offset: undefined
+    });
+    expect(primaryClient.getRecords).not.toHaveBeenCalled();
+  });
+
+  test('routes SN-Create-Record through the explicitly selected dev client', async () => {
+    const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
+    const data = { short_description: 'Created through dev' };
+
+    await callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Create-Record',
+        arguments: {
+          instance: 'dev',
+          table_name: 'incident',
+          data
+        }
+      }
+    }, {});
+
+    expect(createServiceNowClient).toHaveBeenCalledTimes(1);
+    expect(clients.dev.createRecord).toHaveBeenCalledWith('incident', data);
+    expect(primaryClient.createRecord).not.toHaveBeenCalled();
+  });
+});
