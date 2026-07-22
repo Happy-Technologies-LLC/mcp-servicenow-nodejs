@@ -48,6 +48,15 @@ function createManager() {
   };
 }
 
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+
+  return { promise, resolve };
+}
+
 async function createHarness(overrides = {}) {
   const primaryClient = overrides.primaryClient || createClient();
   const manager = overrides.manager || createManager();
@@ -167,43 +176,90 @@ describe('per-call instance routing', () => {
     expect(createServiceNowClient).not.toHaveBeenCalled();
   });
 
-  test('isolates concurrent dev and prod queries', async () => {
+  test('isolates overlapping dev and prod queries', async () => {
     const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
+    const devEntered = createDeferred();
+    const prodEntered = createDeferred();
+    const devRelease = createDeferred();
+    const prodRelease = createDeferred();
 
-    await Promise.all([
-      callTool({
-        method: 'tools/call',
-        params: {
-          name: 'SN-Query-Table',
-          arguments: {
-            instance: 'dev',
-            table_name: 'incident',
-            query: 'priority=1'
-          }
-        }
-      }, {}),
-      callTool({
-        method: 'tools/call',
-        params: {
-          name: 'SN-Query-Table',
-          arguments: {
-            instance: 'prod',
-            table_name: 'change_request',
-            query: 'active=true'
-          }
-        }
-      }, {})
-    ]);
+    clients.dev.getRecords.mockImplementation(async (tableName) => {
+      devEntered.resolve();
+      await devRelease.promise;
+      return [{ client: 'dev', table: tableName }];
+    });
+    clients.prod.getRecords.mockImplementation(async (tableName) => {
+      prodEntered.resolve();
+      await prodRelease.promise;
+      return [{ client: 'prod', table: tableName }];
+    });
 
+    let devSettled = false;
+    const devCall = callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          instance: 'dev',
+          table_name: 'incident',
+          query: 'priority=1'
+        }
+      }
+    }, {}).finally(() => {
+      devSettled = true;
+    });
+
+    await devEntered.promise;
+    const devWasPendingBeforeProd = !devSettled;
+
+    let prodSettled = false;
+    const prodCall = callTool({
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          instance: 'prod',
+          table_name: 'change_request',
+          query: 'active=true'
+        }
+      }
+    }, {}).finally(() => {
+      prodSettled = true;
+    });
+
+    await prodEntered.promise;
+    const callsOverlapped = !devSettled && !prodSettled;
+
+    let prodResult;
+    let devResult;
+    let devWasPendingAfterProd;
+    prodRelease.resolve();
+    try {
+      prodResult = await prodCall;
+      devWasPendingAfterProd = !devSettled;
+    } finally {
+      devRelease.resolve();
+      devResult = await devCall;
+    }
+
+    expect(devWasPendingBeforeProd).toBe(true);
+    expect(callsOverlapped).toBe(true);
+    expect(devWasPendingAfterProd).toBe(true);
+
+    const devText = devResult.content[0].text;
+    const prodText = prodResult.content[0].text;
+    const devRows = JSON.parse(devText.slice(devText.indexOf('\n') + 1));
+    const prodRows = JSON.parse(prodText.slice(prodText.indexOf('\n') + 1));
+
+    expect(devRows).toEqual([{ client: 'dev', table: 'incident' }]);
+    expect(prodRows).toEqual([{ client: 'prod', table: 'change_request' }]);
     expect(createServiceNowClient).toHaveBeenCalledTimes(2);
-    expect(clients.dev.getRecords).toHaveBeenCalledTimes(1);
     expect(clients.dev.getRecords).toHaveBeenCalledWith('incident', {
       sysparm_limit: 25,
       sysparm_query: 'priority=1',
       sysparm_fields: undefined,
       sysparm_offset: undefined
     });
-    expect(clients.prod.getRecords).toHaveBeenCalledTimes(1);
     expect(clients.prod.getRecords).toHaveBeenCalledWith('change_request', {
       sysparm_limit: 25,
       sysparm_query: 'active=true',
@@ -214,10 +270,21 @@ describe('per-call instance routing', () => {
     expect(primaryClient.setInstance).not.toHaveBeenCalled();
   });
 
-  test('keeps SN-Set-Instance compatible with primary client switching', async () => {
-    const { primaryClient, createServiceNowClient, callTool } = await createHarness();
+  test('keeps a cached explicit client isolated from SN-Set-Instance', async () => {
+    const { primaryClient, clients, createServiceNowClient, callTool } = await createHarness();
+    const devRequest = {
+      method: 'tools/call',
+      params: {
+        name: 'SN-Query-Table',
+        arguments: {
+          instance: 'dev',
+          table_name: 'incident'
+        }
+      }
+    };
 
-    await callTool({
+    await callTool(devRequest, {});
+    const setInstanceResult = await callTool({
       method: 'tools/call',
       params: {
         name: 'SN-Set-Instance',
@@ -226,25 +293,37 @@ describe('per-call instance routing', () => {
         }
       }
     }, {});
+    await callTool(devRequest, {});
 
+    expect(setInstanceResult.isError).not.toBe(true);
+    const response = JSON.parse(setInstanceResult.content[0].text);
+    expect(response.success).toBe(true);
+    expect(response.instance.name).toBe('prod');
+    expect(createServiceNowClient).toHaveBeenCalledTimes(1);
+    expect(createServiceNowClient).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'dev' })
+    );
+    expect(clients.dev.getRecords).toHaveBeenCalledTimes(2);
+    const expectedDevQuery = {
+      sysparm_limit: 25,
+      sysparm_query: undefined,
+      sysparm_fields: undefined,
+      sysparm_offset: undefined
+    };
+    expect(clients.dev.getRecords).toHaveBeenNthCalledWith(1, 'incident', expectedDevQuery);
+    expect(clients.dev.getRecords).toHaveBeenNthCalledWith(2, 'incident', expectedDevQuery);
+    expect(clients.prod.getRecords).not.toHaveBeenCalled();
+    expect(clients.dev.currentInstanceName).toBe('dev');
+    expect(primaryClient.setInstance).toHaveBeenCalledTimes(1);
     expect(primaryClient.setInstance).toHaveBeenCalledWith(
       'https://prod.service-now.com',
       'prod-user',
       'prod-password',
       'prod',
-      {
-        authType: 'basic',
-        clientId: undefined,
-        clientSecret: undefined,
-        grantType: undefined,
-        scope: undefined,
-        authorizeUrl: undefined,
-        tokenUrl: undefined,
-        redirectPort: undefined,
-        callbackPath: undefined
-      }
+      expect.objectContaining({ authType: 'basic' })
     );
-    expect(createServiceNowClient).not.toHaveBeenCalled();
+    expect(clients.dev.setInstance).not.toHaveBeenCalled();
+    expect(clients.prod.setInstance).not.toHaveBeenCalled();
   });
 
   test('relabels a factory-created client to the explicitly selected instance', async () => {
