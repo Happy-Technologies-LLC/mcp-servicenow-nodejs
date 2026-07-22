@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ServiceNow MCP Server now supports multiple instance configurations through a centralized JSON file. This allows you to manage credentials for dev, test, and production instances in one place and switch between them easily.
+The ServiceNow MCP Server supports multiple instance configurations through a centralized JSON file. You can route individual operations to dev, test, or production while keeping an independent current/default instance for sequential work.
 
 ## Configuration File
 
@@ -57,7 +57,13 @@ Create `config/servicenow-instances.json` with your instance credentials:
 
 ## Instance Selection
 
-### 1. Default Instance (HTTP Server)
+### 1. Per-Call Routing (Recommended)
+
+Add the optional `instance` parameter to any live ServiceNow operation except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. If it is omitted, the operation keeps the current/default behavior.
+
+Explicit routes resolve isolated cached clients. They are the recommended selection method and are required when calls to different instances may overlap. `SN-Set-Instance` changes the sequential workflow default; it does not provide parallel isolation.
+
+### 2. Default Instance (HTTP Server)
 The HTTP server (`src/server.js`) uses the instance marked with `"default": true`.
 
 ```bash
@@ -65,7 +71,7 @@ npm start
 # Uses the default instance from config
 ```
 
-### 2. Environment Variable (stdio Server)
+### 3. Environment Variable (stdio Server)
 For the stdio server used by Claude Desktop, set the `SERVICENOW_INSTANCE` environment variable:
 
 ```bash
@@ -90,7 +96,7 @@ In your Claude Desktop configuration:
 }
 ```
 
-### 3. Backward Compatibility (.env)
+### 4. Backward Compatibility (.env)
 If `config/servicenow-instances.json` doesn't exist, the system falls back to `.env`:
 
 ```env

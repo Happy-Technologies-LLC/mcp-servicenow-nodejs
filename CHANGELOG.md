@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Optional per-call `instance` routing for every live ServiceNow operation except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Explicit routes use isolated cached clients, providing parallel instance isolation without changing the sequential/default workflow.
 
 ## 4.0.0 - 2026-07-16
 

@@ -151,14 +151,17 @@ curl -H "Authorization: Bearer $HAPPY_MCP_API_TOKEN" http://localhost:3000/healt
 
 ## Multi-Instance Routing
 
-All tools accept an optional `instance` parameter:
+Every live ServiceNow operation accepts an optional `instance` parameter, except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting `instance` preserves the current/default instance behavior. Explicit per-call routing uses isolated cached clients and is the recommended pattern; it is required when workstreams can overlap. Use `SN-Set-Instance` only to change the default for sequential workflows, not as parallel isolation.
 
 ```javascript
-// Uses default instance
-SN-List-Incidents({ "limit": 10 })
+// Uses the current/default instance
+SN-Query-Table({ "table_name": "incident", "limit": 10 })
 
-// Routes to a specific instance
-SN-List-Incidents({ "instance": "prod", "limit": 10 })
+// Safely query dev and prod concurrently
+await Promise.all([
+  SN-Query-Table({ "table_name": "incident", "instance": "dev", "limit": 10 }),
+  SN-Query-Table({ "table_name": "incident", "instance": "prod", "limit": 10 })
+])
 ```
 
 ## Tool Overview

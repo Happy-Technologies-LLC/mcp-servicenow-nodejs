@@ -918,7 +918,7 @@ curl http://localhost:3000/mcp/resources/servicenow://instance
 
 ## Multi-Instance Support
 
-All tools support the `instance` parameter to route requests to specific ServiceNow instances.
+Every live ServiceNow operation accepts an optional `instance` parameter except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting it retains current/default instance behavior. An explicit `instance` resolves an isolated cached client and is required for safe parallel workstreams. `SN-Set-Instance` remains available for sequential/default workflows; it must not be used to isolate overlapping calls.
 
 ### Configuration
 
@@ -950,14 +950,17 @@ OAuth instances support Client Credentials, Resource Owner Password Credentials,
 
 ### Usage
 
-**Default Instance:**
+**Current/default instance:**
 ```javascript
-SN-List-Incidents({ "limit": 10 })
+SN-Query-Table({ "table_name": "incident", "limit": 10 })
 ```
 
-**Specific Instance:**
+**Concurrent explicit instances:**
 ```javascript
-SN-List-Incidents({ "limit": 10, "instance": "prod" })
+await Promise.all([
+  SN-Query-Table({ "table_name": "incident", "instance": "dev", "limit": 10 }),
+  SN-Query-Table({ "table_name": "incident", "instance": "prod", "limit": 10 })
+])
 ```
 
 ### List Instances
@@ -1030,10 +1033,10 @@ ServiceNow enforces rate limits on API calls:
    - Use `SN-Set-Update-Set` for automated setup
    - Verify with `SN-Get-Current-Update-Set`
 
-7. **Instance Parameter** to target correct environment
-   - Specify `instance` parameter for multi-instance setups
-   - Default instance used if not specified
-   - Use `SN-Set-Instance` or `SN-Get-Current-Instance` for management
+7. **Instance Parameter** to target the correct environment
+   - Use explicit per-call `instance` values whenever operations may overlap
+   - Omit `instance` to retain the current/default instance
+   - Use `SN-Set-Instance` only to change the sequential workflow default
 
 8. **Background Scripts** for complex operations
    - Use `SN-Execute-Background-Script` with trigger method
