@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import { spawn } from 'node:child_process';
+import { constants } from 'node:fs';
 import {
   lstat,
   mkdir,
@@ -91,24 +92,133 @@ async function captureRejection(operation) {
   throw new Error('Expected operation to reject');
 }
 
+function createCappedOutput(maxOutputBytes) {
+  const chunks = [];
+  let bytes = 0;
+  let truncated = false;
+  return {
+    append(chunk) {
+      const remaining = maxOutputBytes - bytes;
+      if (remaining > 0) {
+        const retained = chunk.subarray(0, remaining);
+        chunks.push(retained);
+        bytes += retained.length;
+      }
+      if (chunk.length > remaining) {
+        truncated = true;
+      }
+    },
+    snapshot() {
+      return {
+        text: Buffer.concat(chunks, bytes).toString('utf8'),
+        truncated,
+      };
+    },
+  };
+}
+
 function spawnNode(args, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const maxOutputBytes = options.maxOutputBytes ?? 256 * 1024;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError('spawnNode timeoutMs must be a positive safe integer');
+  }
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 0) {
+    throw new TypeError('spawnNode maxOutputBytes must be a non-negative safe integer');
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: options.cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
-    child.stderr.on('data', (chunk) => stderr.push(chunk));
-    child.once('error', reject);
-    child.once('close', (code, signal) => resolve({
-      code,
-      signal,
-      stdout: Buffer.concat(stdout).toString('utf8'),
-      stderr: Buffer.concat(stderr).toString('utf8'),
-    }));
+    const stdout = createCappedOutput(maxOutputBytes);
+    const stderr = createCappedOutput(maxOutputBytes);
+    let deadlineTimer;
+    let killTimer;
+    let settled = false;
+    let timedOut = false;
+
+    const capturedOutput = () => {
+      const capturedStdout = stdout.snapshot();
+      const capturedStderr = stderr.snapshot();
+      return {
+        stdout: capturedStdout.text,
+        stderr: capturedStderr.text,
+        stdoutTruncated: capturedStdout.truncated,
+        stderrTruncated: capturedStderr.truncated,
+      };
+    };
+    const cleanup = () => {
+      clearTimeout(deadlineTimer);
+      clearTimeout(killTimer);
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+      child.off('error', onError);
+      child.off('close', onClose);
+    };
+    const finish = (operation, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      operation(value);
+    };
+    const timeoutError = (code, signal, cause) => {
+      const error = new Error(
+        `node subprocess timed out after ${timeoutMs}ms: ${args.join(' ')}`,
+        cause === undefined ? undefined : { cause },
+      );
+      error.code = 'ETIMEDOUT';
+      error.timeoutMs = timeoutMs;
+      error.exitCode = code;
+      error.signal = signal;
+      Object.assign(error, capturedOutput());
+      return error;
+    };
+    const onStdout = (chunk) => stdout.append(chunk);
+    const onStderr = (chunk) => stderr.append(chunk);
+    const onError = (error) => {
+      finish(reject, timedOut ? timeoutError(null, null, error) : error);
+    };
+    const onClose = (code, signal) => {
+      if (timedOut) {
+        finish(reject, timeoutError(code, signal));
+        return;
+      }
+      finish(resolve, {
+        code,
+        signal,
+        ...capturedOutput(),
+      });
+    };
+
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    child.once('error', onError);
+    child.once('close', onClose);
+    deadlineTimer = setTimeout(() => {
+      timedOut = true;
+      let killFailed = false;
+      let killError;
+      try {
+        killFailed = !child.kill('SIGKILL');
+      } catch (error) {
+        killFailed = true;
+        killError = error;
+      }
+      if (killFailed) {
+        finish(reject, timeoutError(null, null, killError));
+        return;
+      }
+      if (!settled) {
+        killTimer = setTimeout(() => {
+          finish(reject, timeoutError(null, null));
+        }, 1_000);
+      }
+    }, timeoutMs);
   });
 }
 
@@ -171,8 +281,11 @@ describe('normalizeSdkManifest', () => {
     const before = await readFile(fixture.sdkManifest);
     const fs = {
       ...realFs,
-      open: async () => {
-        throw new Error('open must not be called for an idempotent manifest');
+      open: async (path, ...args) => {
+        if (path.startsWith(join(fixture.sdkDir, TEMP_PREFIX))) {
+          throw new Error('temp open must not be called for an idempotent manifest');
+        }
+        return open(path, ...args);
       },
     };
 
@@ -388,13 +501,182 @@ describe('normalizeSdkManifest', () => {
     await assertNoTempResidue(fixture);
   });
 
+  test('keeps the original when the temporary handle close is the only failure', async () => {
+    const fixture = await createFixture();
+    const before = await readFile(fixture.sdkManifest);
+    let renameCalls = 0;
+    const fs = {
+      ...realFs,
+      open: async (path, ...args) => {
+        const handle = await open(path, ...args);
+        if (!path.startsWith(join(fixture.sdkDir, TEMP_PREFIX))) {
+          return handle;
+        }
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === 'close') {
+              return async () => {
+                await target.close();
+                throw new Error('injected close-only failure');
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      },
+      rename: async (...args) => {
+        renameCalls += 1;
+        return rename(...args);
+      },
+    };
+
+    await expect(normalizeSdkManifest({ root: fixture.root, fs })).rejects.toThrow(
+      'injected close-only failure',
+    );
+
+    expect(renameCalls).toBe(0);
+    expect((await readFile(fixture.sdkManifest)).equals(before)).toBe(true);
+    await assertNoTempResidue(fixture);
+  });
+
+  test('rejects a read-window inode swap even after the pathname is restored', async () => {
+    const fixture = await createFixture();
+    const attackerBytes = manifestBytes({
+      name: SDK_NAME,
+      version: SDK_VERSION,
+      dependencies: { [HONO_NAME]: SDK_HONO_RANGE },
+      attacker: true,
+    });
+    const attacker = join(fixture.sdkDir, 'attacker-package.json');
+    const displaced = join(fixture.sdkDir, 'displaced-package.json');
+    await writeFile(attacker, attackerBytes);
+    let swapped = false;
+    let renameCalls = 0;
+    const fs = {
+      ...realFs,
+      open: async (path, ...args) => {
+        if (path !== fixture.sdkManifest || swapped) {
+          return open(path, ...args);
+        }
+        swapped = true;
+        await rename(fixture.sdkManifest, displaced);
+        await rename(attacker, fixture.sdkManifest);
+        const handle = await open(path, ...args);
+        await rename(fixture.sdkManifest, attacker);
+        await rename(displaced, fixture.sdkManifest);
+        return handle;
+      },
+      rename: async (...args) => {
+        renameCalls += 1;
+        return rename(...args);
+      },
+    };
+
+    await expect(normalizeSdkManifest({ root: fixture.root, fs })).rejects.toThrow(
+      /installed SDK manifest changed before it could be read/,
+    );
+
+    expect(swapped).toBe(true);
+    expect(renameCalls).toBe(0);
+    expect((await readFile(fixture.sdkManifest)).equals(fixture.sdkBytes)).toBe(true);
+    await assertNoTempResidue(fixture);
+  });
+
+  test('opens every validated manifest and entry point with no-follow flags', async () => {
+    const fixture = await createFixture({ sdkHonoVersion: BUNDLED_HONO_VERSION });
+    const validatedPaths = new Set([
+      fixture.sdkManifest,
+      await realpath(fixture.honoManifest),
+      await realpath(fixture.honoEntry),
+    ]);
+    const opened = new Map();
+    const fs = {
+      ...realFs,
+      open: async (path, flags, ...args) => {
+        opened.set(path, flags);
+        return open(path, flags, ...args);
+      },
+    };
+
+    await normalizeSdkManifest({ root: fixture.root, fs });
+
+    expect([...opened.keys()].sort()).toEqual([...validatedPaths].sort());
+    if (process.platform !== 'win32' && constants.O_NOFOLLOW !== undefined) {
+      for (const flags of opened.values()) {
+        expect(flags & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);
+      }
+    }
+  });
+
+  test.each([
+    ['open', undefined],
+    ['write', null],
+    ['fsync', false],
+    ['rename', 0],
+    ['close', ''],
+  ])('treats a falsy non-Error %s throw as failure', async (failurePoint, thrownValue) => {
+    const fixture = await createFixture();
+    const before = await readFile(fixture.sdkManifest);
+    let renameCalls = 0;
+    const fs = {
+      ...realFs,
+      open: async (path, ...args) => {
+        const isTemp = path.startsWith(join(fixture.sdkDir, TEMP_PREFIX));
+        if (isTemp && failurePoint === 'open') {
+          throw thrownValue;
+        }
+        const handle = await open(path, ...args);
+        if (!isTemp) {
+          return handle;
+        }
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === 'writeFile' && failurePoint === 'write') {
+              return async () => { throw thrownValue; };
+            }
+            if (property === 'sync' && failurePoint === 'fsync') {
+              return async () => { throw thrownValue; };
+            }
+            if (property === 'close' && failurePoint === 'close') {
+              return async () => {
+                await target.close();
+                throw thrownValue;
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      },
+      rename: async (...args) => {
+        renameCalls += 1;
+        if (failurePoint === 'rename') {
+          throw thrownValue;
+        }
+        return rename(...args);
+      },
+    };
+
+    const error = await captureRejection(() => normalizeSdkManifest({ root: fixture.root, fs }));
+    const primary = error instanceof AggregateError ? error.errors[0] : error;
+
+    expect(primary).toBeInstanceOf(Error);
+    expect(primary.cause).toBe(thrownValue);
+    expect(renameCalls).toBe(failurePoint === 'rename' ? 1 : 0);
+    expect((await readFile(fixture.sdkManifest)).equals(before)).toBe(true);
+    await assertNoTempResidue(fixture);
+  });
   test('aggregates primary, close, and cleanup failures without leaving temp residue', async () => {
     const fixture = await createFixture();
     const before = await readFile(fixture.sdkManifest);
     const fs = {
       ...realFs,
-      open: async (...args) => {
-        const handle = await open(...args);
+      open: async (path, ...args) => {
+        const handle = await open(path, ...args);
+        if (!path.startsWith(join(fixture.sdkDir, TEMP_PREFIX))) {
+          return handle;
+        }
         return new Proxy(handle, {
           get(target, property) {
             if (property === 'writeFile') {
@@ -456,5 +738,37 @@ describe('CLI boundary', () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Usage: node scripts/bundle-sdk-manifest.mjs');
     expect(result.stderr).not.toContain('cannot inspect root node_modules');
+  });
+  test('caps subprocess output without retaining the discarded bytes', async () => {
+    const outputBytes = 4_096;
+    const maxOutputBytes = 64;
+    const expression = `process.stdout.write('o'.repeat(${outputBytes})); process.stderr.write('e'.repeat(${outputBytes}));`;
+
+    const result = await spawnNode(['--eval', expression], { maxOutputBytes });
+
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(maxOutputBytes);
+    expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(maxOutputBytes);
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stderrTruncated).toBe(true);
+  });
+
+  test('terminates a subprocess at its deadline with bounded diagnostics', async () => {
+    const timeoutMs = 25;
+    const expression =
+      "process.stdout.write('started'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);";
+
+    const error = await captureRejection(() => spawnNode(
+      ['--eval', expression],
+      { timeoutMs, maxOutputBytes: 32 },
+    ));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toEqual(expect.objectContaining({
+      code: 'ETIMEDOUT',
+      timeoutMs,
+    }));
+    expect(error.message).toContain(`timed out after ${timeoutMs}ms`);
+    expect(Buffer.byteLength(error.stdout)).toBeLessThanOrEqual(32);
+    expect(Buffer.byteLength(error.stderr)).toBeLessThanOrEqual(32);
   });
 });

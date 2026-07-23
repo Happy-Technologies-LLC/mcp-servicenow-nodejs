@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, open, readFile, realpath, rename, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, realpath, rename, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,10 +13,28 @@ const BUNDLED_HONO_VERSION = '2.0.11';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifestTempPrefix = '.happy-platform-mcp-sdk-manifest-';
-const defaultFs = { lstat, open, readFile, realpath, rename, rm };
+const defaultFs = { lstat, open, realpath, rename, rm };
+const noFollowFlag =
+  process.platform !== 'win32' && typeof constants.O_NOFOLLOW === 'number'
+    ? constants.O_NOFOLLOW
+    : 0;
+const readOnlyNoFollowFlags = constants.O_RDONLY | noFollowFlag;
 
 function refuse(message, options) {
   return new Error(`Refusing to pack: ${message}`, options);
+}
+
+function normalizeThrownValue(value, message) {
+  return value instanceof Error ? value : new Error(message, { cause: value });
+}
+
+function setPrimaryFailure(state, value, message) {
+  state.primaryFailed = true;
+  state.primaryError = normalizeThrownValue(value, message);
+}
+
+function addCleanupFailure(state, value, message) {
+  state.cleanupErrors.push(normalizeThrownValue(value, message));
 }
 
 function parseManifest(bytes, path) {
@@ -178,8 +197,8 @@ function assertSameDependencyState(before, after, { replacedSdkManifest = false 
   }
 }
 
-function throwCollectedErrors(primaryError, cleanupErrors, message) {
-  if (primaryError) {
+function throwCollectedErrors(primaryFailed, primaryError, cleanupErrors, message) {
+  if (primaryFailed) {
     if (cleanupErrors.length > 0) {
       throw new AggregateError([primaryError, ...cleanupErrors], message);
     }
@@ -190,44 +209,130 @@ function throwCollectedErrors(primaryError, cleanupErrors, message) {
   }
 }
 
-async function writeAtomically(path, bytes, mode, fs) {
-  const tempPath = join(dirname(path), `${manifestTempPrefix}${process.pid}-${randomUUID()}.tmp`);
-  const cleanupErrors = [];
+function sameFileIdentity(inspected, opened) {
+  return inspected.dev === opened.dev && inspected.ino === opened.ino;
+}
+
+async function accessInspectedFile(node, label, fs, { readBytes = false } = {}) {
+  const state = {
+    primaryFailed: false,
+    primaryError: undefined,
+    cleanupErrors: [],
+  };
   let handle;
-  let primaryError;
+  let handleOpened = false;
+  let bytes;
 
   try {
-    handle = await fs.open(tempPath, 'wx', mode & 0o777);
-    await handle.writeFile(bytes);
-    await handle.sync();
+    handle = await fs.open(node.path, readOnlyNoFollowFlags);
+    handleOpened = true;
   } catch (error) {
-    primaryError = error;
+    setPrimaryFailure(state, error, `cannot open ${label} at ${node.path}`);
   }
 
-  if (handle) {
+  if (!state.primaryFailed) {
+    try {
+      const openedMetadata = await handle.stat();
+      if (!openedMetadata.isFile() || !sameFileIdentity(node.metadata, openedMetadata)) {
+        throw refuse(`${label} changed before it could be read`);
+      }
+    } catch (error) {
+      setPrimaryFailure(state, error, `cannot validate opened ${label} at ${node.path}`);
+    }
+  }
+
+  if (!state.primaryFailed && readBytes) {
+    try {
+      bytes = await handle.readFile();
+    } catch (error) {
+      setPrimaryFailure(state, error, `cannot read ${label} at ${node.path}`);
+    }
+  }
+
+  if (handleOpened) {
     try {
       await handle.close();
     } catch (error) {
-      cleanupErrors.push(error);
+      if (state.primaryFailed) {
+        addCleanupFailure(state, error, `cannot close ${label} after an earlier failure`);
+      } else {
+        setPrimaryFailure(state, error, `cannot close ${label}`);
+      }
     }
-    handle = undefined;
-  }
-  if (!primaryError) {
-    try {
-      await fs.rename(tempPath, path);
-    } catch (error) {
-      primaryError = error;
-    }
-  }
-  try {
-    await fs.rm(tempPath, { force: true });
-  } catch (error) {
-    cleanupErrors.push(error);
   }
 
   throwCollectedErrors(
-    primaryError,
-    cleanupErrors,
+    state.primaryFailed,
+    state.primaryError,
+    state.cleanupErrors,
+    `could not safely access ${label} at ${node.path}`,
+  );
+  return bytes;
+}
+
+async function writeAtomically(path, bytes, mode, fs) {
+  const tempPath = join(dirname(path), `${manifestTempPrefix}${process.pid}-${randomUUID()}.tmp`);
+  const state = {
+    primaryFailed: false,
+    primaryError: undefined,
+    cleanupErrors: [],
+  };
+  let handle;
+  let handleOpened = false;
+
+  try {
+    handle = await fs.open(tempPath, 'wx', mode & 0o777);
+    handleOpened = true;
+  } catch (error) {
+    setPrimaryFailure(state, error, `cannot open temporary SDK manifest at ${tempPath}`);
+  }
+
+  if (!state.primaryFailed) {
+    try {
+      await handle.writeFile(bytes);
+    } catch (error) {
+      setPrimaryFailure(state, error, `cannot write temporary SDK manifest at ${tempPath}`);
+    }
+  }
+
+  if (!state.primaryFailed) {
+    try {
+      await handle.sync();
+    } catch (error) {
+      setPrimaryFailure(state, error, `cannot sync temporary SDK manifest at ${tempPath}`);
+    }
+  }
+
+  if (handleOpened) {
+    try {
+      await handle.close();
+    } catch (error) {
+      if (state.primaryFailed) {
+        addCleanupFailure(state, error, `cannot close temporary SDK manifest after an earlier failure`);
+      } else {
+        setPrimaryFailure(state, error, `cannot close temporary SDK manifest at ${tempPath}`);
+      }
+    }
+  }
+
+  if (!state.primaryFailed) {
+    try {
+      await fs.rename(tempPath, path);
+    } catch (error) {
+      setPrimaryFailure(state, error, `cannot rename temporary SDK manifest to ${path}`);
+    }
+  }
+
+  try {
+    await fs.rm(tempPath, { force: true });
+  } catch (error) {
+    addCleanupFailure(state, error, `cannot remove temporary SDK manifest at ${tempPath}`);
+  }
+
+  throwCollectedErrors(
+    state.primaryFailed,
+    state.primaryError,
+    state.cleanupErrors,
     `could not atomically write ${path} and clean up its temporary file`,
   );
 }
@@ -247,10 +352,19 @@ export async function normalizeSdkManifest({ root, fs: fsOverrides = {} }) {
   };
 
   const dependencyState = await inspectInstalledDependencies(paths, fs);
-  const [original, honoBytes] = await Promise.all([
-    fs.readFile(dependencyState.sdkManifest.path),
-    fs.readFile(dependencyState.honoManifest.path),
-  ]);
+  const original = await accessInspectedFile(
+    dependencyState.sdkManifest,
+    'installed SDK manifest',
+    fs,
+    { readBytes: true },
+  );
+  const honoBytes = await accessInspectedFile(
+    dependencyState.honoManifest,
+    'resolved Hono manifest',
+    fs,
+    { readBytes: true },
+  );
+  await accessInspectedFile(dependencyState.honoEntry, 'resolved Hono entry point', fs);
 
   const sdkManifest = parseManifest(original, dependencyState.sdkManifest.path);
   if (sdkManifest.name !== SDK_NAME || sdkManifest.version !== SDK_VERSION) {
@@ -317,7 +431,12 @@ export async function normalizeSdkManifest({ root, fs: fsOverrides = {} }) {
 
   const persistedState = await inspectInstalledDependencies(paths, fs);
   assertSameDependencyState(dependencyState, persistedState, { replacedSdkManifest: true });
-  const persisted = await fs.readFile(persistedState.sdkManifest.path);
+  const persisted = await accessInspectedFile(
+    persistedState.sdkManifest,
+    'persisted SDK manifest',
+    fs,
+    { readBytes: true },
+  );
   if (!persisted.equals(normalizedBytes)) {
     throw refuse(`normalized SDK manifest did not persist byte-exactly`);
   }
