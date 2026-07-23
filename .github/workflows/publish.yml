@@ -63,6 +63,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -79,12 +80,13 @@ jobs:
         run: npm test
 
       - name: Run security audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=low
 
   publish-npm:
     needs: [check-version, test]
     if: needs.check-version.outputs.should-publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       id-token: write
@@ -110,6 +112,11 @@ jobs:
         run: npm whoami
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Run security audit
+        run: npm audit --audit-level=low
+
+      - name: Verify published package
+        run: npm run test:package
 
       - name: Publish to npm with trusted publishing
         if: needs.check-version.outputs.npm_publish_mode == 'trusted'
@@ -136,6 +143,7 @@ jobs:
     needs: [check-version, test]
     if: needs.check-version.outputs.should-publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write

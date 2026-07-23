@@ -34,7 +34,7 @@ function assert(condition, message) {
   }
 }
 
-function normalizeThrownValue(value, context) {
+export function normalizeThrownValue(value, context) {
   if (value instanceof Error) {
     return value;
   }
@@ -104,7 +104,7 @@ async function validatedNpmCliPath() {
   return cliPath;
 }
 
-function run(command, args, cwd = root, timeoutMs = npmLocalTimeoutMs) {
+export function run(command, args, cwd = root, timeoutMs = npmLocalTimeoutMs) {
   const invocation = `${command} ${args.join(' ')}`;
   const result = spawnSync(command, args, {
     cwd,
@@ -162,7 +162,7 @@ function requireOnlyVersion(tree, packageName, expectedVersion) {
   );
 }
 
-function listenOnLoopback(listener) {
+export function listenOnLoopback(listener, timeoutMs = listenerTimeoutMs) {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
     const finish = (callback, value) => {
@@ -187,9 +187,9 @@ function listenOnLoopback(listener) {
     const timer = setTimeout(() => {
       finish(
         reject,
-        new Error(`package verifier listener startup timed out after ${listenerTimeoutMs} ms`),
+        new Error(`package verifier listener startup timed out after ${timeoutMs} ms`),
       );
-    }, listenerTimeoutMs);
+    }, timeoutMs);
 
     listener.once('error', onError);
     listener.once('listening', onListening);
@@ -201,7 +201,7 @@ function listenOnLoopback(listener) {
   });
 }
 
-function closeListener(listener) {
+export function closeListener(listener, timeoutMs = listenerTimeoutMs) {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
     const finish = (callback, value) => {
@@ -210,8 +210,10 @@ function closeListener(listener) {
       }
       settled = true;
       clearTimeout(timer);
+      listener.off('error', onError);
       callback(value);
     };
+    const onError = (error) => finish(reject, error);
     const timer = setTimeout(() => {
       try {
         listener.closeAllConnections();
@@ -221,10 +223,11 @@ function closeListener(listener) {
       }
       finish(
         reject,
-        new Error(`package verifier listener close timed out after ${listenerTimeoutMs} ms`),
+        new Error(`package verifier listener close timed out after ${timeoutMs} ms`),
       );
-    }, listenerTimeoutMs);
+    }, timeoutMs);
 
+    listener.once('error', onError);
     try {
       listener.closeAllConnections();
       listener.close((error) => {
@@ -240,7 +243,13 @@ function closeListener(listener) {
   });
 }
 
-function postInitialize(port) {
+export function postInitialize(
+  port,
+  {
+    requestImplementation = httpRequest,
+    timeoutMs = initializeTimeoutMs,
+  } = {},
+) {
   const payload = JSON.stringify({
     jsonrpc: '2.0',
     id: 'package-verifier-initialize',
@@ -258,26 +267,51 @@ function postInitialize(port) {
     let request;
     let response;
     let settled = false;
+    let timeoutError;
+    const onRequestError = (error) => finish(reject, timeoutError ?? error);
+    const onResponseData = (chunk) => chunks.push(chunk);
+    const onResponseError = (error) => finish(reject, error);
+    const onResponseAborted = () => {
+      finish(
+        reject,
+        new Error('initialize response was aborted before the complete body arrived'),
+      );
+    };
+    const onResponseEnd = () => {
+      finish(resolvePromise, {
+        body: Buffer.concat(chunks).toString('utf8'),
+        headers: response.headers,
+        statusCode: response.statusCode,
+      });
+    };
+    const removeListeners = () => {
+      request?.off('error', onRequestError);
+      response?.off('data', onResponseData);
+      response?.off('error', onResponseError);
+      response?.off('aborted', onResponseAborted);
+      response?.off('end', onResponseEnd);
+    };
     const finish = (callback, value) => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
+      removeListeners();
       callback(value);
     };
     const timer = setTimeout(() => {
-      const error = new Error(
-        `initialize request timed out after ${initializeTimeoutMs} ms before the complete response body was received`,
+      timeoutError = new Error(
+        `initialize request timed out after ${timeoutMs} ms before the complete response body was received`,
       );
-      finish(reject, error);
-      controller.abort(error);
-      response?.destroy(error);
-      request?.destroy(error);
-    }, initializeTimeoutMs);
+      controller.abort(timeoutError);
+      response?.destroy();
+      request?.destroy();
+      queueMicrotask(() => finish(reject, timeoutError));
+    }, timeoutMs);
 
     try {
-      request = httpRequest(
+      request = requestImplementation(
         {
           host: '127.0.0.1',
           port,
@@ -291,25 +325,18 @@ function postInitialize(port) {
           signal: controller.signal,
         },
         (incomingResponse) => {
+          if (settled) {
+            incomingResponse.destroy();
+            return;
+          }
           response = incomingResponse;
-          response.on('data', (chunk) => chunks.push(chunk));
-          response.on('error', (error) => finish(reject, error));
-          response.on('aborted', () => {
-            finish(
-              reject,
-              new Error('initialize response was aborted before the complete body arrived'),
-            );
-          });
-          response.on('end', () => {
-            finish(resolvePromise, {
-              body: Buffer.concat(chunks).toString('utf8'),
-              headers: response.headers,
-              statusCode: response.statusCode,
-            });
-          });
+          response.on('data', onResponseData);
+          response.on('error', onResponseError);
+          response.on('aborted', onResponseAborted);
+          response.on('end', onResponseEnd);
         },
       );
-      request.on('error', (error) => finish(reject, error));
+      request.on('error', onRequestError);
       request.end(payload);
     } catch (error) {
       finish(reject, error);
@@ -317,18 +344,83 @@ function postInitialize(port) {
   });
 }
 
-const cleanupErrors = [];
-let listener;
-let primaryError;
-let primaryFailed = false;
-let server;
-let summary;
-let transport;
-let workspace;
+export async function runWithCleanup(
+  operation,
+  cleanupTasks,
+  message = 'package verifier failed and could not clean up every resource',
+) {
+  const cleanupErrors = [];
+  let primaryError;
+  let primaryFailed = false;
+  let result;
 
-try {
+  try {
+    result = await operation();
+  } catch (error) {
+    primaryFailed = true;
+    primaryError = error;
+  }
+
+  for (const cleanup of cleanupTasks) {
+    try {
+      await cleanup();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+
+  throwCollectedErrors(primaryFailed, primaryError, cleanupErrors, message);
+  return result;
+}
+
+export function createVerifierCleanupTasks(
+  resources,
+  {
+    closeListenerImplementation = closeListener,
+    removeWorkspace = rm,
+    resourceTimeoutMs = cleanupTimeoutMs,
+    workspaceTimeoutMs = workspaceCleanupTimeoutMs,
+  } = {},
+) {
+  const closeResource = (key, label) => () =>
+    resources[key] &&
+    withDeadline(
+      () => resources[key].close(),
+      resourceTimeoutMs,
+      `package verifier ${label} close`,
+    );
+
+  return [
+    closeResource('stdioClient', 'stdio client'),
+    closeResource('stdioTransport', 'stdio transport'),
+    closeResource('httpClient', 'HTTP client'),
+    closeResource('httpTransport', 'HTTP transport'),
+    () =>
+      resources.httpListener &&
+      closeListenerImplementation(resources.httpListener, resourceTimeoutMs),
+    closeResource('transport', 'transport'),
+    closeResource('server', 'server'),
+    () =>
+      resources.listener &&
+      closeListenerImplementation(resources.listener, resourceTimeoutMs),
+    () =>
+      resources.workspace &&
+      withDeadline(
+        () => removeWorkspace(resources.workspace, { recursive: true, force: true }),
+        workspaceTimeoutMs,
+        'package verifier workspace removal',
+      ),
+  ];
+}
+
+async function verifyPackage(resources) {
+  let listener;
+  let server;
+  let transport;
+  let workspace;
+
   const npmCliPath = await validatedNpmCliPath();
-  workspace = await mkdtemp(join(tmpdir(), 'happy-platform-mcp-package-'));
+  resources.workspace = workspace = await mkdtemp(join(tmpdir(), 'happy-platform-mcp-package-'));
   const packDir = join(workspace, 'pack');
   const consumerDir = join(workspace, 'consumer');
   await Promise.all([
@@ -406,6 +498,7 @@ try {
   const installedPackageManifest = consumerRequire.resolve('happy-platform-mcp/package.json');
   const installedPackageRoot = dirname(installedPackageManifest);
   const packedRoot = JSON.parse(await readFile(installedPackageManifest, 'utf8'));
+  const sourceRoot = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   const packedSdk = JSON.parse(
     await readFile(
       join(installedPackageRoot, 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json'),
@@ -418,6 +511,20 @@ try {
       'utf8',
     ),
   );
+  assert(
+    packedRoot.main === sourceRoot.main,
+    `installed main target ${inspect(packedRoot.main)} does not match package.json ${inspect(sourceRoot.main)}`,
+  );
+  assert(
+    JSON.stringify(packedRoot.bin) === JSON.stringify(sourceRoot.bin),
+    `installed bin targets ${inspect(packedRoot.bin)} do not exactly match package.json ${inspect(sourceRoot.bin)}`,
+  );
+  const installedEntrypoints = [packedRoot.main, ...Object.values(packedRoot.bin ?? {})];
+  for (const target of installedEntrypoints) {
+    assert(typeof target === 'string' && target.length > 0, 'installed package has an empty entrypoint target');
+    const metadata = await lstat(join(installedPackageRoot, target));
+    assert(metadata.isFile(), `installed entrypoint target is not a file: ${target}`);
+  }
 
   assert(packedRoot.dependencies?.['@modelcontextprotocol/sdk'] === '1.29.0', 'packed root SDK dependency is not 1.29.0');
   assert(packedRoot.dependencies?.axios === '1.18.1', 'packed root Axios dependency is not 1.18.1');
@@ -470,6 +577,166 @@ try {
   const auditOutput = runNpm(npmCliPath, ['audit', '--audit-level=low'], consumerDir);
 
   const packageRequire = createRequire(installedPackageManifest);
+  const [
+    clientModule,
+    sseClientTransportModule,
+    stdioClientTransportModule,
+    installedHttpModule,
+  ] = await Promise.all([
+    import(pathToFileURL(packageRequire.resolve('@modelcontextprotocol/sdk/client/index.js')).href),
+    import(pathToFileURL(packageRequire.resolve('@modelcontextprotocol/sdk/client/sse.js')).href),
+    import(pathToFileURL(packageRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js')).href),
+    import(pathToFileURL(join(installedPackageRoot, 'src', 'http-server.js')).href),
+  ]);
+  assert(typeof clientModule.Client === 'function', 'installed SDK Client import is not callable');
+  assert(
+    typeof stdioClientTransportModule.StdioClientTransport === 'function',
+    'installed StdioClientTransport import is not callable',
+  );
+  assert(
+    typeof sseClientTransportModule.SSEClientTransport === 'function',
+    'installed SSEClientTransport import is not callable',
+  );
+  assert(
+    typeof installedHttpModule.createHttpApp === 'function',
+    'installed src/http-server.js createHttpApp import is not callable',
+  );
+
+  const stdioBinTarget = packedRoot.bin['happy-platform-mcp'];
+  resources.stdioTransport = new stdioClientTransportModule.StdioClientTransport({
+    command: process.execPath,
+    args: [join(installedPackageRoot, stdioBinTarget), '--docs-only'],
+    cwd: consumerDir,
+    env: {
+      ...process.env,
+      HAPPY_CONFIG_PATH: join(consumerDir, '__missing-package-verifier-config.json'),
+      HAPPY_DOCS_ENABLE_LOCAL_INDEX: 'false',
+      HAPPY_DOCS_ENABLE_VECTOR: 'false',
+      HAPPY_MCP_DOCS_ONLY: 'true',
+      SERVICENOW_INSTANCE_URL: '',
+      SERVICENOW_PASSWORD: '',
+      SERVICENOW_USERNAME: '',
+    },
+    stderr: 'inherit',
+  });
+  resources.stdioClient = new clientModule.Client({
+    name: 'installed-package-stdio-verifier',
+    version: '1.0.0',
+  });
+  await withDeadline(
+    () => resources.stdioClient.connect(resources.stdioTransport),
+    initializeTimeoutMs,
+    'installed stdio client connect',
+  );
+  const stdioTools = await withDeadline(
+    () => resources.stdioClient.listTools(),
+    initializeTimeoutMs,
+    'installed stdio listTools',
+  );
+  const stdioResult = await withDeadline(
+    () => resources.stdioClient.callTool({ name: 'SN-Docs-Status', arguments: {} }),
+    initializeTimeoutMs,
+    'installed stdio SN-Docs-Status',
+  );
+  const stdioStatus = JSON.parse(stdioResult.content?.[0]?.text);
+  assert(
+    JSON.stringify(resources.stdioClient.getServerVersion()) ===
+      JSON.stringify({ name: 'servicenow-server', version: '2.0.0' }),
+    'installed stdio server identity is unexpected',
+  );
+  assert(
+    stdioTools.tools.some((tool) => tool.name === 'SN-Docs-Status'),
+    'installed stdio listTools is missing SN-Docs-Status',
+  );
+  assert(stdioResult.isError !== true, 'installed stdio SN-Docs-Status returned an MCP error');
+  assert(
+    stdioStatus.localIndexEnabled === false &&
+      stdioStatus.ftsAvailable === false &&
+      Array.isArray(stdioStatus.families) &&
+      stdioStatus.families.length === 0,
+    `installed stdio SN-Docs-Status returned unexpected status: ${inspect(stdioStatus)}`,
+  );
+
+  const fakeRecords = [{ sys_id: 'package-verifier-record', short_description: 'Installed HTTP smoke' }];
+  const fakeCalls = [];
+  const fakeServiceNowClient = {
+    setProgressCallback() {},
+    async getRecords(table, params) {
+      fakeCalls.push({ params, table });
+      return fakeRecords;
+    },
+  };
+  const installedHttpApp = installedHttpModule.createHttpApp({
+    defaultInstance: {
+      name: 'package-verifier',
+      url: 'https://package-verifier.invalid',
+    },
+    createServiceNowClient: () => fakeServiceNowClient,
+  });
+  resources.httpListener = createServer(installedHttpApp);
+  const installedHttpPort = await listenOnLoopback(resources.httpListener);
+  resources.httpTransport = new sseClientTransportModule.SSEClientTransport(
+    new URL(`http://127.0.0.1:${installedHttpPort}/mcp`),
+  );
+  resources.httpClient = new clientModule.Client({
+    name: 'installed-package-http-verifier',
+    version: '1.0.0',
+  });
+  await withDeadline(
+    () => resources.httpClient.connect(resources.httpTransport),
+    initializeTimeoutMs,
+    'installed HTTP client connect',
+  );
+  const httpTools = await withDeadline(
+    () => resources.httpClient.listTools(),
+    initializeTimeoutMs,
+    'installed HTTP listTools',
+  );
+  const httpResult = await withDeadline(
+    () =>
+      resources.httpClient.callTool({
+        name: 'SN-Query-Table',
+        arguments: {
+          fields: 'sys_id,short_description',
+          limit: 1,
+          query: 'active=true',
+          table_name: 'incident',
+        },
+      }),
+    initializeTimeoutMs,
+    'installed HTTP SN-Query-Table',
+  );
+  assert(
+    JSON.stringify(resources.httpClient.getServerVersion()) ===
+      JSON.stringify({ name: 'servicenow-server', version: '2.0.0' }),
+    'installed HTTP server identity is unexpected',
+  );
+  assert(
+    httpTools.tools.some((tool) => tool.name === 'SN-Query-Table'),
+    'installed HTTP listTools is missing SN-Query-Table',
+  );
+  assert(httpResult.isError !== true, 'installed HTTP SN-Query-Table returned an MCP error');
+  assert(
+    fakeCalls.length === 1 &&
+      fakeCalls[0].table === 'incident' &&
+      fakeCalls[0].params.sysparm_limit === 1 &&
+      fakeCalls[0].params.sysparm_query === 'active=true' &&
+      fakeCalls[0].params.sysparm_fields === 'sys_id,short_description' &&
+      fakeCalls[0].params.sysparm_offset === undefined &&
+      JSON.stringify(Object.keys(fakeCalls[0].params).sort()) ===
+        JSON.stringify(['sysparm_fields', 'sysparm_limit', 'sysparm_offset', 'sysparm_query']),
+    `installed HTTP fake client received unexpected calls: ${inspect(fakeCalls)}`,
+  );
+  assert(
+    JSON.stringify(httpResult.content) ===
+      JSON.stringify([
+        {
+          type: 'text',
+          text: `Found 1 records in incident:\n${JSON.stringify(fakeRecords, null, 2)}`,
+        },
+      ]),
+    `installed HTTP SN-Query-Table returned unexpected result: ${inspect(httpResult)}`,
+  );
   const serverModule = await import(
     pathToFileURL(packageRequire.resolve('@modelcontextprotocol/sdk/server/index.js')).href
   );
@@ -482,14 +749,14 @@ try {
     'production StreamableHTTPServerTransport import is not callable',
   );
 
-  server = new serverModule.Server(initializeServerInfo, {
+  resources.server = server = new serverModule.Server(initializeServerInfo, {
     capabilities: {},
   });
-  transport = new transportModule.StreamableHTTPServerTransport({
+  resources.transport = transport = new transportModule.StreamableHTTPServerTransport({
     enableJsonResponse: true,
     sessionIdGenerator: () => initializeSessionId,
   });
-  listener = createServer((request, response) => {
+  resources.listener = listener = createServer((request, response) => {
     transport.handleRequest(request, response).catch((error) => {
       if (!response.headersSent) {
         response.writeHead(500, { 'content-type': 'application/json' });
@@ -553,10 +820,19 @@ try {
     'server did not retain initialize client capability semantics',
   );
 
-  summary = {
+  return {
     auditOutput,
+    entrypoints: {
+      bins: packedRoot.bin,
+      main: packedRoot.main,
+    },
     fileCount: pack.entryCount ?? pack.files.length,
     filename: pack.filename,
+    http: {
+      resultText: httpResult.content[0].text,
+      serverName: resources.httpClient.getServerVersion().name,
+      toolCount: httpTools.tools.length,
+    },
     initialize: {
       clientName: server.getClientVersion().name,
       contentType,
@@ -565,60 +841,44 @@ try {
       sessionId: initializeResponse.headers['mcp-session-id'],
       statusCode: initializeResponse.statusCode,
     },
+    stdio: {
+      serverName: resources.stdioClient.getServerVersion().name,
+      toolCount: stdioTools.tools.length,
+    },
     sdkManifestSha256: sha256(normalizedSdkManifest),
     size: pack.size,
     treeOutput,
     unpackedSize: pack.unpackedSize,
   };
-} catch (error) {
-  primaryFailed = true;
-  primaryError = error;
 }
 
-for (const cleanup of [
-  () =>
-    transport &&
-    withDeadline(
-      () => transport.close(),
-      cleanupTimeoutMs,
-      'package verifier transport close',
-    ),
-  () =>
-    server &&
-    withDeadline(
-      () => server.close(),
-      cleanupTimeoutMs,
-      'package verifier server close',
-    ),
-  () => listener && closeListener(listener),
-  () =>
-    workspace &&
-    withDeadline(
-      () => rm(workspace, { recursive: true, force: true }),
-      workspaceCleanupTimeoutMs,
-      'package verifier workspace removal',
-    ),
-]) {
-  try {
-    await cleanup();
-  } catch (error) {
-    cleanupErrors.push(error);
-  }
+async function main() {
+  const resources = {};
+  const summary = await runWithCleanup(
+    () => verifyPackage(resources),
+    createVerifierCleanupTasks(resources),
+  );
+
+  console.log(`PASS package tarball ${summary.filename}: ${summary.size} bytes compressed, ${summary.unpackedSize} bytes unpacked, ${summary.fileCount} files`);
+  console.log(`PASS installed SDK manifest normalized in place: sha256 ${summary.sdkManifestSha256}`);
+  console.log('PASS packed scripts limited to bundle-sdk-manifest.mjs and verify-package.mjs');
+  console.log(
+    `PASS installed entrypoints main ${summary.entrypoints.main}, bins ${Object.entries(summary.entrypoints.bins).map(([name, target]) => `${name}=${target}`).join(', ')}`,
+  );
+  console.log(
+    `PASS installed stdio ${summary.stdio.serverName}, ${summary.stdio.toolCount} tools, SN-Docs-Status`,
+  );
+  console.log(
+    `PASS installed HTTP ${summary.http.serverName}, ${summary.http.toolCount} tools, SN-Query-Table fake result ${JSON.stringify(summary.http.resultText)}`,
+  );
+  console.log(summary.treeOutput);
+  console.log(summary.auditOutput);
+  console.log(
+    `PASS direct Hono initialize HTTP ${summary.initialize.statusCode}, ${summary.initialize.contentType}, session ${summary.initialize.sessionId}, protocol ${summary.initialize.protocolVersion}, server ${summary.initialize.serverName}, client ${summary.initialize.clientName}`,
+  );
+  console.log('PASS temporary package and consumer directories cleaned; no repository tarball created');
 }
 
-throwCollectedErrors(
-  primaryFailed,
-  primaryError,
-  cleanupErrors,
-  'package verifier failed and could not clean up every resource',
-);
-
-console.log(`PASS package tarball ${summary.filename}: ${summary.size} bytes compressed, ${summary.unpackedSize} bytes unpacked, ${summary.fileCount} files`);
-console.log(`PASS installed SDK manifest normalized in place: sha256 ${summary.sdkManifestSha256}`);
-console.log('PASS packed scripts limited to bundle-sdk-manifest.mjs and verify-package.mjs');
-console.log(summary.treeOutput);
-console.log(summary.auditOutput);
-console.log(
-  `PASS real initialize HTTP ${summary.initialize.statusCode}, ${summary.initialize.contentType}, session ${summary.initialize.sessionId}, protocol ${summary.initialize.protocolVersion}, server ${summary.initialize.serverName}, client ${summary.initialize.clientName}`,
-);
-console.log('PASS temporary package and consumer directories cleaned; no repository tarball created');
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  await main();
+}
