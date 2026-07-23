@@ -14,13 +14,13 @@
     "start": "node src/server.js",
     "stdio": "node src/stdio-server.js",
     "inspector": "npx @modelcontextprotocol/inspector",
+    "extract-metadata": "node scripts/extract-table-metadata.js",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
     "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage",
     "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose",
     "release": "./scripts/release.sh",
-    "prepack": "node scripts/bundle-sdk-manifest.mjs prepack",
-    "postpack": "node scripts/bundle-sdk-manifest.mjs postpack",
+    "prepack": "node scripts/bundle-sdk-manifest.mjs",
     "test:package": "node scripts/verify-package.mjs"
   },
   "dependencies": {

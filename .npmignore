@@ -30,7 +30,6 @@ docs/research/
 # Examples and scripts
 examples/
 scripts/*
-!scripts/release.sh
 !scripts/bundle-sdk-manifest.mjs
 !scripts/verify-package.mjs
 
