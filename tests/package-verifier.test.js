@@ -1,15 +1,19 @@
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, jest, test, afterEach } from '@jest/globals';
 import {
   closeListener,
   createVerifierCleanupTasks,
+  initializeResponseMaxBytes,
   listenOnLoopback,
   normalizeThrownValue,
   postInitialize,
   run,
-  runWithCleanup
+  runWithCleanup,
+  subprocessDiagnosticMaxBytes,
+  subprocessMaxBufferBytes
 } from '../scripts/verify-package.mjs';
 
 afterEach(() => {
@@ -33,6 +37,77 @@ describe('package verifier subprocess diagnostics', () => {
       tmpdir(),
       25
     )).toThrow(/timed out after 25 ms and was sent SIGKILL \(status null, signal (?:SIGKILL|none)\)/);
+  });
+
+  test('classifies output overflow and retains bounded partial diagnostics', () => {
+    const marker = 'PRIMARY-ENOBUFS-MARKER';
+    let caught;
+
+    try {
+      run(
+        process.execPath,
+        ['-e', `process.stdout.write('x'.repeat(100_000) + '${marker}' + 'y'.repeat(100_000))`],
+        tmpdir(),
+        2_000,
+        128 * 1_024
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.cause?.code).toBe('ENOBUFS');
+    expect(caught.message).toMatch(
+      /exceeded subprocess output limit of 131072 bytes \(status null, signal (?:SIGKILL|SIGTERM|none)\)/
+    );
+    expect(caught.message).toContain(marker);
+    expect(Buffer.byteLength(caught.message)).toBeLessThanOrEqual(subprocessDiagnosticMaxBytes + 1_024);
+  });
+
+  test('preserves bounded partial diagnostics and cause for subprocess timeout', () => {
+    const marker = 'PRIMARY-TIMEOUT-MARKER';
+    let caught;
+
+    try {
+      run(
+        process.execPath,
+        ['-e', `process.stderr.write('${marker}' + 'y'.repeat(100_000)); setInterval(() => {}, 1_000)`],
+        tmpdir(),
+        25
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.cause?.code).toBe('ETIMEDOUT');
+    expect(caught.message).toContain('timed out after 25 ms');
+    expect(caught.message).toContain(marker);
+    expect(Buffer.byteLength(caught.message)).toBeLessThanOrEqual(subprocessDiagnosticMaxBytes + 1_024);
+  });
+
+  test('preserves startup cause when a subprocess cannot be started', () => {
+    let caught;
+
+    try {
+      run(
+        join(tmpdir(), 'missing-package-verifier-command'),
+        [],
+        tmpdir(),
+        2_000
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.cause?.code).toBe('ENOENT');
+    expect(caught.message).toMatch(/could not be started \(status null, signal none\)/);
+  });
+
+  test('exports explicit subprocess output and diagnostic limits', () => {
+    expect(subprocessMaxBufferBytes).toBe(16 * 1_024 * 1_024);
+    expect(subprocessDiagnosticMaxBytes).toBe(64 * 1_024);
   });
 });
 
@@ -101,6 +176,141 @@ describe('package verifier initialize request lifecycle', () => {
     });
     return { request, requestImplementation, response };
   }
+
+  test('accepts an initialize response exactly at the configured byte limit', async () => {
+    const body = '{"ok":true}';
+    const harness = createRequestHarness((_request, response) => {
+      harness.request.onResponse(response);
+      response.emit('data', Buffer.from(body));
+      response.emit('end');
+    });
+
+    await expect(postInitialize(1234, {
+      maxResponseBytes: Buffer.byteLength(body),
+      requestImplementation: harness.requestImplementation,
+      timeoutMs: 100
+    })).resolves.toMatchObject({ body });
+    expect(harness.request.destroy).not.toHaveBeenCalled();
+    expect(harness.response.destroy).not.toHaveBeenCalled();
+  });
+
+  test('rejects an initialize response one byte over the configured limit', async () => {
+    jest.useFakeTimers();
+    const harness = createRequestHarness((_request, response) => {
+      harness.request.onResponse(response);
+      response.emit('data', Buffer.alloc(9));
+    });
+
+    const pending = expect(postInitialize(1234, {
+      maxResponseBytes: 8,
+      requestImplementation: harness.requestImplementation,
+      timeoutMs: 100
+    })).rejects.toMatchObject({
+      allowedBytes: 8,
+      observedBytes: 9,
+      retainedBytes: 0,
+      message: 'initialize response exceeded maximum size: observed 9 bytes, allowed 8 bytes'
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    await pending;
+    expect(harness.request.options.signal.aborted).toBe(true);
+    expect(harness.request.destroy).toHaveBeenCalledTimes(1);
+    expect(harness.response.destroy).toHaveBeenCalledTimes(1);
+    expect(harness.request.listenerCount('error')).toBe(0);
+    expect(harness.response.eventNames()).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('caps retained initialize bytes during rapid multi-chunk overflow and cleans up once', async () => {
+    jest.useFakeTimers();
+    const harness = createRequestHarness((_request, response) => {
+      harness.request.onResponse(response);
+      response.emit('data', Buffer.alloc(4));
+      response.emit('data', Buffer.alloc(4));
+      response.emit('data', Buffer.alloc(1));
+      response.emit('data', Buffer.alloc(1_000_000));
+    });
+    harness.response.destroy.mockImplementation(() => {
+      harness.response.emit('error', new Error('response destroy side effect'));
+      harness.response.emit('close');
+    });
+    harness.request.destroy.mockImplementation(() => {
+      harness.request.emit('error', new Error('request destroy side effect'));
+    });
+
+    const pending = expect(postInitialize(1234, {
+      maxResponseBytes: 8,
+      requestImplementation: harness.requestImplementation,
+      timeoutMs: 100
+    })).rejects.toMatchObject({
+      allowedBytes: 8,
+      observedBytes: 9,
+      retainedBytes: 8,
+      message: 'initialize response exceeded maximum size: observed 9 bytes, allowed 8 bytes'
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    await pending;
+    expect(harness.request.destroy).toHaveBeenCalledTimes(1);
+    expect(harness.response.destroy).toHaveBeenCalledTimes(1);
+    expect(harness.request.listenerCount('error')).toBe(0);
+    expect(harness.response.eventNames()).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('preserves size overflow before synchronous teardown failures', async () => {
+    jest.useFakeTimers();
+    const responseCleanupError = new Error('response cleanup failed');
+    const requestCleanupError = new Error('request cleanup failed');
+    const harness = createRequestHarness((_request, response) => {
+      harness.request.onResponse(response);
+      response.emit('data', Buffer.alloc(9));
+    });
+    harness.response.destroy.mockImplementation(() => {
+      throw responseCleanupError;
+    });
+    harness.request.destroy.mockImplementation(() => {
+      throw requestCleanupError;
+    });
+
+    const rejection = postInitialize(1234, {
+      maxResponseBytes: 8,
+      requestImplementation: harness.requestImplementation,
+      timeoutMs: 100
+    }).catch((error) => error);
+    await jest.advanceTimersByTimeAsync(0);
+    const error = await rejection;
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toHaveLength(3);
+    expect(error.errors[0]).toMatchObject({
+      allowedBytes: 8,
+      observedBytes: 9,
+      retainedBytes: 0,
+      message: 'initialize response exceeded maximum size: observed 9 bytes, allowed 8 bytes'
+    });
+    expect(error.errors.slice(1)).toEqual([responseCleanupError, requestCleanupError]);
+    expect(harness.request.listenerCount('error')).toBe(0);
+    expect(harness.response.eventNames()).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test.each([0, -1, 1.5, Number.POSITIVE_INFINITY])(
+    'rejects invalid initialize response byte limit %p before starting I/O',
+    (maxResponseBytes) => {
+      const requestImplementation = jest.fn();
+
+      expect(() => postInitialize(1234, {
+        maxResponseBytes,
+        requestImplementation,
+        timeoutMs: 100
+      })).toThrow('initialize response byte limit must be a positive safe integer');
+      expect(requestImplementation).not.toHaveBeenCalled();
+    }
+  );
+
+  test('exports a small explicit default initialize response limit', () => {
+    expect(initializeResponseMaxBytes).toBe(64 * 1_024);
+  });
 
   test('rejects an aborted response and removes request and response listeners', async () => {
     jest.useFakeTimers();

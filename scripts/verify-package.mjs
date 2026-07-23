@@ -27,11 +27,49 @@ const listenerTimeoutMs = 10_000;
 const npmLocalTimeoutMs = 2 * 60_000;
 const npmNetworkTimeoutMs = 10 * 60_000;
 const workspaceCleanupTimeoutMs = 30_000;
+export const initializeResponseMaxBytes = 64 * 1_024;
+export const subprocessDiagnosticMaxBytes = 64 * 1_024;
+export const subprocessMaxBufferBytes = 16 * 1_024 * 1_024;
 
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function assertPositiveSafeInteger(value, label) {
+  assert(Number.isSafeInteger(value) && value > 0, `${label} must be a positive safe integer`);
+}
+
+function truncateDiagnostic(value, maxBytes) {
+  const bytes = Buffer.from(value);
+  if (bytes.length <= maxBytes) {
+    return value;
+  }
+
+  const marker = '\n... [diagnostic truncated] ...\n';
+  const markerBytes = Buffer.byteLength(marker);
+  const retainedBytes = maxBytes - markerBytes;
+  const headBytes = Math.ceil(retainedBytes / 2);
+  const tailBytes = Math.floor(retainedBytes / 2);
+  return `${bytes.subarray(0, headBytes).toString('utf8')}${marker}${bytes.subarray(
+    bytes.length - tailBytes,
+  ).toString('utf8')}`;
+}
+
+function renderSubprocessDiagnostics(stdout, stderr) {
+  const entries = [
+    ['stdout', stdout],
+    ['stderr', stderr],
+  ].filter(([, value]) => typeof value === 'string' && value.length > 0);
+  if (entries.length === 0) {
+    return '';
+  }
+
+  const perStreamMaxBytes = Math.floor(subprocessDiagnosticMaxBytes / entries.length);
+  return entries
+    .map(([label, value]) => `[${label}]\n${truncateDiagnostic(value, perStreamMaxBytes)}`)
+    .join('\n');
 }
 
 export function normalizeThrownValue(value, context) {
@@ -104,29 +142,40 @@ async function validatedNpmCliPath() {
   return cliPath;
 }
 
-export function run(command, args, cwd = root, timeoutMs = npmLocalTimeoutMs) {
+export function run(
+  command,
+  args,
+  cwd = root,
+  timeoutMs = npmLocalTimeoutMs,
+  maxBufferBytes = subprocessMaxBufferBytes,
+) {
+  assertPositiveSafeInteger(maxBufferBytes, 'subprocess output byte limit');
   const invocation = `${command} ${args.join(' ')}`;
   const result = spawnSync(command, args, {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, npm_config_ignore_scripts: 'false' },
     killSignal: 'SIGKILL',
+    maxBuffer: maxBufferBytes,
     timeout: timeoutMs,
   });
   const termination = `status ${result.status ?? 'null'}, signal ${result.signal ?? 'none'}`;
+  const diagnostics = renderSubprocessDiagnostics(result.stdout, result.stderr);
+  const diagnosticSuffix = diagnostics ? `\n${diagnostics}` : '';
 
   if (result.error) {
-    const timedOut = result.error.code === 'ETIMEDOUT';
-    throw new Error(
-      timedOut
-        ? `${invocation} timed out after ${timeoutMs} ms and was sent SIGKILL (${termination})`
-        : `${invocation} could not be started (${termination})`,
-      { cause: result.error },
-    );
+    let message;
+    if (result.error.code === 'ENOBUFS') {
+      message = `${invocation} exceeded subprocess output limit of ${maxBufferBytes} bytes (${termination})`;
+    } else if (result.error.code === 'ETIMEDOUT') {
+      message = `${invocation} timed out after ${timeoutMs} ms and was sent SIGKILL (${termination})`;
+    } else {
+      message = `${invocation} could not be started (${termination})`;
+    }
+    throw new Error(`${message}${diagnosticSuffix}`, { cause: result.error });
   }
   if (result.status !== 0) {
-    const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
-    throw new Error(`${invocation} failed (${termination})${output ? `\n${output}` : ''}`);
+    throw new Error(`${invocation} failed (${termination})${diagnosticSuffix}`);
   }
 
   return result.stdout.trim();
@@ -246,10 +295,12 @@ export function closeListener(listener, timeoutMs = listenerTimeoutMs) {
 export function postInitialize(
   port,
   {
+    maxResponseBytes = initializeResponseMaxBytes,
     requestImplementation = httpRequest,
     timeoutMs = initializeTimeoutMs,
   } = {},
 ) {
+  assertPositiveSafeInteger(maxResponseBytes, 'initialize response byte limit');
   const payload = JSON.stringify({
     jsonrpc: '2.0',
     id: 'package-verifier-initialize',
@@ -267,17 +318,69 @@ export function postInitialize(
     let request;
     let response;
     let settled = false;
-    let timeoutError;
+    let terminalError;
+    let observedBytes = 0;
+    let retainedBytes = 0;
     const rejectTerminal = (error) => {
-      const primaryError = timeoutError ?? error;
-      if (timeoutError) {
-        queueMicrotask(() => finish(reject, primaryError));
+      if (terminalError) {
+        queueMicrotask(() => finish(reject, terminalError));
         return;
       }
-      finish(reject, primaryError);
+      finish(reject, error);
+    };
+    const terminateWithPrimaryError = (error) => {
+      if (settled || terminalError) {
+        return;
+      }
+      terminalError = error;
+      const cleanupErrors = [];
+      response?.off('data', onResponseData);
+      try {
+        controller.abort(error);
+      } catch (cleanupError) {
+        cleanupErrors.push(
+          normalizeThrownValue(cleanupError, 'initialize request abort cleanup'),
+        );
+      }
+      try {
+        response?.destroy();
+      } catch (cleanupError) {
+        cleanupErrors.push(
+          normalizeThrownValue(cleanupError, 'initialize response destroy cleanup'),
+        );
+      }
+      try {
+        request?.destroy();
+      } catch (cleanupError) {
+        cleanupErrors.push(
+          normalizeThrownValue(cleanupError, 'initialize request destroy cleanup'),
+        );
+      }
+      if (cleanupErrors.length > 0) {
+        terminalError = new AggregateError(
+          [error, ...cleanupErrors],
+          'initialize request failed and teardown also failed',
+        );
+      }
+      queueMicrotask(() => finish(reject, terminalError));
     };
     const onRequestError = (error) => rejectTerminal(error);
-    const onResponseData = (chunk) => chunks.push(chunk);
+    const onResponseData = (chunk) => {
+      const chunkBytes = Buffer.byteLength(chunk);
+      observedBytes += chunkBytes;
+      if (observedBytes > maxResponseBytes) {
+        const error = new Error(
+          `initialize response exceeded maximum size: observed ${observedBytes} bytes, allowed ${maxResponseBytes} bytes`,
+        );
+        error.allowedBytes = maxResponseBytes;
+        error.observedBytes = observedBytes;
+        error.retainedBytes = retainedBytes;
+        terminateWithPrimaryError(error);
+        return;
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      retainedBytes += chunkBytes;
+    };
     const onResponseError = (error) => rejectTerminal(error);
     const onResponseAborted = () => {
       rejectTerminal(
@@ -290,12 +393,12 @@ export function postInitialize(
       );
     };
     const onResponseEnd = () => {
-      if (timeoutError) {
-        rejectTerminal(timeoutError);
+      if (terminalError) {
+        rejectTerminal(terminalError);
         return;
       }
       finish(resolvePromise, {
-        body: Buffer.concat(chunks).toString('utf8'),
+        body: Buffer.concat(chunks, retainedBytes).toString('utf8'),
         headers: response.headers,
         statusCode: response.statusCode,
       });
@@ -318,13 +421,11 @@ export function postInitialize(
       callback(value);
     };
     const timer = setTimeout(() => {
-      timeoutError = new Error(
-        `initialize request timed out after ${timeoutMs} ms before the complete response body was received`,
+      terminateWithPrimaryError(
+        new Error(
+          `initialize request timed out after ${timeoutMs} ms before the complete response body was received`,
+        ),
       );
-      controller.abort(timeoutError);
-      response?.destroy();
-      request?.destroy();
-      queueMicrotask(() => finish(reject, timeoutError));
     }, timeoutMs);
 
     try {
