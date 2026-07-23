@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SDK_NAME = '@modelcontextprotocol/sdk';
 const SDK_VERSION = '1.29.0';
@@ -10,11 +10,9 @@ const HONO_NAME = '@hono/node-server';
 const SDK_HONO_RANGE = '^1.19.9';
 const BUNDLED_HONO_VERSION = '2.0.11';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const rootNodeModulesPath = join(root, 'node_modules');
-const sdkDirPath = join(rootNodeModulesPath, '@modelcontextprotocol', 'sdk');
-const sdkManifestPath = join(sdkDirPath, 'package.json');
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifestTempPrefix = '.happy-platform-mcp-sdk-manifest-';
+const defaultFs = { lstat, open, readFile, realpath, rename, rm };
 
 function refuse(message, options) {
   return new Error(`Refusing to pack: ${message}`, options);
@@ -44,10 +42,10 @@ function assertContained(boundaryPath, dependencyPath, label) {
   }
 }
 
-async function inspectNode(path, label, expectedType, boundaryPath) {
+async function inspectNode(path, label, expectedType, boundaryPath, fs) {
   let metadata;
   try {
-    metadata = await lstat(path);
+    metadata = await fs.lstat(path);
   } catch (error) {
     throw refuse(`cannot inspect ${label} at ${path}`, { cause: error });
   }
@@ -64,7 +62,7 @@ async function inspectNode(path, label, expectedType, boundaryPath) {
 
   let realPath;
   try {
-    realPath = await realpath(path);
+    realPath = await fs.realpath(path);
   } catch (error) {
     throw refuse(`cannot resolve ${label} at ${path}`, { cause: error });
   }
@@ -75,27 +73,31 @@ async function inspectNode(path, label, expectedType, boundaryPath) {
   return { metadata, path, realPath };
 }
 
-async function inspectInstalledDependencies() {
+async function inspectInstalledDependencies(paths, fs) {
   const nodeModules = await inspectNode(
-    rootNodeModulesPath,
+    paths.rootNodeModulesPath,
     'root node_modules',
     'directory',
+    undefined,
+    fs,
   );
   const sdkDir = await inspectNode(
-    sdkDirPath,
+    paths.sdkDirPath,
     'installed SDK directory',
     'directory',
     nodeModules.realPath,
+    fs,
   );
   const sdkManifest = await inspectNode(
-    sdkManifestPath,
+    paths.sdkManifestPath,
     'installed SDK manifest',
     'regular file',
     nodeModules.realPath,
+    fs,
   );
   assertContained(sdkDir.realPath, sdkManifest.realPath, 'installed SDK manifest');
 
-  const sdkRequire = createRequire(sdkManifestPath);
+  const sdkRequire = createRequire(paths.sdkManifestPath);
   const searchPaths = sdkRequire.resolve.paths(HONO_NAME);
   if (!Array.isArray(searchPaths)) {
     throw refuse(`cannot resolve installed ${HONO_NAME} from ${SDK_NAME}`);
@@ -105,7 +107,7 @@ async function inspectInstalledDependencies() {
   for (const searchPath of searchPaths) {
     const candidatePath = join(searchPath, ...HONO_NAME.split('/'));
     try {
-      await lstat(candidatePath);
+      await fs.lstat(candidatePath);
     } catch (error) {
       if (error?.code === 'ENOENT') {
         continue;
@@ -120,6 +122,7 @@ async function inspectInstalledDependencies() {
       'resolved Hono directory',
       'directory',
       nodeModules.realPath,
+      fs,
     );
     break;
   }
@@ -132,6 +135,7 @@ async function inspectInstalledDependencies() {
     'resolved Hono manifest',
     'regular file',
     nodeModules.realPath,
+    fs,
   );
   assertContained(honoDir.realPath, honoManifest.realPath, 'resolved Hono manifest');
 
@@ -148,21 +152,27 @@ async function inspectInstalledDependencies() {
     'resolved Hono entry point',
     'regular file',
     nodeModules.realPath,
+    fs,
   );
   assertContained(honoDir.realPath, honoEntry.realPath, 'resolved Hono entry point');
 
-  return { nodeModules, sdkDir, sdkManifest, honoDir, honoManifest };
+  return { nodeModules, sdkDir, sdkManifest, honoDir, honoManifest, honoEntry };
 }
 
-function assertSameDependencyPaths(before, after) {
+function assertSameDependencyState(before, after, { replacedSdkManifest = false } = {}) {
   for (const name of [
     'nodeModules',
     'sdkDir',
     'sdkManifest',
     'honoDir',
     'honoManifest',
+    'honoEntry',
   ]) {
-    if (before[name].realPath !== after[name].realPath) {
+    const pathChanged = before[name].realPath !== after[name].realPath;
+    const identityChanged =
+      before[name].metadata.dev !== after[name].metadata.dev ||
+      before[name].metadata.ino !== after[name].metadata.ino;
+    if (pathChanged || (identityChanged && !(replacedSdkManifest && name === 'sdkManifest'))) {
       throw refuse(`${name} changed while preparing the SDK manifest`);
     }
   }
@@ -180,14 +190,14 @@ function throwCollectedErrors(primaryError, cleanupErrors, message) {
   }
 }
 
-async function writeAtomically(path, bytes, mode) {
+async function writeAtomically(path, bytes, mode, fs) {
   const tempPath = join(dirname(path), `${manifestTempPrefix}${process.pid}-${randomUUID()}.tmp`);
   const cleanupErrors = [];
   let handle;
   let primaryError;
 
   try {
-    handle = await open(tempPath, 'wx', mode & 0o777);
+    handle = await fs.open(tempPath, 'wx', mode & 0o777);
     await handle.writeFile(bytes);
     await handle.sync();
   } catch (error) {
@@ -204,13 +214,13 @@ async function writeAtomically(path, bytes, mode) {
   }
   if (!primaryError) {
     try {
-      await rename(tempPath, path);
+      await fs.rename(tempPath, path);
     } catch (error) {
       primaryError = error;
     }
   }
   try {
-    await rm(tempPath, { force: true });
+    await fs.rm(tempPath, { force: true });
   } catch (error) {
     cleanupErrors.push(error);
   }
@@ -222,11 +232,24 @@ async function writeAtomically(path, bytes, mode) {
   );
 }
 
-async function normalize() {
-  const dependencyState = await inspectInstalledDependencies();
+export async function normalizeSdkManifest({ root, fs: fsOverrides = {} }) {
+  if (typeof root !== 'string' || root.length === 0) {
+    throw new TypeError('normalizeSdkManifest requires an explicit repository root');
+  }
+  const fs = { ...defaultFs, ...fsOverrides };
+  const resolvedRoot = resolve(root);
+  const rootNodeModulesPath = join(resolvedRoot, 'node_modules');
+  const sdkDirPath = join(rootNodeModulesPath, '@modelcontextprotocol', 'sdk');
+  const paths = {
+    rootNodeModulesPath,
+    sdkDirPath,
+    sdkManifestPath: join(sdkDirPath, 'package.json'),
+  };
+
+  const dependencyState = await inspectInstalledDependencies(paths, fs);
   const [original, honoBytes] = await Promise.all([
-    readFile(dependencyState.sdkManifest.path),
-    readFile(dependencyState.honoManifest.path),
+    fs.readFile(dependencyState.sdkManifest.path),
+    fs.readFile(dependencyState.honoManifest.path),
   ]);
 
   const sdkManifest = parseManifest(original, dependencyState.sdkManifest.path);
@@ -282,25 +305,31 @@ async function normalize() {
     throw refuse(`normalized SDK manifest failed validation`);
   }
 
-  const writeState = await inspectInstalledDependencies();
-  assertSameDependencyPaths(dependencyState, writeState);
+  const writeState = await inspectInstalledDependencies(paths, fs);
+  assertSameDependencyState(dependencyState, writeState);
   const normalizedBytes = Buffer.from(normalizedSource);
   await writeAtomically(
     writeState.sdkManifest.path,
     normalizedBytes,
     writeState.sdkManifest.metadata.mode,
+    fs,
   );
 
-  const persistedState = await inspectInstalledDependencies();
-  assertSameDependencyPaths(dependencyState, persistedState);
-  const persisted = await readFile(persistedState.sdkManifest.path);
+  const persistedState = await inspectInstalledDependencies(paths, fs);
+  assertSameDependencyState(dependencyState, persistedState, { replacedSdkManifest: true });
+  const persisted = await fs.readFile(persistedState.sdkManifest.path);
   if (!persisted.equals(normalizedBytes)) {
     throw refuse(`normalized SDK manifest did not persist byte-exactly`);
   }
 }
 
-if (process.argv.length !== 2) {
-  throw new Error('Usage: node scripts/bundle-sdk-manifest.mjs');
-}
+const isDirectExecution =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 
-await normalize();
+if (isDirectExecution) {
+  if (process.argv.length !== 2) {
+    throw new Error('Usage: node scripts/bundle-sdk-manifest.mjs');
+  }
+  await normalizeSdkManifest({ root: repositoryRoot });
+}
