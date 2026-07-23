@@ -21,6 +21,18 @@ describe('resolveConfigPaths', () => {
       source: 'explicit'
     });
   });
+  test('resolves a relative HAPPY_CONFIG_PATH against process.cwd()', () => {
+    const relativePath = 'config/instances.json';
+    const paths = resolveConfigPaths({
+      env: { HAPPY_CONFIG_PATH: relativePath },
+      homeDir,
+      legacyPath,
+      existsSync: () => false
+    });
+
+    expect(paths.readPath).toBe(path.resolve(relativePath));
+    expect(paths.writePath).toBe(path.resolve(relativePath));
+  });
 
   test('uses the user registry when it exists', () => {
     const paths = resolveConfigPaths({
