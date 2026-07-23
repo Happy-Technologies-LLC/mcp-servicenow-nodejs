@@ -13,6 +13,7 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const scriptPath = join(repositoryRoot, 'scripts', 'package-version-changed.mjs');
 const workflowPath = join(repositoryRoot, '.github', 'workflows', 'publish.yml');
 const workflowsDirectory = join(repositoryRoot, '.github', 'workflows');
+const securityWorkflowPath = join(workflowsDirectory, 'security-patch.yml');
 const temporaryDirectories = [];
 
 function packageJson(version, overrides = {}) {
@@ -127,11 +128,22 @@ describe('package version CLI', () => {
 });
 
 describe('publish workflow release graph', () => {
-  test('makes Docker publication depend on successful npm publication', () => {
+  test('isolates npm, GitHub, and Docker publication into retryable jobs', () => {
     const workflow = readFileSync(workflowPath, 'utf8');
+    const npm = jobBlock(workflow, 'publish-npm');
+    const release = jobBlock(workflow, 'create-release');
     const docker = jobBlock(workflow, 'publish-docker');
 
-    expect(inlineNeeds(docker)).toEqual(['check-version', 'test', 'publish-npm']);
+    expect(npm).toContain('npm publish --access public');
+    expect(npm).not.toContain('Create GitHub Release');
+    expect(inlineNeeds(release)).toEqual(['check-version', 'publish-npm']);
+    expect(release).toContain('Create GitHub Release');
+    expect(inlineNeeds(docker)).toEqual([
+      'check-version',
+      'test',
+      'publish-npm',
+      'create-release'
+    ]);
     expect(docker).toContain("if: needs.check-version.outputs.should-publish == 'true'");
   });
 
@@ -163,6 +175,19 @@ describe('publish workflow release graph', () => {
       /^concurrency:\n  group: publish-\$\{\{ github\.repository \}\}\n  cancel-in-progress: false$/m
     );
   });
+
+  test('never rolls moving Docker tags back during an older retry', () => {
+    const workflow = readFileSync(workflowPath, 'utf8');
+    const docker = jobBlock(workflow, 'publish-docker');
+
+    expect(docker).toContain('id: promotion');
+    expect(docker).toContain('npm view happy-platform-mcp dist-tags.latest --json');
+    expect(docker).toContain('echo "promote=false" >> "$GITHUB_OUTPUT"');
+    expect(docker).toContain(
+      "type=raw,value=latest,enable=${{ steps.promotion.outputs.promote == 'true' }}"
+    );
+    expect(docker).toContain('tags: ${{ steps.old-meta.outputs.tags }}');
+  });
 });
 
 describe('workflow action supply chain', () => {
@@ -184,5 +209,18 @@ describe('workflow action supply chain', () => {
     }
 
     expect(mutableActions).toEqual([]);
+  });
+});
+
+describe('security patch workflow', () => {
+  test('runs on manual dispatch and fails closed on audit errors', () => {
+    const workflow = readFileSync(securityWorkflowPath, 'utf8');
+    const checkSecurity = jobBlock(workflow, 'check-security-update');
+
+    expect(checkSecurity).toContain("github.event_name == 'workflow_dispatch'");
+    expect(checkSecurity).not.toContain("github.event_name == 'push'");
+    expect(checkSecurity).toContain('case "$AUDIT_STATUS" in');
+    expect(checkSecurity).toContain('Number.isSafeInteger(count)');
+    expect(checkSecurity).not.toContain('continue-on-error: true');
   });
 });

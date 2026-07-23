@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   check-security-update:
-    if: github.event_name == 'push' || (github.event.pull_request.merged == true && contains(github.event.pull_request.title, 'security'))
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.merged == true && contains(github.event.pull_request.title, 'security'))
     runs-on: ubuntu-latest
     outputs:
       has-vulnerabilities: ${{ steps.audit.outputs.has-vulnerabilities }}
@@ -31,19 +31,36 @@ jobs:
       - name: Check for vulnerabilities
         id: audit
         run: |
-          if npm audit --audit-level=moderate --json > audit.json; then
-            echo "has-vulnerabilities=false" >> $GITHUB_OUTPUT
-            echo "No vulnerabilities found"
-          else
-            VULN_COUNT=$(jq '.metadata.vulnerabilities.total' audit.json)
-            if [ "$VULN_COUNT" -gt 0 ]; then
-              echo "has-vulnerabilities=true" >> $GITHUB_OUTPUT
-              echo "Found $VULN_COUNT vulnerabilities"
-            else
-              echo "has-vulnerabilities=false" >> $GITHUB_OUTPUT
-            fi
+          set +e
+          npm audit --audit-level=moderate --json > audit.json
+          AUDIT_STATUS=$?
+          set -e
+
+          case "$AUDIT_STATUS" in
+            0|1) ;;
+            *)
+              echo "::error::npm audit failed with exit code $AUDIT_STATUS"
+              exit "$AUDIT_STATUS"
+              ;;
+          esac
+
+          VULN_COUNT="$(
+            node -e "const report = JSON.parse(require('node:fs').readFileSync(0, 'utf8')); const vulnerabilities = report?.metadata?.vulnerabilities; const total = ['moderate', 'high', 'critical'].reduce((sum, severity) => { const count = vulnerabilities?.[severity]; if (!Number.isSafeInteger(count) || count < 0) throw new TypeError('npm audit report is missing vulnerability counts'); return sum + count; }, 0); process.stdout.write(String(total));" < audit.json
+          )"
+
+          if { [ "$AUDIT_STATUS" -eq 0 ] && [ "$VULN_COUNT" -ne 0 ]; } ||
+             { [ "$AUDIT_STATUS" -eq 1 ] && [ "$VULN_COUNT" -eq 0 ]; }; then
+            echo "::error::npm audit exit code and report disagree"
+            exit 1
           fi
-        continue-on-error: true
+
+          if [ "$VULN_COUNT" -gt 0 ]; then
+            echo "has-vulnerabilities=true" >> "$GITHUB_OUTPUT"
+            echo "Found $VULN_COUNT moderate-or-higher vulnerabilities"
+          else
+            echo "has-vulnerabilities=false" >> "$GITHUB_OUTPUT"
+            echo "No moderate-or-higher vulnerabilities found"
+          fi
 
       - name: Upload audit results
         if: steps.audit.outputs.has-vulnerabilities == 'true'
