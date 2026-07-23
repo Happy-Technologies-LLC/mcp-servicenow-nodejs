@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import {
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const scriptPath = join(repositoryRoot, 'scripts', 'package-version-changed.mjs');
 const workflowPath = join(repositoryRoot, '.github', 'workflows', 'publish.yml');
+const workflowsDirectory = join(repositoryRoot, '.github', 'workflows');
 const temporaryDirectories = [];
 
 function packageJson(version, overrides = {}) {
@@ -161,5 +162,27 @@ describe('publish workflow release graph', () => {
     expect(workflow).toMatch(
       /^concurrency:\n  group: publish-\$\{\{ github\.repository \}\}\n  cancel-in-progress: false$/m
     );
+  });
+});
+
+describe('workflow action supply chain', () => {
+  test('pins every external action to an immutable commit SHA', () => {
+    const mutableActions = [];
+
+    for (const fileName of readdirSync(workflowsDirectory)) {
+      if (!fileName.endsWith('.yml') && !fileName.endsWith('.yaml')) {
+        continue;
+      }
+
+      const workflow = readFileSync(join(workflowsDirectory, fileName), 'utf8');
+      for (const match of workflow.matchAll(/^\s*-\s+uses:\s+([^@\s]+)@([^\s#]+)/gm)) {
+        const [, action, revision] = match;
+        if (!/^[0-9a-f]{40}$/i.test(revision)) {
+          mutableActions.push(`${fileName}: ${action}@${revision}`);
+        }
+      }
+    }
+
+    expect(mutableActions).toEqual([]);
   });
 });
