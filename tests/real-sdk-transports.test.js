@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'node:url';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { createHttpApp } from '../src/http-server.js';
 
@@ -69,7 +70,7 @@ async function attemptCleanup(deadline, errors, label, operation, timeoutMs) {
   }
 }
 
-function forceTerminateStdioChild(child) {
+async function forceTerminateStdioChild(child, deadline, timeoutMs) {
   if (
     !child
     || typeof child.kill !== 'function'
@@ -79,9 +80,66 @@ function forceTerminateStdioChild(child) {
     return;
   }
 
-  if (!child.kill('SIGKILL')) {
-    throw new Error('Failed to forcibly terminate the stdio child process');
+  let resolveClose;
+  let rejectClose;
+  const closeConfirmed = new Promise((resolve, reject) => {
+    resolveClose = resolve;
+    rejectClose = reject;
+  });
+  const onClose = () => resolveClose();
+  const onError = (error) => rejectClose(error);
+  child.once('close', onClose);
+  child.once('error', onError);
+
+  try {
+    if (!child.kill('SIGKILL')) {
+      throw new Error('Failed to forcibly terminate the stdio child process');
+    }
+    await deadline(
+      () => closeConfirmed,
+      'stdio child SIGKILL close confirmation',
+      timeoutMs
+    );
+  } finally {
+    child.removeListener('close', onClose);
+    child.removeListener('error', onError);
   }
+}
+
+async function runWithCleanup(operation, cleanup) {
+  let result;
+  let primaryError;
+  let cleanupError;
+  let operationFailed = false;
+  let cleanupFailed = false;
+
+  try {
+    result = await operation();
+  } catch (error) {
+    operationFailed = true;
+    primaryError = error;
+  }
+
+  try {
+    await cleanup();
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupError = error;
+  }
+
+  if (operationFailed && cleanupFailed) {
+    throw new AggregateError(
+      [primaryError, cleanupError],
+      'MCP operation and cleanup failed'
+    );
+  }
+  if (operationFailed) {
+    throw primaryError;
+  }
+  if (cleanupFailed) {
+    throw cleanupError;
+  }
+  return result;
 }
 
 async function closeSdkResources({
@@ -126,13 +184,11 @@ async function closeSdkResources({
     && stdioChild.exitCode === null
     && stdioChild.signalCode === null
   ) {
-    await attemptCleanup(
-      deadline,
-      errors,
-      'stdio child SIGKILL',
-      () => forceTerminateStdioChild(stdioChild),
-      cleanupTimeoutMs
-    );
+    try {
+      await forceTerminateStdioChild(stdioChild, deadline, cleanupTimeoutMs);
+    } catch (error) {
+      errors.push(error);
+    }
   }
 
   if (errors.length > 0) {
@@ -161,14 +217,18 @@ describe('real SDK production transports', () => {
     expect(primaryCleanupAttempted).toBe(true);
 
     const cleanupAttempts = [];
-    const child = {
-      exitCode: null,
-      signalCode: null,
-      kill: jest.fn((signal) => {
-        cleanupAttempts.push(`child:${signal}`);
-        return true;
-      })
-    };
+    const child = new EventEmitter();
+    let resolveKillObserved;
+    const killObserved = new Promise((resolve) => {
+      resolveKillObserved = resolve;
+    });
+    child.exitCode = null;
+    child.signalCode = null;
+    child.kill = jest.fn((signal) => {
+      cleanupAttempts.push(`child:${signal}`);
+      resolveKillObserved();
+      return true;
+    });
     const client = {
       close: jest.fn(() => {
         cleanupAttempts.push('client');
@@ -189,15 +249,52 @@ describe('real SDK production transports', () => {
       closeAllConnections: jest.fn()
     };
 
-    await expect(closeSdkResources({
+    let cleanupSettled = false;
+    const cleanup = closeSdkResources({
       client,
       transport,
       server,
       deadline: createDeadline('cleanup probe', FAILURE_PROBE_BUDGET_MS),
       cleanupTimeoutMs: FAILURE_PROBE_TIMEOUT_MS
-    })).rejects.toThrow('MCP cleanup failed');
+    });
+    cleanup.then(
+      () => { cleanupSettled = true; },
+      () => { cleanupSettled = true; }
+    );
+
+    await probeDeadline(
+      () => killObserved,
+      'stdio child SIGKILL observation',
+      FAILURE_PROBE_TIMEOUT_MS
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(cleanupSettled).toBe(false);
+    child.signalCode = 'SIGKILL';
+    child.emit('close', null, 'SIGKILL');
+    await expect(cleanup).rejects.toThrow('MCP cleanup failed');
     expect(cleanupAttempts).toEqual(['client', 'transport', 'server', 'child:SIGKILL']);
     expect(server.closeAllConnections).toHaveBeenCalledTimes(1);
+    expect(child.listenerCount('close')).toBe(0);
+    expect(child.listenerCount('error')).toBe(0);
+  });
+
+  test('preserves the primary failure ahead of a cleanup failure', async () => {
+    const primaryError = new Error('primary transport failure');
+    const cleanupError = new Error('cleanup failure');
+
+    const error = await runWithCleanup(
+      async () => { throw primaryError; },
+      async () => { throw cleanupError; }
+    ).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([primaryError, cleanupError]);
+
+    const cleanupOnlyError = await runWithCleanup(
+      async () => 'connected',
+      async () => { throw cleanupError; }
+    ).catch((caught) => caught);
+    expect(cleanupOnlyError).toBe(cleanupError);
   });
 
   test('round-trips tools over HTTP/SSE with the production server transport', async () => {
@@ -217,7 +314,7 @@ describe('real SDK production transports', () => {
     let transport;
     let client;
 
-    try {
+    await runWithCleanup(async () => {
       const listener = listenOnEphemeralLoopback(app);
       server = listener.server;
       await deadline(() => listener.listening, 'HTTP listener startup');
@@ -255,9 +352,7 @@ describe('real SDK production transports', () => {
         type: 'text',
         text: `Found 1 records in incident:\n${JSON.stringify(records, null, 2)}`
       }]);
-    } finally {
-      await closeSdkResources({ client, transport, server, deadline });
-    }
+    }, () => closeSdkResources({ client, transport, server, deadline }));
   });
 
   test('round-trips a deterministic docs-only tool over production stdio', async () => {
@@ -274,12 +369,12 @@ describe('real SDK production transports', () => {
         SERVICENOW_USERNAME: '',
         SERVICENOW_PASSWORD: ''
       },
-      stderr: 'pipe'
+      stderr: 'inherit'
     });
     const client = createSdkClient('stdio-smoke');
     const deadline = createDeadline('stdio smoke');
 
-    try {
+    await runWithCleanup(async () => {
       await deadline(() => client.connect(transport), 'connect');
       const tools = await deadline(() => client.listTools(), 'listTools');
       const result = await deadline(() => client.callTool({
@@ -299,8 +394,6 @@ describe('real SDK production transports', () => {
         ftsAvailable: false,
         families: []
       });
-    } finally {
-      await closeSdkResources({ client, transport, deadline });
-    }
+    }, () => closeSdkResources({ client, transport, deadline }));
   });
 });
