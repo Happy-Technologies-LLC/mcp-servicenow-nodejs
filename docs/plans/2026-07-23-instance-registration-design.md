@@ -127,7 +127,7 @@ happy-platform-mcp instance list
 happy-platform-mcp instance update dev
 happy-platform-mcp instance test dev
 happy-platform-mcp instance remove dev
-happy-platform-mcp instance credential set dev
+happy-platform-mcp instance credential set dev --type password
 ```
 
 Secret prompts disable terminal echo. Secrets are never accepted as command-line flags because process arguments may be observable. Non-interactive automation may supply a credential through a documented standard-input contract, not an argument.
@@ -157,8 +157,10 @@ Registration is create-only by default. A duplicate name returns a conflict and 
 When `credentialRef` does not exist, the tool does not persist a half-working basic-auth or client-credentials registration. It returns an exact local next action:
 
 ```bash
-happy-platform-mcp instance credential set dev
+happy-platform-mcp instance credential set dev --type password
 ```
+
+The tool chooses `password` or `client-secret` from the requested authentication mode. Credential references are deterministic from the instance name and type, so the CLI can create the keychain entry before the registration metadata exists.
 
 Authorization Code with PKCE can register without a static secret when the configured OAuth application is a public client. Browser authorization still happens on first authenticated use.
 
