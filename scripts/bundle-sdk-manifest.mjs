@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { open, readFile, rename, rm, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { lstat, open, readFile, realpath, rename, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SDK_NAME = '@modelcontextprotocol/sdk';
@@ -10,8 +11,9 @@ const SDK_HONO_RANGE = '^1.19.9';
 const BUNDLED_HONO_VERSION = '2.0.11';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const sdkManifestPath = join(root, 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json');
-const honoManifestPath = join(root, 'node_modules', '@hono', 'node-server', 'package.json');
+const rootNodeModulesPath = join(root, 'node_modules');
+const sdkDirPath = join(rootNodeModulesPath, '@modelcontextprotocol', 'sdk');
+const sdkManifestPath = join(sdkDirPath, 'package.json');
 const manifestTempPrefix = '.happy-platform-mcp-sdk-manifest-';
 
 function refuse(message, options) {
@@ -30,12 +32,147 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function writeAtomically(path, bytes) {
+function assertContained(boundaryPath, dependencyPath, label) {
+  const relativePath = relative(boundaryPath, dependencyPath);
+  if (
+    relativePath === '' ||
+    relativePath === '..' ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw refuse(`${label} resolves outside root node_modules: ${dependencyPath}`);
+  }
+}
+
+async function inspectNode(path, label, expectedType, boundaryPath) {
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    throw refuse(`cannot inspect ${label} at ${path}`, { cause: error });
+  }
+
+  if (metadata.isSymbolicLink()) {
+    throw refuse(`${label} must not be a symbolic link: ${path}`);
+  }
+  if (
+    (expectedType === 'directory' && !metadata.isDirectory()) ||
+    (expectedType === 'regular file' && !metadata.isFile())
+  ) {
+    throw refuse(`${label} must be a ${expectedType}: ${path}`);
+  }
+
+  let realPath;
+  try {
+    realPath = await realpath(path);
+  } catch (error) {
+    throw refuse(`cannot resolve ${label} at ${path}`, { cause: error });
+  }
+  if (boundaryPath) {
+    assertContained(boundaryPath, realPath, label);
+  }
+
+  return { metadata, path, realPath };
+}
+
+async function inspectInstalledDependencies() {
+  const nodeModules = await inspectNode(
+    rootNodeModulesPath,
+    'root node_modules',
+    'directory',
+  );
+  const sdkDir = await inspectNode(
+    sdkDirPath,
+    'installed SDK directory',
+    'directory',
+    nodeModules.realPath,
+  );
+  const sdkManifest = await inspectNode(
+    sdkManifestPath,
+    'installed SDK manifest',
+    'regular file',
+    nodeModules.realPath,
+  );
+  assertContained(sdkDir.realPath, sdkManifest.realPath, 'installed SDK manifest');
+
+  const sdkRequire = createRequire(sdkManifestPath);
+  const searchPaths = sdkRequire.resolve.paths(HONO_NAME);
+  if (!Array.isArray(searchPaths)) {
+    throw refuse(`cannot resolve installed ${HONO_NAME} from ${SDK_NAME}`);
+  }
+
+  let honoDir;
+  for (const searchPath of searchPaths) {
+    const candidatePath = join(searchPath, ...HONO_NAME.split('/'));
+    try {
+      await lstat(candidatePath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        continue;
+      }
+      throw refuse(`cannot inspect resolved Hono directory at ${candidatePath}`, {
+        cause: error,
+      });
+    }
+
+    honoDir = await inspectNode(
+      candidatePath,
+      'resolved Hono directory',
+      'directory',
+      nodeModules.realPath,
+    );
+    break;
+  }
+  if (!honoDir) {
+    throw refuse(`cannot resolve installed ${HONO_NAME} from ${SDK_NAME}`);
+  }
+
+  const honoManifest = await inspectNode(
+    join(honoDir.path, 'package.json'),
+    'resolved Hono manifest',
+    'regular file',
+    nodeModules.realPath,
+  );
+  assertContained(honoDir.realPath, honoManifest.realPath, 'resolved Hono manifest');
+
+  let honoEntryPath;
+  try {
+    honoEntryPath = sdkRequire.resolve(HONO_NAME);
+  } catch (error) {
+    throw refuse(`cannot resolve installed ${HONO_NAME} entry point from ${SDK_NAME}`, {
+      cause: error,
+    });
+  }
+  const honoEntry = await inspectNode(
+    honoEntryPath,
+    'resolved Hono entry point',
+    'regular file',
+    nodeModules.realPath,
+  );
+  assertContained(honoDir.realPath, honoEntry.realPath, 'resolved Hono entry point');
+
+  return { nodeModules, sdkDir, sdkManifest, honoDir, honoManifest };
+}
+
+function assertSameDependencyPaths(before, after) {
+  for (const name of [
+    'nodeModules',
+    'sdkDir',
+    'sdkManifest',
+    'honoDir',
+    'honoManifest',
+  ]) {
+    if (before[name].realPath !== after[name].realPath) {
+      throw refuse(`${name} changed while preparing the SDK manifest`);
+    }
+  }
+}
+
+async function writeAtomically(path, bytes, mode) {
   const tempPath = join(dirname(path), `${manifestTempPrefix}${process.pid}-${randomUUID()}.tmp`);
   let handle;
 
   try {
-    const { mode } = await stat(path);
     handle = await open(tempPath, 'wx', mode & 0o777);
     await handle.writeFile(bytes);
     await handle.sync();
@@ -54,8 +191,13 @@ async function writeAtomically(path, bytes) {
 }
 
 async function normalize() {
-  const original = await readFile(sdkManifestPath);
-  const sdkManifest = parseManifest(original, sdkManifestPath);
+  const dependencyState = await inspectInstalledDependencies();
+  const [original, honoBytes] = await Promise.all([
+    readFile(dependencyState.sdkManifest.path),
+    readFile(dependencyState.honoManifest.path),
+  ]);
+
+  const sdkManifest = parseManifest(original, dependencyState.sdkManifest.path);
   if (sdkManifest.name !== SDK_NAME || sdkManifest.version !== SDK_VERSION) {
     throw refuse(
       `installed SDK is ${sdkManifest.name ?? 'unknown'}@${sdkManifest.version ?? 'unknown'}, expected ${SDK_NAME}@${SDK_VERSION}`,
@@ -69,8 +211,7 @@ async function normalize() {
     );
   }
 
-  const honoBytes = await readFile(honoManifestPath);
-  const honoManifest = parseManifest(honoBytes, honoManifestPath);
+  const honoManifest = parseManifest(honoBytes, dependencyState.honoManifest.path);
   if (honoManifest.name !== HONO_NAME || honoManifest.version !== BUNDLED_HONO_VERSION) {
     throw refuse(
       `installed Hono is ${honoManifest.name ?? 'unknown'}@${honoManifest.version ?? 'unknown'}, expected ${HONO_NAME}@${BUNDLED_HONO_VERSION}`,
@@ -100,7 +241,7 @@ async function normalize() {
     throw refuse(`could not locate the declared ${HONO_NAME} ${SDK_HONO_RANGE} dependency entry`);
   }
 
-  const normalized = parseManifest(Buffer.from(normalizedSource), sdkManifestPath);
+  const normalized = parseManifest(Buffer.from(normalizedSource), dependencyState.sdkManifest.path);
   if (
     normalized.name !== SDK_NAME ||
     normalized.version !== SDK_VERSION ||
@@ -109,9 +250,18 @@ async function normalize() {
     throw refuse(`normalized SDK manifest failed validation`);
   }
 
+  const writeState = await inspectInstalledDependencies();
+  assertSameDependencyPaths(dependencyState, writeState);
   const normalizedBytes = Buffer.from(normalizedSource);
-  await writeAtomically(sdkManifestPath, normalizedBytes);
-  const persisted = await readFile(sdkManifestPath);
+  await writeAtomically(
+    writeState.sdkManifest.path,
+    normalizedBytes,
+    writeState.sdkManifest.metadata.mode,
+  );
+
+  const persistedState = await inspectInstalledDependencies();
+  assertSameDependencyPaths(dependencyState, persistedState);
+  const persisted = await readFile(persistedState.sdkManifest.path);
   if (!persisted.equals(normalizedBytes)) {
     throw refuse(`normalized SDK manifest did not persist byte-exactly`);
   }
