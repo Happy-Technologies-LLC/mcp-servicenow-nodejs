@@ -49,8 +49,18 @@ function createDeadline(scope, budgetMs = TEST_DEADLINE_MS) {
 function listenOnEphemeralLoopback(app) {
   const server = app.listen(0, '127.0.0.1');
   const listening = new Promise((resolve, reject) => {
-    server.once('listening', resolve);
-    server.once('error', reject);
+    function onListening() {
+      server.removeListener('error', onError);
+      resolve();
+    }
+
+    function onError(error) {
+      server.removeListener('listening', onListening);
+      reject(error);
+    }
+
+    server.once('listening', onListening);
+    server.once('error', onError);
   });
   return { server, listening };
 }
@@ -197,6 +207,43 @@ async function closeSdkResources({
 }
 
 describe('real SDK production transports', () => {
+  test('removes the startup error listener after HTTP listener startup', async () => {
+    const server = new EventEmitter();
+    const app = {
+      listen: jest.fn(() => server)
+    };
+    const listener = listenOnEphemeralLoopback(app);
+
+    expect(server.listenerCount('listening')).toBe(1);
+    expect(server.listenerCount('error')).toBe(1);
+    server.emit('listening');
+    await listener.listening;
+
+    expect(app.listen).toHaveBeenCalledWith(0, '127.0.0.1');
+    expect(server.listenerCount('listening')).toBe(0);
+    expect(server.listenerCount('error')).toBe(0);
+    const laterError = new Error('post-startup listener failure');
+    expect(() => server.emit('error', laterError)).toThrow();
+  });
+
+  test('removes the startup listening handler after HTTP listener failure', async () => {
+    const server = new EventEmitter();
+    const app = {
+      listen: jest.fn(() => server)
+    };
+    const listener = listenOnEphemeralLoopback(app);
+    const startupError = new Error('HTTP listener startup failed');
+    const startupFailure = listener.listening.catch((error) => error);
+
+    expect(server.listenerCount('listening')).toBe(1);
+    expect(server.listenerCount('error')).toBe(1);
+    server.emit('error', startupError);
+
+    expect(await startupFailure).toBe(startupError);
+    expect(server.listenerCount('listening')).toBe(0);
+    expect(server.listenerCount('error')).toBe(0);
+  });
+
   test('bounds stalled operations and attempts every cleanup path', async () => {
     let primaryCleanupAttempted = false;
     const probeDeadline = createDeadline('failure-path probe', FAILURE_PROBE_BUDGET_MS);
