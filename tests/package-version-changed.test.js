@@ -138,6 +138,8 @@ describe('publish workflow release graph', () => {
     expect(npm).not.toContain('Create GitHub Release');
     expect(inlineNeeds(release)).toEqual(['check-version', 'publish-npm']);
     expect(release).toContain('Create GitHub Release');
+    expect(release).toContain('git push origin "refs/tags/$TAG"');
+    expect(release).toContain('target_commitish: ${{ github.sha }}');
     expect(inlineNeeds(docker)).toEqual([
       'check-version',
       'test',
@@ -222,5 +224,6 @@ describe('security patch workflow', () => {
     expect(checkSecurity).toContain('case "$AUDIT_STATUS" in');
     expect(checkSecurity).toContain('Number.isSafeInteger(count)');
     expect(checkSecurity).not.toContain('continue-on-error: true');
+    expect(workflow).toContain('npm version patch --no-git-tag-version');
   });
 });
