@@ -154,4 +154,12 @@ describe('publish workflow release graph', () => {
     );
     expect(checkVersion).not.toContain('HEAD^:package.json');
   });
+
+  test('serializes publication runs without canceling an active release', () => {
+    const workflow = readFileSync(workflowPath, 'utf8');
+
+    expect(workflow).toMatch(
+      /^concurrency:\n  group: publish-\$\{\{ github\.repository \}\}\n  cancel-in-progress: false$/m
+    );
+  });
 });

@@ -19,6 +19,10 @@ on:
           - trusted
           - token
 
+concurrency:
+  group: publish-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
