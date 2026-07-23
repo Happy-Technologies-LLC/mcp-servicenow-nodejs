@@ -224,6 +224,23 @@ describe('ConfigManager.loadFromEnv()', () => {
       expect(() => cm.loadFromEnv()).toThrow(/authorization_code/);
     });
   });
+  it('keeps direct environment loads on the fallback facade', () => {
+    process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';
+    process.env.SERVICENOW_USERNAME = basicAuthFixture.user;
+    process.env.SERVICENOW_PASSWORD = basicAuthFixture.secret;
+    const cm = new ConfigManager();
+
+    const [loaded] = cm.loadFromEnv();
+
+    expect(cm.getInstance('default')).toBe(loaded);
+    expect(cm.getDefaultInstance()).toBe(loaded);
+    expect(cm.listInstances()).toEqual([{
+      name: 'default',
+      url: 'https://example.service-now.com',
+      default: true,
+      description: 'Loaded from .env'
+    }]);
+  });
 });
 
 describe('ConfigManager registry facade', () => {

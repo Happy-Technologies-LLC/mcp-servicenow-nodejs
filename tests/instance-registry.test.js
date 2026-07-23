@@ -65,6 +65,21 @@ describe('InstanceRegistry reads', () => {
     expect(registry.list()).toEqual([]);
     expect(registry.getDefault()).toBeUndefined();
   });
+  test('rejects multiple default instances in a persisted document', () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      version: 1,
+      instances: [
+        publicInstance('dev', { default: true }),
+        publicInstance('prod', { default: true })
+      ]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+
+    expect(() => registry.load()).toThrow(
+      expect.objectContaining({ code: 'REGISTRY_RELOAD_FAILED' })
+    );
+  });
 });
 
 describe('InstanceRegistry validation and defaults', () => {
@@ -160,6 +175,32 @@ describe('InstanceRegistry validation and defaults', () => {
       })).rejects.toThrow(/^(?!.*fixture-secret-value).*$/s);
     }
   });
+  test('rejects invalid provided schema field types and malformed endpoints', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const cases = [
+      ['authType', null, publicInstance('bad-auth-null')],
+      ['authType', '', publicInstance('bad-auth-empty')],
+      ['authType', false, publicInstance('bad-auth-false')],
+      ['grantType', null, publicInstance('bad-grant-null')],
+      ['grantType', '', publicInstance('bad-grant-empty')],
+      ['grantType', false, publicInstance('bad-grant-false')],
+      ['username', 42, { name: 'bad-username', url: 'https://bad-username.service-now.com', authType: 'basic', credentialRef: 'ref' }],
+      ['clientId', 42, publicInstance('bad-client-id')],
+      ['credentialRef', 42, { name: 'bad-credential-ref', url: 'https://bad-credential-ref.service-now.com', authType: 'basic', username: 'user' }],
+      ['scope', 42, publicInstance('bad-scope')],
+      ['authorizeUrl', 'not a url', publicInstance('bad-authorize-url')],
+      ['tokenUrl', 42, publicInstance('bad-token-url')],
+      ['callbackPath', 'callback', publicInstance('bad-callback-path')],
+      ['callbackPath', 42, publicInstance('bad-callback-type')],
+      ['description', 42, publicInstance('bad-description')]
+    ];
+
+    for (const [field, value, instance] of cases) {
+      await expect(registry.register({ ...instance, [field]: value }))
+        .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+    }
+  });
 });
 
 describe('InstanceRegistry persistence', () => {
@@ -183,6 +224,105 @@ describe('InstanceRegistry persistence', () => {
     await expect(registry.remove('legacy'))
       .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
     expect(fs.readFileSync(file, 'utf8')).toBe(before);
+  });
+  test('uses one stable reload error contract for invalid persisted documents', () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      version: 1,
+      instances: [{ ...publicInstance('broken'), clientId: 42 }]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+
+    expect(() => registry.load()).toThrow(expect.objectContaining({ code: 'REGISTRY_RELOAD_FAILED' }));
+    expect(() => registry.reload()).toThrow(expect.objectContaining({ code: 'REGISTRY_RELOAD_FAILED' }));
+  });
+
+  test('reloads a changed file and rolls back to the prior snapshot on failure', () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      version: 1,
+      instances: [publicInstance('dev', { default: true })]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    expect(registry.list().map(instance => instance.name)).toEqual(['dev']);
+
+    writeJson(file, {
+      version: 1,
+      instances: [publicInstance('prod', { default: true })]
+    });
+    expect(registry.reload().instances.map(instance => instance.name)).toEqual(['prod']);
+    const previous = registry.list();
+    const before = fs.readFileSync(file, 'utf8');
+
+    writeJson(file, {
+      version: 1,
+      instances: [
+        publicInstance('prod', { default: true }),
+        publicInstance('broken', { default: true })
+      ]
+    });
+    expect(() => registry.reload()).toThrow(
+      expect.objectContaining({ code: 'REGISTRY_RELOAD_FAILED' })
+    );
+    expect(registry.list()).toEqual(previous);
+    expect(fs.readFileSync(file, 'utf8')).not.toBe(before);
+  });
+
+  test('returns typed missing-instance errors for get, update, and remove', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+
+    expect(() => registry.get('missing')).toThrow(expect.objectContaining({
+      code: 'INSTANCE_NOT_FOUND',
+      details: { name: 'missing' }
+    }));
+    await expect(registry.update('missing', {})).rejects.toMatchObject({
+      code: 'INSTANCE_NOT_FOUND',
+      details: { name: 'missing' }
+    });
+    await expect(registry.remove('missing')).rejects.toMatchObject({
+      code: 'INSTANCE_NOT_FOUND',
+      details: { name: 'missing' }
+    });
+  });
+
+  test('preserves foreign temp files after ten atomic open collisions', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    await registry.register(publicInstance('dev'));
+    const before = fs.readFileSync(file, 'utf8');
+    const previous = registry.list();
+    const open = jest.spyOn(fs.promises, 'open').mockImplementation(async (tempPath) => {
+      fs.writeFileSync(tempPath, 'foreign-temp');
+      const error = new Error('fixture collision');
+      error.code = 'EEXIST';
+      throw error;
+    });
+
+    await expect(registry.register(publicInstance('prod'))).rejects.toMatchObject({
+      code: 'REGISTRY_WRITE_FAILED'
+    });
+    expect(open).toHaveBeenCalledTimes(10);
+    const tempFiles = fs.readdirSync(path.dirname(file))
+      .filter(name => name.startsWith('.instances.json.') && name.endsWith('.tmp'));
+    expect(tempFiles).toHaveLength(10);
+    for (const tempFile of tempFiles) {
+      expect(fs.readFileSync(path.join(path.dirname(file), tempFile), 'utf8')).toBe('foreign-temp');
+    }
+    expect(registry.list()).toEqual(previous);
+    expect(fs.readFileSync(file, 'utf8')).toBe(before);
+  });
+
+  test('creates the registry directory with mode 0700 and temp files with mode 0600', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const mkdir = jest.spyOn(fs.promises, 'mkdir');
+    const open = jest.spyOn(fs.promises, 'open');
+
+    await registry.register(publicInstance('dev'));
+
+    expect(mkdir).toHaveBeenCalledWith(path.dirname(file), { recursive: true, mode: 0o700 });
+    expect(open).toHaveBeenCalledWith(expect.any(String), 'wx', 0o600);
   });
 
   test('preserves the prior snapshot and file when an atomic rename fails', async () => {

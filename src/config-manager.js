@@ -69,6 +69,7 @@ export class ConfigManager {
   }
 
   loadFromEnv() {
+    this._usingEnvFallback = true;
     const isOAuth = process.env.SERVICENOW_AUTH_TYPE === 'oauth';
     const grantType = process.env.SERVICENOW_OAUTH_GRANT_TYPE;
     const passwordlessGrant = grantType === 'client_credentials' || grantType === 'authorization_code';

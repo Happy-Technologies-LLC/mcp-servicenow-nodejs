@@ -55,6 +55,35 @@ function validateUrl(url, name) {
   }
 }
 
+function validateOptionalUrl(value, name, field) {
+  if (typeof value !== 'string' || !value.trim()) {
+    invalid(`Instance '${name}' ${field} must be a non-empty URL`, { field });
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    invalid(`Instance '${name}' ${field} must be a valid URL`, { field });
+  }
+  const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+  const hostname = parsed.hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopbackHosts.has(hostname))) {
+    invalid(`Instance '${name}' ${field} must use HTTPS except for loopback HTTP`, { field });
+  }
+}
+
+function validateOptionalString(value, name, field) {
+  if (typeof value !== 'string') {
+    invalid(`Instance '${name}' ${field} must be a string`, { field });
+  }
+}
+
+function validateCallbackPath(value, name) {
+  if (typeof value !== 'string' || !value.trim() || !value.startsWith('/') || value.startsWith('//') || value.includes('?') || value.includes('#')) {
+    invalid(`Instance '${name}' callbackPath must be a valid absolute path`, { field: 'callbackPath' });
+  }
+}
+
 function credentialRefString(value, field = 'credentialRef') {
   if (typeof value !== 'string' || !value.trim()) {
     invalid(`Instance credential reference '${field}' must be a non-empty string`, { field });
@@ -99,16 +128,18 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
   }
   validateUrl(instance.url, name);
 
-  const authType = instance.authType || 'basic';
+  const authType = instance.authType === undefined ? 'basic' : instance.authType;
   if (!AUTH_TYPES.has(authType)) {
     invalid(`Instance '${name}' has an unsupported authType`, { field: 'authType' });
   }
   if (instance.default !== undefined && typeof instance.default !== 'boolean') {
     invalid(`Instance '${name}' default must be a boolean`, { field: 'default' });
   }
-  if (instance.description !== undefined && typeof instance.description !== 'string') {
-    invalid(`Instance '${name}' description must be a string`, { field: 'description' });
-  }
+  if (instance.scope !== undefined) validateOptionalString(instance.scope, name, 'scope');
+  if (instance.description !== undefined) validateOptionalString(instance.description, name, 'description');
+  if (instance.authorizeUrl !== undefined) validateOptionalUrl(instance.authorizeUrl, name, 'authorizeUrl');
+  if (instance.tokenUrl !== undefined) validateOptionalUrl(instance.tokenUrl, name, 'tokenUrl');
+  if (instance.callbackPath !== undefined) validateCallbackPath(instance.callbackPath, name);
   if (instance.redirectPort !== undefined && (!Number.isInteger(instance.redirectPort) || instance.redirectPort < 0 || instance.redirectPort > 65535)) {
     invalid(`Instance '${name}' redirectPort must be an integer from 0 to 65535`, { field: 'redirectPort' });
   }
@@ -117,17 +148,21 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     if (instance.grantType !== undefined) {
       invalid(`Basic instance '${name}' cannot specify grantType`, { field: 'grantType' });
     }
-    if (!instance.username) invalid(`Basic instance '${name}' requires username`, { field: 'username' });
+    if (typeof instance.username !== 'string' || !instance.username.trim()) {
+      invalid(`Basic instance '${name}' requires username as a non-empty string`, { field: 'username' });
+    }
     if (allowSecrets && instance.password) return true;
     credentialRefString(instance.credentialRef);
     return true;
   }
 
-  const grantType = instance.grantType || 'password';
+  const grantType = instance.grantType === undefined ? 'password' : instance.grantType;
   if (!GRANT_TYPES.has(grantType)) {
     invalid(`OAuth instance '${name}' has an unsupported grantType`, { field: 'grantType' });
   }
-  if (!instance.clientId) invalid(`OAuth instance '${name}' requires clientId`, { field: 'clientId' });
+  if (typeof instance.clientId !== 'string' || !instance.clientId.trim()) {
+    invalid(`OAuth instance '${name}' requires clientId as a non-empty string`, { field: 'clientId' });
+  }
 
   if (grantType === 'authorization_code') {
     if (instance.credentialRef !== undefined) {
@@ -142,7 +177,9 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     return true;
   }
 
-  if (!instance.username) invalid(`OAuth password instance '${name}' requires username`, { field: 'username' });
+  if (typeof instance.username !== 'string' || !instance.username.trim()) {
+    invalid(`OAuth password instance '${name}' requires username as a non-empty string`, { field: 'username' });
+  }
   if (allowSecrets && instance.password && instance.clientSecret) return true;
   passwordGrantRefs(instance.credentialRef);
   return true;
@@ -159,12 +196,19 @@ function validateDocument(document) {
     throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry instances must be an array');
   }
   const seen = new Set();
+  let defaultCount = 0;
   for (const instance of document.instances) {
     const name = instance && instance.name;
     if (seen.has(name)) {
       throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', `Duplicate instance name '${name}' in registry`, { field: 'name' });
     }
     seen.add(name);
+    if (instance && instance.default === true) {
+      defaultCount += 1;
+      if (defaultCount > 1) {
+        throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry may contain at most one default instance', { field: 'default' });
+      }
+    }
     if (!hasSecretField(instance)) {
       validateNewInstance(instance);
     }
@@ -230,8 +274,12 @@ export class InstanceRegistry {
     try {
       validateDocument(document);
     } catch (error) {
-      if (error instanceof InstanceRegistryError) throw error;
-      throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', error.message, { path: this.readPath });
+      const details = error instanceof InstanceRegistryError ? error.details : {};
+      const message = error instanceof Error ? error.message : 'Invalid instance registry document';
+      throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', message, {
+        ...details,
+        path: this.readPath
+      });
     }
     if (document.version === undefined) document = { ...document, version: 1 };
     this._document = document;
@@ -288,7 +336,11 @@ export class InstanceRegistry {
         throw new InstanceRegistryError('INSTANCE_ALREADY_EXISTS', `Instance '${instance.name}' already exists`, { name: instance.name });
       }
       const shouldDefault = current.length === 0 || makeDefault || instance.default === true;
-      const candidate = { ...clone(instance), authType: instance.authType || 'basic', default: shouldDefault };
+      const candidate = {
+        ...clone(instance),
+        authType: instance.authType === undefined ? 'basic' : instance.authType,
+        default: shouldDefault
+      };
       const instances = current.map(existing => shouldDefault ? { ...existing, default: false } : existing);
       instances.push(candidate);
       return { ...this._document, version: 1, instances };
@@ -360,9 +412,10 @@ export class InstanceRegistry {
     try {
       await this.fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
       for (let attempt = 0; attempt < 10; attempt += 1) {
-        tempPath = path.join(directory, `.${basename}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.${attempt}.tmp`);
+        const candidatePath = path.join(directory, `.${basename}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.${attempt}.tmp`);
         try {
-          handle = await this.fs.promises.open(tempPath, 'wx', 0o600);
+          handle = await this.fs.promises.open(candidatePath, 'wx', 0o600);
+          tempPath = candidatePath;
           break;
         } catch (error) {
           if (error.code !== 'EEXIST' || attempt === 9) throw error;
