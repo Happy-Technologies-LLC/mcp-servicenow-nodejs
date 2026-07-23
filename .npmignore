@@ -29,7 +29,10 @@ docs/research/
 
 # Examples and scripts
 examples/
-scripts/
+scripts/*
+!scripts/release.sh
+!scripts/bundle-sdk-manifest.mjs
+!scripts/verify-package.mjs
 
 # Claude Code / Claude Flow
 .claude/
