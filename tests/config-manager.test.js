@@ -7,6 +7,10 @@
  * - Original behaviour (basic auth, ROPC password grant) still requires USERNAME/PASSWORD
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { InstanceRegistry } from '../src/instance-registry.js';
 import { jest } from '@jest/globals';
 import { ConfigManager, instanceToClientOptions } from '../src/config-manager.js';
 
@@ -219,5 +223,80 @@ describe('ConfigManager.loadFromEnv()', () => {
       const cm = new ConfigManager();
       expect(() => cm.loadFromEnv()).toThrow(/authorization_code/);
     });
+  });
+});
+
+describe('ConfigManager registry facade', () => {
+  test('delegates synchronous reads, validation, and reload to the injected registry', () => {
+    const instances = [{ name: 'dev', url: 'https://dev.service-now.com', default: true }];
+    const registry = {
+      load: jest.fn(() => ({ version: 1, instances })),
+      reload: jest.fn(() => ({ version: 1, instances })),
+      get: jest.fn(() => instances[0]),
+      getDefault: jest.fn(() => instances[0]),
+      list: jest.fn(() => instances),
+      validate: jest.fn(() => true),
+      hasFile: jest.fn(() => true)
+    };
+    const cm = new ConfigManager({ registry });
+
+    expect(cm.loadInstances()).toBe(instances);
+    expect(cm.getInstance('dev')).toBe(instances[0]);
+    expect(cm.getDefaultInstance()).toBe(instances[0]);
+    expect(cm.listInstances()).toEqual([{
+      name: 'dev',
+      url: 'https://dev.service-now.com',
+      default: true,
+      description: ''
+    }]);
+    expect(cm.validateInstance(instances[0])).toBe(true);
+    expect(cm.reload()).toBe(instances);
+    expect(registry.load).toHaveBeenCalledTimes(1);
+    expect(registry.reload).toHaveBeenCalledTimes(1);
+    expect(registry.get).toHaveBeenCalledWith('dev');
+    expect(registry.getDefault).toHaveBeenCalledTimes(1);
+    expect(registry.list).toHaveBeenCalledTimes(1);
+    expect(registry.validate).toHaveBeenCalledWith(instances[0]);
+  });
+
+  test('falls back to environment credentials only when the registry file is absent', () => {
+    const registry = {
+      load: jest.fn(() => ({ version: 1, instances: [] })),
+      hasFile: jest.fn(() => false)
+    };
+    process.env.SERVICENOW_INSTANCE_URL = 'https://env.service-now.com';
+    process.env.SERVICENOW_USERNAME = 'env-user';
+    process.env.SERVICENOW_PASSWORD = 'env-password-fixture';
+    const cm = new ConfigManager({ registry });
+
+    expect(cm.loadInstances()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'default', url: 'https://env.service-now.com' })
+    ]));
+    expect(registry.load).toHaveBeenCalledTimes(1);
+  });
+
+  test('uses the configured registry instead of environment fallback when a file exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-'));
+    const file = path.join(dir, 'instances.json');
+    fs.writeFileSync(file, JSON.stringify({
+      version: 1,
+      instances: [{
+        name: 'configured',
+        url: 'https://configured.service-now.com',
+        authType: 'oauth',
+        grantType: 'authorization_code',
+        clientId: 'configured-client',
+        default: true
+      }]
+    }));
+    process.env.SERVICENOW_INSTANCE_URL = 'https://env.service-now.com';
+    process.env.SERVICENOW_USERNAME = 'env-user';
+    process.env.SERVICENOW_PASSWORD = 'env-password-fixture';
+    const cm = new ConfigManager({
+      registry: new InstanceRegistry({ readPath: file, writePath: file })
+    });
+
+    expect(cm.getDefaultInstance().name).toBe('configured');
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

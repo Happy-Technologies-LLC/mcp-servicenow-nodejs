@@ -5,12 +5,7 @@
  * Licensed under the MIT License - see LICENSE file for details
  */
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { InstanceRegistry } from './instance-registry.js';
 
 /**
  * Map a loaded instance config to the options object ServiceNowClient expects.
@@ -35,43 +30,47 @@ export function instanceToClientOptions(instance) {
 }
 
 export class ConfigManager {
-  constructor() {
-    this.configPath = path.join(__dirname, '../config/servicenow-instances.json');
+  constructor(options = {}) {
+    const injectedRegistry = options && typeof options.load === 'function'
+      ? options
+      : options.registry || options.instanceRegistry;
+    this.registry = injectedRegistry || new InstanceRegistry();
     this.instances = null;
+    this._usingEnvFallback = false;
   }
 
-  /**
-   * Load instances from JSON config file
-   */
   loadInstances() {
     if (this.instances) {
       return this.instances;
     }
 
+    let document;
     try {
-      const configData = fs.readFileSync(this.configPath, 'utf8');
-      const config = JSON.parse(configData);
-      this.instances = config.instances;
-      return this.instances;
+      document = this.registry.load();
     } catch (error) {
-      // Fallback to .env if config file doesn't exist
-      if (error.code === 'ENOENT') {
-        console.warn('⚠️  servicenow-instances.json not found, falling back to .env');
+      if (error.code === 'ENOENT' || error.code === 'REGISTRY_FILE_NOT_FOUND') {
+        this._usingEnvFallback = true;
         return this.loadFromEnv();
       }
-      throw new Error(`Failed to load ServiceNow instances config: ${error.message}`);
+      throw error;
     }
+
+    const hasFile = typeof this.registry.hasFile === 'function'
+      ? this.registry.hasFile()
+      : true;
+    if (!hasFile) {
+      this._usingEnvFallback = true;
+      return this.loadFromEnv();
+    }
+
+    this._usingEnvFallback = false;
+    this.instances = document.instances || this.registry.list();
+    return this.instances;
   }
 
-  /**
-   * Fallback: Load single instance from .env file (backward compatibility)
-   */
   loadFromEnv() {
     const isOAuth = process.env.SERVICENOW_AUTH_TYPE === 'oauth';
     const grantType = process.env.SERVICENOW_OAUTH_GRANT_TYPE;
-    // Username and password are not required for grants that don't use ROPC:
-    // client_credentials (client id/secret only) and authorization_code
-    // (identity comes from the interactive browser sign-in).
     const passwordlessGrant = grantType === 'client_credentials' || grantType === 'authorization_code';
     const requiresUserPass = !(isOAuth && passwordlessGrant);
 
@@ -99,8 +98,6 @@ export class ConfigManager {
       if (grantType) {
         instance.grantType = grantType;
       }
-      // Per-user authorization_code config (loopback + PKCE). All optional —
-      // the client derives authorize/token URLs from the instance URL if unset.
       if (grantType === 'authorization_code') {
         instance.authorizeUrl = process.env.SERVICENOW_OAUTH_AUTHORIZE_URL;
         instance.tokenUrl = process.env.SERVICENOW_OAUTH_TOKEN_URL;
@@ -116,53 +113,49 @@ export class ConfigManager {
     }
 
     this.instances = [instance];
-
     return this.instances;
   }
 
-  /**
-   * Get instance by name
-   * @param {string} name - Instance name
-   * @returns {object} Instance configuration
-   */
+  reload() {
+    this.instances = null;
+    this._usingEnvFallback = false;
+    const document = this.registry.reload();
+    const hasFile = typeof this.registry.hasFile === 'function'
+      ? this.registry.hasFile()
+      : true;
+    if (!hasFile) {
+      this._usingEnvFallback = true;
+      return this.loadFromEnv();
+    }
+    this.instances = document.instances || this.registry.list();
+    return this.instances;
+  }
+
   getInstance(name) {
     const instances = this.loadInstances();
-    const instance = instances.find(i => i.name === name);
-
-    if (!instance) {
-      throw new Error(`Instance '${name}' not found. Available instances: ${instances.map(i => i.name).join(', ')}`);
+    if (this._usingEnvFallback) {
+      const instance = instances.find(candidate => candidate.name === name);
+      if (!instance) {
+        throw new Error(`Instance '${name}' not found. Available instances: ${instances.map(i => i.name).join(', ')}`);
+      }
+      return instance;
     }
-
-    return instance;
+    return this.registry.get(name);
   }
 
-  /**
-   * Get default instance
-   * @returns {object} Default instance configuration
-   */
   getDefaultInstance() {
     const instances = this.loadInstances();
-    const defaultInstance = instances.find(i => i.default === true);
-
-    if (!defaultInstance) {
-      // If no default is set, use the first instance
-      return instances[0];
+    if (this._usingEnvFallback) {
+      return instances.find(instance => instance.default === true) || instances[0];
     }
-
-    return defaultInstance;
+    return this.registry.getDefault();
   }
 
-  /**
-   * Get instance by name or default if not specified
-   * @param {string} name - Optional instance name
-   * @returns {object} Instance configuration
-   */
   getInstanceOrDefault(name = null) {
     if (name) {
       return this.getInstance(name);
     }
 
-    // Check for SERVICENOW_INSTANCE env variable
     const envInstance = process.env.SERVICENOW_INSTANCE;
     if (envInstance) {
       return this.getInstance(envInstance);
@@ -171,56 +164,19 @@ export class ConfigManager {
     return this.getDefaultInstance();
   }
 
-  /**
-   * List all available instances
-   * @returns {Array} List of instance names and descriptions
-   */
   listInstances() {
     const instances = this.loadInstances();
-    return instances.map(i => ({
-      name: i.name,
-      url: i.url,
-      default: i.default || false,
-      description: i.description || ''
+    const source = this._usingEnvFallback ? instances : this.registry.list();
+    return source.map(instance => ({
+      name: instance.name,
+      url: instance.url,
+      default: instance.default || false,
+      description: instance.description || ''
     }));
   }
 
-  /**
-   * Validate instance configuration
-   * @param {object} instance - Instance configuration
-   * @returns {boolean} True if valid
-   */
   validateInstance(instance) {
-    const required = ['name', 'url'];
-    for (const field of required) {
-      if (!instance[field]) {
-        throw new Error(`Instance configuration missing required field: ${field}`);
-      }
-    }
-
-    if (instance.authType === 'oauth') {
-      if (!instance.clientId) {
-        throw new Error(`OAuth instance '${instance.name}' missing required field: clientId`);
-      }
-      const publicAuthorizationCodeClient = instance.grantType === 'authorization_code';
-      if (!publicAuthorizationCodeClient && !instance.clientSecret) {
-        throw new Error(`OAuth instance '${instance.name}' missing required field: clientSecret`);
-      }
-      if (
-        instance.grantType !== 'client_credentials' &&
-        !publicAuthorizationCodeClient &&
-        (!instance.username || !instance.password)
-      ) {
-        throw new Error(`OAuth instance '${instance.name}' using password grant requires username and password`);
-      }
-    } else {
-      // Basic auth requires username and password
-      if (!instance.username || !instance.password) {
-        throw new Error(`Instance '${instance.name}' missing required field: username or password`);
-      }
-    }
-
-    return true;
+    return this.registry.validate(instance);
   }
 }
 
