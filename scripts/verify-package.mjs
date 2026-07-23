@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { inspect } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sdkManifestPath = join(root, 'node_modules', '@modelcontextprotocol', 'sdk', 'package.json');
@@ -33,15 +34,34 @@ function assert(condition, message) {
   }
 }
 
-function throwCollectedErrors(primaryError, cleanupErrors, message) {
-  if (primaryError) {
+function normalizeThrownValue(value, context) {
+  if (value instanceof Error) {
+    return value;
+  }
+  return new Error(`${context} threw or rejected with a non-Error value: ${inspect(value)}`, {
+    cause: value,
+  });
+}
+
+function throwCollectedErrors(primaryFailed, primaryError, cleanupErrors, message) {
+  if (primaryFailed) {
+    const normalizedPrimaryError = normalizeThrownValue(primaryError, 'package verifier');
     if (cleanupErrors.length > 0) {
-      throw new AggregateError([primaryError, ...cleanupErrors], message);
+      throw new AggregateError(
+        [
+          normalizedPrimaryError,
+          ...cleanupErrors.map((error) => normalizeThrownValue(error, 'package verifier cleanup')),
+        ],
+        message,
+      );
     }
-    throw primaryError;
+    throw normalizedPrimaryError;
   }
   if (cleanupErrors.length > 0) {
-    throw new AggregateError(cleanupErrors, message);
+    throw new AggregateError(
+      cleanupErrors.map((error) => normalizeThrownValue(error, 'package verifier cleanup')),
+      message,
+    );
   }
 }
 
@@ -300,6 +320,7 @@ function postInitialize(port) {
 const cleanupErrors = [];
 let listener;
 let primaryError;
+let primaryFailed = false;
 let server;
 let summary;
 let transport;
@@ -550,6 +571,7 @@ try {
     unpackedSize: pack.unpackedSize,
   };
 } catch (error) {
+  primaryFailed = true;
   primaryError = error;
 }
 
@@ -585,6 +607,7 @@ for (const cleanup of [
 }
 
 throwCollectedErrors(
+  primaryFailed,
   primaryError,
   cleanupErrors,
   'package verifier failed and could not clean up every resource',
