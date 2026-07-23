@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Get package version
         id: package-version
@@ -45,7 +45,7 @@ jobs:
             echo "should-publish=true" >> "$GITHUB_OUTPUT"
             echo "Manual dispatch, will publish"
           else
-            changed="$(git show HEAD^:package.json | node scripts/package-version-changed.mjs package.json)"
+            changed="$(git show "${{ github.event.before }}:package.json" | node scripts/package-version-changed.mjs package.json)"
             if [ "$changed" = "true" ]; then
               echo "should-publish=true" >> "$GITHUB_OUTPUT"
               echo "Version changed, will publish"

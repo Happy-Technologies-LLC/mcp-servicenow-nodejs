@@ -143,4 +143,15 @@ describe('publish workflow release graph', () => {
     expect(checkVersion).toContain('echo "should-publish=true" >> "$GITHUB_OUTPUT"');
     expect(workflow).not.toMatch(/\bgrep\b/);
   });
+
+  test('compares against the full push before revision', () => {
+    const workflow = readFileSync(workflowPath, 'utf8');
+    const checkVersion = jobBlock(workflow, 'check-version');
+
+    expect(checkVersion).toContain('fetch-depth: 0');
+    expect(checkVersion).toContain(
+      'git show "${{ github.event.before }}:package.json" | node scripts/package-version-changed.mjs package.json'
+    );
+    expect(checkVersion).not.toContain('HEAD^:package.json');
+  });
 });
