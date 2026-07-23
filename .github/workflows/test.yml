@@ -36,6 +36,7 @@ jobs:
 
   security-audit:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]

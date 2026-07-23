@@ -168,26 +168,58 @@ function assertSameDependencyPaths(before, after) {
   }
 }
 
+function throwCollectedErrors(primaryError, cleanupErrors, message) {
+  if (primaryError) {
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([primaryError, ...cleanupErrors], message);
+    }
+    throw primaryError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, message);
+  }
+}
+
 async function writeAtomically(path, bytes, mode) {
   const tempPath = join(dirname(path), `${manifestTempPrefix}${process.pid}-${randomUUID()}.tmp`);
+  const cleanupErrors = [];
   let handle;
+  let primaryError;
 
   try {
     handle = await open(tempPath, 'wx', mode & 0o777);
     await handle.writeFile(bytes);
     await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await rename(tempPath, path);
-  } finally {
+  } catch (error) {
+    primaryError = error;
+  }
+
+  if (handle) {
     try {
-      if (handle) {
-        await handle.close();
-      }
-    } finally {
-      await rm(tempPath, { force: true });
+      await handle.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    handle = undefined;
+  }
+  if (!primaryError) {
+    try {
+      await rename(tempPath, path);
+    } catch (error) {
+      primaryError = error;
     }
   }
+  try {
+    await rm(tempPath, { force: true });
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+
+  throwCollectedErrors(
+    primaryError,
+    cleanupErrors,
+    `could not atomically write ${path} and clean up its temporary file`,
+  );
 }
 
 async function normalize() {
