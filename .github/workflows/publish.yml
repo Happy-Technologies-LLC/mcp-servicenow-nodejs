@@ -36,20 +36,26 @@ jobs:
 
       - name: Get package version
         id: package-version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: echo "version=$(node scripts/package-version-changed.mjs --print-version package.json)" >> "$GITHUB_OUTPUT"
 
       - name: Check if version changed
         id: check
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should-publish=true" >> $GITHUB_OUTPUT
+            echo "should-publish=true" >> "$GITHUB_OUTPUT"
             echo "Manual dispatch, will publish"
-          elif git diff HEAD^ HEAD -- package.json | grep -q '"version"'; then
-            echo "should-publish=true" >> $GITHUB_OUTPUT
-            echo "Version changed, will publish"
           else
-            echo "should-publish=false" >> $GITHUB_OUTPUT
-            echo "Version unchanged, skipping publish"
+            changed="$(git show HEAD^:package.json | node scripts/package-version-changed.mjs package.json)"
+            if [ "$changed" = "true" ]; then
+              echo "should-publish=true" >> "$GITHUB_OUTPUT"
+              echo "Version changed, will publish"
+            elif [ "$changed" = "false" ]; then
+              echo "should-publish=false" >> "$GITHUB_OUTPUT"
+              echo "Version unchanged, skipping publish"
+            else
+              echo "Unexpected version comparison result: $changed" >&2
+              exit 1
+            fi
           fi
 
       - name: Select npm publish mode
@@ -140,7 +146,7 @@ jobs:
           generate_release_notes: true
 
   publish-docker:
-    needs: [check-version, test]
+    needs: [check-version, test, publish-npm]
     if: needs.check-version.outputs.should-publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
