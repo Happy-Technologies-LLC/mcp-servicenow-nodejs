@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 5.0.0 - 2026-07-23
+
 ### Breaking changes
 
 - Raised the minimum supported Node.js runtime from 18 to 20 for the patched HTTP adapter dependency.
