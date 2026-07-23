@@ -268,16 +268,32 @@ export function postInitialize(
     let response;
     let settled = false;
     let timeoutError;
-    const onRequestError = (error) => finish(reject, timeoutError ?? error);
+    const rejectTerminal = (error) => {
+      const primaryError = timeoutError ?? error;
+      if (timeoutError) {
+        queueMicrotask(() => finish(reject, primaryError));
+        return;
+      }
+      finish(reject, primaryError);
+    };
+    const onRequestError = (error) => rejectTerminal(error);
     const onResponseData = (chunk) => chunks.push(chunk);
-    const onResponseError = (error) => finish(reject, error);
+    const onResponseError = (error) => rejectTerminal(error);
     const onResponseAborted = () => {
-      finish(
-        reject,
+      rejectTerminal(
         new Error('initialize response was aborted before the complete body arrived'),
       );
     };
+    const onResponseClose = () => {
+      rejectTerminal(
+        new Error('initialize response closed before the complete body arrived'),
+      );
+    };
     const onResponseEnd = () => {
+      if (timeoutError) {
+        rejectTerminal(timeoutError);
+        return;
+      }
       finish(resolvePromise, {
         body: Buffer.concat(chunks).toString('utf8'),
         headers: response.headers,
@@ -289,6 +305,7 @@ export function postInitialize(
       response?.off('data', onResponseData);
       response?.off('error', onResponseError);
       response?.off('aborted', onResponseAborted);
+      response?.off('close', onResponseClose);
       response?.off('end', onResponseEnd);
     };
     const finish = (callback, value) => {
@@ -333,6 +350,7 @@ export function postInitialize(
           response.on('data', onResponseData);
           response.on('error', onResponseError);
           response.on('aborted', onResponseAborted);
+          response.on('close', onResponseClose);
           response.on('end', onResponseEnd);
         },
       );

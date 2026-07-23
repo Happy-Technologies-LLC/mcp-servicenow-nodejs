@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { describe, expect, jest, test, afterEach } from '@jest/globals';
 import {
@@ -117,6 +118,92 @@ describe('package verifier initialize request lifecycle', () => {
     expect(harness.response.listenerCount('data')).toBe(0);
     expect(harness.response.listenerCount('error')).toBe(0);
     expect(harness.response.listenerCount('aborted')).toBe(0);
+    expect(harness.response.listenerCount('close')).toBe(0);
+    expect(harness.response.listenerCount('end')).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('preserves a genuine response error before the initialize deadline', async () => {
+    jest.useFakeTimers();
+    const responseError = new Error('response stream failed');
+    const harness = createRequestHarness((_request, response) => {
+      harness.request.onResponse(response);
+      response.emit('error', responseError);
+    });
+
+    await expect(postInitialize(1234, {
+      requestImplementation: harness.requestImplementation,
+      timeoutMs: 100
+    })).rejects.toBe(responseError);
+
+    expect(harness.request.listenerCount('error')).toBe(0);
+    expect(harness.response.listenerCount('data')).toBe(0);
+    expect(harness.response.listenerCount('error')).toBe(0);
+    expect(harness.response.listenerCount('aborted')).toBe(0);
+    expect(harness.response.listenerCount('close')).toBe(0);
+    expect(harness.response.listenerCount('end')).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('preserves the initialize timeout for a real partial response that never ends', async () => {
+    let markPartialResponseWritten;
+    const partialResponseWritten = new Promise((resolve) => {
+      markPartialResponseWritten = resolve;
+    });
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.write('{"jsonrpc":"2.0"');
+      markPartialResponseWritten();
+    });
+
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+
+    try {
+      const { port } = server.address();
+      const pending = expect(postInitialize(port, {
+        timeoutMs: 100
+      })).rejects.toThrow(
+        'initialize request timed out after 100 ms before the complete response body was received'
+      );
+
+      await partialResponseWritten;
+      await pending;
+    } finally {
+      await new Promise((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+        server.closeAllConnections();
+      });
+    }
+  });
+
+  test.each([
+    ['response error', (response) => response.emit('error', new Error('teardown response error'))],
+    ['response abort', (response) => response.emit('aborted')],
+    ['response close', (response) => response.emit('close')],
+    ['response end', (response) => response.emit('end')]
+  ])('preserves the initialize timeout when teardown emits %s', async (_event, emitTerminalEvent) => {
+    jest.useFakeTimers();
+    const harness = createRequestHarness((_request, response) => {
+      harness.request.onResponse(response);
+      response.emit('data', Buffer.from('{"jsonrpc":"2.0"'));
+    });
+    harness.response.destroy.mockImplementation(() => emitTerminalEvent(harness.response));
+
+    const pending = expect(postInitialize(1234, {
+      requestImplementation: harness.requestImplementation,
+      timeoutMs: 25
+    })).rejects.toThrow('timed out after 25 ms before the complete response body was received');
+    await jest.advanceTimersByTimeAsync(25);
+    await pending;
+
+    expect(harness.request.listenerCount('error')).toBe(0);
+    expect(harness.response.listenerCount('data')).toBe(0);
+    expect(harness.response.listenerCount('error')).toBe(0);
+    expect(harness.response.listenerCount('aborted')).toBe(0);
+    expect(harness.response.listenerCount('close')).toBe(0);
     expect(harness.response.listenerCount('end')).toBe(0);
     expect(jest.getTimerCount()).toBe(0);
   });
@@ -144,6 +231,7 @@ describe('package verifier initialize request lifecycle', () => {
     expect(harness.response.listenerCount('data')).toBe(0);
     expect(harness.response.listenerCount('error')).toBe(0);
     expect(harness.response.listenerCount('aborted')).toBe(0);
+    expect(harness.response.listenerCount('close')).toBe(0);
     expect(harness.response.listenerCount('end')).toBe(0);
     expect(jest.getTimerCount()).toBe(0);
   });
