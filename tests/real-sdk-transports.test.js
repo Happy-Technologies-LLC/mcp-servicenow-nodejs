@@ -8,18 +8,50 @@ import { createHttpApp } from '../src/http-server.js';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const stdioServerPath = path.join(projectRoot, 'src', 'stdio-server.js');
+const TEST_DEADLINE_MS = 8_000;
+const MCP_OPERATION_TIMEOUT_MS = 4_000;
+const CLEANUP_TIMEOUT_MS = 1_000;
+const FAILURE_PROBE_BUDGET_MS = 250;
+const FAILURE_PROBE_TIMEOUT_MS = 25;
 
 function createSdkClient(name) {
   return new Client({ name, version: '1.0.0' });
 }
 
-async function listenOnEphemeralLoopback(app) {
+async function withTimeout(operation, label, timeoutMs) {
+  let timer;
+  const operationPromise = Promise.resolve().then(operation);
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([operationPromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function createDeadline(scope, budgetMs = TEST_DEADLINE_MS) {
+  const expiresAt = performance.now() + budgetMs;
+
+  return (operation, label, timeoutMs = MCP_OPERATION_TIMEOUT_MS) => {
+    const remainingMs = Math.max(1, Math.ceil(expiresAt - performance.now()));
+    return withTimeout(operation, `${scope}: ${label}`, Math.min(timeoutMs, remainingMs));
+  };
+}
+
+function listenOnEphemeralLoopback(app) {
   const server = app.listen(0, '127.0.0.1');
-  await new Promise((resolve, reject) => {
+  const listening = new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
   });
-  return server;
+  return { server, listening };
 }
 
 async function closeHttpServer(server) {
@@ -29,17 +61,145 @@ async function closeHttpServer(server) {
   });
 }
 
-async function closeClientAndServer(client, server) {
+async function attemptCleanup(deadline, errors, label, operation, timeoutMs) {
   try {
-    await client?.close();
-  } finally {
-    if (server) {
-      await closeHttpServer(server);
-    }
+    await deadline(operation, label, timeoutMs);
+  } catch (error) {
+    errors.push(error);
+  }
+}
+
+function forceTerminateStdioChild(child) {
+  if (
+    !child
+    || typeof child.kill !== 'function'
+    || child.exitCode !== null
+    || child.signalCode !== null
+  ) {
+    return;
+  }
+
+  if (!child.kill('SIGKILL')) {
+    throw new Error('Failed to forcibly terminate the stdio child process');
+  }
+}
+
+async function closeSdkResources({
+  client,
+  transport,
+  server,
+  deadline,
+  cleanupTimeoutMs = CLEANUP_TIMEOUT_MS
+}) {
+  const errors = [];
+  const stdioChild = transport?._process;
+
+  if (client) {
+    await attemptCleanup(
+      deadline,
+      errors,
+      'client close',
+      () => client.close(),
+      cleanupTimeoutMs
+    );
+  }
+  if (transport) {
+    await attemptCleanup(
+      deadline,
+      errors,
+      'transport close',
+      () => transport.close(),
+      cleanupTimeoutMs
+    );
+  }
+  if (server) {
+    await attemptCleanup(
+      deadline,
+      errors,
+      'HTTP listener close',
+      () => closeHttpServer(server),
+      cleanupTimeoutMs
+    );
+  }
+  if (
+    stdioChild
+    && stdioChild.exitCode === null
+    && stdioChild.signalCode === null
+  ) {
+    await attemptCleanup(
+      deadline,
+      errors,
+      'stdio child SIGKILL',
+      () => forceTerminateStdioChild(stdioChild),
+      cleanupTimeoutMs
+    );
+  }
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'MCP cleanup failed');
   }
 }
 
 describe('real SDK production transports', () => {
+  test('bounds stalled operations and attempts every cleanup path', async () => {
+    let primaryCleanupAttempted = false;
+    const probeDeadline = createDeadline('failure-path probe', FAILURE_PROBE_BUDGET_MS);
+
+    await expect((async () => {
+      try {
+        await probeDeadline(
+          () => new Promise(() => {}),
+          'stalled operation',
+          FAILURE_PROBE_TIMEOUT_MS
+        );
+      } finally {
+        primaryCleanupAttempted = true;
+      }
+    })()).rejects.toThrow(
+      `failure-path probe: stalled operation timed out after ${FAILURE_PROBE_TIMEOUT_MS}ms`
+    );
+    expect(primaryCleanupAttempted).toBe(true);
+
+    const cleanupAttempts = [];
+    const child = {
+      exitCode: null,
+      signalCode: null,
+      kill: jest.fn((signal) => {
+        cleanupAttempts.push(`child:${signal}`);
+        return true;
+      })
+    };
+    const client = {
+      close: jest.fn(() => {
+        cleanupAttempts.push('client');
+        return new Promise(() => {});
+      })
+    };
+    const transport = {
+      _process: child,
+      close: jest.fn(async () => {
+        cleanupAttempts.push('transport');
+      })
+    };
+    const server = {
+      close: jest.fn((callback) => {
+        cleanupAttempts.push('server');
+        callback();
+      }),
+      closeAllConnections: jest.fn()
+    };
+
+    await expect(closeSdkResources({
+      client,
+      transport,
+      server,
+      deadline: createDeadline('cleanup probe', FAILURE_PROBE_BUDGET_MS),
+      cleanupTimeoutMs: FAILURE_PROBE_TIMEOUT_MS
+    })).rejects.toThrow('MCP cleanup failed');
+    expect(cleanupAttempts).toEqual(['client', 'transport', 'server', 'child:SIGKILL']);
+    expect(server.closeAllConnections).toHaveBeenCalledTimes(1);
+  });
+
   test('round-trips tools over HTTP/SSE with the production server transport', async () => {
     const records = [{ sys_id: 'smoke-record', short_description: 'SDK transport smoke' }];
     const serviceNowClient = {
@@ -52,18 +212,22 @@ describe('real SDK production transports', () => {
     };
     const createServiceNowClient = jest.fn(() => serviceNowClient);
     const app = createHttpApp({ defaultInstance, createServiceNowClient });
+    const deadline = createDeadline('HTTP/SSE smoke');
     let server;
+    let transport;
     let client;
 
     try {
-      server = await listenOnEphemeralLoopback(app);
+      const listener = listenOnEphemeralLoopback(app);
+      server = listener.server;
+      await deadline(() => listener.listening, 'HTTP listener startup');
       const { port } = server.address();
-      const transport = new SSEClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
+      transport = new SSEClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
       client = createSdkClient('http-sse-smoke');
 
-      await client.connect(transport);
-      const tools = await client.listTools();
-      const result = await client.callTool({
+      await deadline(() => client.connect(transport), 'connect');
+      const tools = await deadline(() => client.listTools(), 'listTools');
+      const result = await deadline(() => client.callTool({
         name: 'SN-Query-Table',
         arguments: {
           table_name: 'incident',
@@ -71,7 +235,7 @@ describe('real SDK production transports', () => {
           fields: 'sys_id,short_description',
           limit: 1
         }
-      });
+      }), 'callTool');
 
       expect(client.getServerVersion()).toEqual({
         name: 'servicenow-server',
@@ -92,7 +256,7 @@ describe('real SDK production transports', () => {
         text: `Found 1 records in incident:\n${JSON.stringify(records, null, 2)}`
       }]);
     } finally {
-      await closeClientAndServer(client, server);
+      await closeSdkResources({ client, transport, server, deadline });
     }
   });
 
@@ -113,14 +277,15 @@ describe('real SDK production transports', () => {
       stderr: 'pipe'
     });
     const client = createSdkClient('stdio-smoke');
+    const deadline = createDeadline('stdio smoke');
 
     try {
-      await client.connect(transport);
-      const tools = await client.listTools();
-      const result = await client.callTool({
+      await deadline(() => client.connect(transport), 'connect');
+      const tools = await deadline(() => client.listTools(), 'listTools');
+      const result = await deadline(() => client.callTool({
         name: 'SN-Docs-Status',
         arguments: {}
-      });
+      }), 'callTool');
       const status = JSON.parse(result.content[0].text);
 
       expect(client.getServerVersion()).toEqual({
@@ -135,7 +300,7 @@ describe('real SDK production transports', () => {
         families: []
       });
     } finally {
-      await client.close();
+      await closeSdkResources({ client, transport, deadline });
     }
   });
 });
