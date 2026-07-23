@@ -1,11 +1,21 @@
 import path from 'node:path';
 import { describe, expect, test } from '@jest/globals';
-import { resolveConfigPaths } from '../src/config-path.js';
+import { expandHome, resolveConfigPaths } from '../src/config-path.js';
+
+const rootDir = path.parse(process.cwd()).root;
+const homeDir = path.join(rootDir, 'example-home');
+const legacyPath = path.join(rootDir, 'global', 'node_modules', 'happy-platform-mcp', 'config', 'servicenow-instances.json');
+const userPath = path.join(homeDir, '.config', 'happy-platform-mcp', 'instances.json');
+
+describe('expandHome', () => {
+  test('expands a Windows home prefix independently of the host separator', () => {
+    const input = `~${'\\'}docs${'\\'}instances.json`;
+
+    expect(expandHome(input, homeDir)).toBe(path.join(homeDir, `docs${'\\'}instances.json`));
+  });
+});
 
 describe('resolveConfigPaths', () => {
-  const homeDir = '/Users/example';
-  const legacyPath = '/global/node_modules/happy-platform-mcp/config/servicenow-instances.json';
-  const userPath = path.join(homeDir, '.config/happy-platform-mcp/instances.json');
 
   test('uses HAPPY_CONFIG_PATH for reads and writes with home expansion', () => {
     const paths = resolveConfigPaths({
@@ -15,9 +25,10 @@ describe('resolveConfigPaths', () => {
       existsSync: () => false
     });
 
+    const expectedPath = path.join(homeDir, 'happy', 'instances.json');
     expect(paths).toEqual({
-      readPath: '/Users/example/happy/instances.json',
-      writePath: '/Users/example/happy/instances.json',
+      readPath: expectedPath,
+      writePath: expectedPath,
       source: 'explicit'
     });
   });

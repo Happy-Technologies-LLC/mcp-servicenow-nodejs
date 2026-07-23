@@ -8,7 +8,7 @@ export const USER_CONFIG_RELATIVE_PATH = path.join(
 
 export function expandHome(input, homeDir = os.homedir()) {
   if (input === '~') return homeDir;
-  if (input.startsWith(`~${path.sep}`)) {
+  if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
     return path.join(homeDir, input.slice(2));
   }
   return input;
