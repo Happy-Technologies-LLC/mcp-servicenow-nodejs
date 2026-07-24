@@ -9,6 +9,96 @@ import axios from 'axios';
 import { userInfo } from 'node:os';
 import { performAuthorizationCodeFlow } from './oauth-authorization-code.js';
 import { KeychainTokenStore } from './token-store.js';
+import { InstanceCredentialStore } from './instance-credential-store.js';
+
+const CREDENTIAL_ERROR_CODES = new Set([
+  'CREDENTIAL_NOT_FOUND',
+  'INVALID_CREDENTIAL_REF',
+  'KEYCHAIN_UNAVAILABLE',
+  'KEYCHAIN_OPERATION_FAILED'
+]);
+
+function hasLegacySecret(value) {
+  return value !== undefined && value !== null;
+}
+
+function credentialRefForType(ref, type) {
+  if (typeof ref === 'string') return ref;
+  if (!ref || typeof ref !== 'object') return undefined;
+  return type === 'password'
+    ? (ref.password ?? ref.passwordRef)
+    : (ref.clientSecret ?? ref.clientSecretRef);
+}
+
+function safeCredentialError(error) {
+  const code = CREDENTIAL_ERROR_CODES.has(error?.code)
+    ? error.code
+    : 'KEYCHAIN_OPERATION_FAILED';
+  const message = code === 'CREDENTIAL_NOT_FOUND'
+    ? 'Credential not found'
+    : code === 'INVALID_CREDENTIAL_REF'
+      ? 'Invalid credential reference'
+      : code === 'KEYCHAIN_UNAVAILABLE'
+        ? 'Credential store unavailable'
+        : 'Credential store operation failed';
+  const safe = new Error(message);
+  safe.code = code;
+  safe.name = 'CredentialResolutionError';
+  return safe;
+}
+
+function staleInstanceError() {
+  const error = new Error('Instance changed during credential resolution');
+  error.code = 'INSTANCE_CHANGED';
+  return error;
+}
+
+function collectCredentialValues(client) {
+  const values = new Set();
+  for (const value of [
+    client?.password,
+    client?.oauthConfig?.clientSecret,
+    client?.auth ? `Basic ${client.auth}` : null,
+    client?.oauthToken ? `Bearer ${client.oauthToken}` : null
+  ]) {
+    if (typeof value === 'string' && value.length > 0) values.add(value);
+  }
+  for (const ref of [client?.credentialRef, ...(client?.credentialRef && typeof client.credentialRef === 'object'
+    ? Object.values(client.credentialRef)
+    : [])]) {
+    if (typeof ref === 'string' && ref.length > 0) values.add(ref);
+  }
+  if (client?._resolvedCredentialSecrets) {
+    for (const value of client._resolvedCredentialSecrets.values()) {
+      if (typeof value === 'string' && value.length > 0) values.add(value);
+    }
+  }
+  return values;
+}
+
+function safeAuthError(error, client) {
+  let message = typeof error?.message === 'string' && error.message
+    ? error.message
+    : 'Authentication request failed';
+  for (const value of collectCredentialValues(client)) {
+    message = message.split(value).join('[redacted]');
+  }
+  const safe = new Error(message);
+  if (typeof error?.code === 'string' && !CREDENTIAL_ERROR_CODES.has(error.code)) {
+    safe.code = error.code;
+  }
+  return safe;
+}
+
+function stripAuthorizationHeaders(error) {
+  for (const headers of [error?.config?.headers, error?.response?.config?.headers]) {
+    if (headers && typeof headers === 'object') {
+      delete headers.Authorization;
+      delete headers.authorization;
+    }
+  }
+  return error;
+}
 
 /** Default token-endpoint POST: form-encode params via axios, return the body. */
 async function defaultTokenPost(url, params) {
@@ -76,6 +166,12 @@ export class ServiceNowClient {
    * @param {object} options - Optional config (authType, clientId, clientSecret)
    */
   setInstance(instanceUrl, username, password, instanceName = null, options = {}) {
+    this._instanceGeneration = (this._instanceGeneration || 0) + 1;
+    this._resolvedCredentialSecrets = new Map();
+    this._credentialResolutionPromises = new Map();
+    this._oauthTokenPromise = null;
+    this._credentialStore = options.credentialStore || null;
+    this.credentialRef = options.credentialRef;
     this.instanceUrl = instanceUrl.replace(/\/$/, ''); // Remove trailing slash
     this.username = username;
     this.password = password;
@@ -106,8 +202,13 @@ export class ServiceNowClient {
       this.oauthRefreshToken = null;
       this.oauthTokenExpiry = null;
     } else {
-      this.auth = Buffer.from(`${username}:${password}`).toString('base64');
+      this.auth = hasLegacySecret(password)
+        ? Buffer.from(`${username}:${password}`).toString('base64')
+        : null;
       this.oauthConfig = null;
+      this.oauthToken = null;
+      this.oauthRefreshToken = null;
+      this.oauthTokenExpiry = null;
     }
 
     this._createClient();
@@ -128,12 +229,7 @@ export class ServiceNowClient {
 
     // Request interceptor — attach the right Authorization header
     this.client.interceptors.request.use(async (config) => {
-      if (this.authType === 'oauth') {
-        const token = await this._getOAuthToken();
-        config.headers['Authorization'] = `Bearer ${token}`;
-      } else {
-        config.headers['Authorization'] = `Basic ${this.auth}`;
-      }
+      config.headers.Authorization = await this.getAuthHeader();
       return config;
     });
 
@@ -155,9 +251,58 @@ export class ServiceNowClient {
           originalRequest.headers['Authorization'] = `Bearer ${token}`;
           return this.client.request(originalRequest);
         }
-        throw enrichServiceNowError(error);
+        throw stripAuthorizationHeaders(enrichServiceNowError(error));
       }
     );
+  }
+
+  _assertCurrentGeneration(generation) {
+    if (generation !== this._instanceGeneration) {
+      throw staleInstanceError();
+    }
+  }
+
+  async _resolveCredential(type, generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
+    const legacy = type === 'password' ? this.password : this.oauthConfig?.clientSecret;
+    if (hasLegacySecret(legacy)) {
+      return legacy;
+    }
+
+    const ref = credentialRefForType(this.credentialRef, type);
+    if (!ref) {
+      throw safeCredentialError({ code: 'CREDENTIAL_NOT_FOUND' });
+    }
+    const key = `${type}:${ref}`;
+    if (this._resolvedCredentialSecrets.has(key)) {
+      return this._resolvedCredentialSecrets.get(key);
+    }
+    if (!this._credentialResolutionPromises.has(key)) {
+      const promise = this._loadCredential(ref, key, generation);
+      this._credentialResolutionPromises.set(key, promise);
+    }
+    return this._credentialResolutionPromises.get(key);
+  }
+
+  async _loadCredential(ref, key, generation) {
+    const store = this._credentialStore || new InstanceCredentialStore();
+    try {
+      const value = await store.getSecret(ref);
+      this._assertCurrentGeneration(generation);
+      if (typeof value !== 'string' || value.length === 0) {
+        throw { code: 'CREDENTIAL_NOT_FOUND' };
+      }
+      this._resolvedCredentialSecrets.set(key, value);
+      if (!this._credentialStore) {
+        this._credentialStore = store;
+      }
+      return value;
+    } catch (error) {
+      if (error?.code === 'INSTANCE_CHANGED') {
+        throw error;
+      }
+      throw safeCredentialError(error);
+    }
   }
 
   /**
@@ -166,17 +311,33 @@ export class ServiceNowClient {
    * @returns {Promise<string>} Access token
    */
   async _getOAuthToken() {
-    // Per-user authorization_code grant has its own token lifecycle (persisted
-    // refresh token + fail-loud re-auth), handled separately.
+    if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
+      return this.oauthToken;
+    }
+    if (this._oauthTokenPromise) {
+      return this._oauthTokenPromise;
+    }
+
+    const generation = this._instanceGeneration;
+    const promise = this._requestOAuthToken(generation);
+    this._oauthTokenPromise = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this._oauthTokenPromise === promise) {
+        this._oauthTokenPromise = null;
+      }
+    }
+  }
+
+  async _requestOAuthToken(generation) {
+    // Per-user authorization_code clients are public and never resolve a static secret.
     if (this.oauthConfig?.grantType === 'authorization_code') {
       return this._getAuthorizationCodeToken();
     }
 
-    // Return cached token if still valid (with 30s buffer)
-    if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
-      return this.oauthToken;
-    }
-
+    this._assertCurrentGeneration(generation);
+    const clientSecret = await this._resolveCredential('clientSecret', generation);
     const tokenUrl = `${this.instanceUrl}/oauth_token.do`;
 
     // Try refresh token first if we have one
@@ -185,16 +346,18 @@ export class ServiceNowClient {
         const response = await axios.post(tokenUrl, new URLSearchParams({
           grant_type: 'refresh_token',
           client_id: this.oauthConfig.clientId,
-          client_secret: this.oauthConfig.clientSecret,
+          client_secret: clientSecret,
           refresh_token: this.oauthRefreshToken
         }).toString(), {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
+        this._assertCurrentGeneration(generation);
         return this._handleTokenResponse(response.data);
       } catch (refreshError) {
+        this._assertCurrentGeneration(generation);
         // Refresh token expired or invalid — fall through to password grant
-        console.error('OAuth refresh failed, requesting new token:', refreshError.message);
+        console.error('OAuth refresh failed, requesting new token');
         this.oauthRefreshToken = null;
       }
     }
@@ -204,12 +367,12 @@ export class ServiceNowClient {
     const params = {
       grant_type: grantType,
       client_id: this.oauthConfig.clientId,
-      client_secret: this.oauthConfig.clientSecret
+      client_secret: clientSecret
     };
 
     if (grantType === 'password') {
       params.username = this.username;
-      params.password = this.password;
+      params.password = await this._resolveCredential('password', generation);
     }
 
     if (this.oauthConfig.scope) {
@@ -217,14 +380,18 @@ export class ServiceNowClient {
     }
 
     try {
+      this._assertCurrentGeneration(generation);
       const response = await axios.post(tokenUrl, new URLSearchParams(params).toString(), {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
 
+      this._assertCurrentGeneration(generation);
       return this._handleTokenResponse(response.data);
     } catch (error) {
-      const detail = error.response?.data?.error_description || error.message;
-      throw new Error(`OAuth ${grantType} token request failed: ${detail}`);
+      if (error?.code === 'INSTANCE_CHANGED') {
+        throw error;
+      }
+      throw new Error(`OAuth ${grantType} token request failed`);
     }
   }
 
@@ -273,25 +440,30 @@ export class ServiceNowClient {
         // trigger a browser prompt — surface it so the caller can retry.
         const status = refreshError.response?.status;
         if (status !== 400 && status !== 401) {
-          throw refreshError;
+          throw safeAuthError(refreshError, this);
         }
         // FAIL LOUD, but never fall back to password: re-prompt sign-in.
-        console.error('OAuth refresh token rejected; re-authenticating via browser sign-in:', refreshError.message);
+        console.error('OAuth refresh token rejected; re-authenticating via browser sign-in');
         this.oauthRefreshToken = null;
         await this._tokenStore.clearRefreshToken(account);
       }
     }
 
     // Interactive authorization_code + PKCE + loopback sign-in.
-    const data = await this._performAuthCodeFlow({
-      authorizeUrl,
-      tokenUrl,
-      clientId: this.oauthConfig.clientId,
-      clientSecret: this.oauthConfig.clientSecret,
-      scope: this.oauthConfig.scope,
-      redirectPort: this.oauthConfig.redirectPort,
-      callbackPath: this.oauthConfig.callbackPath
-    });
+    let data;
+    try {
+      data = await this._performAuthCodeFlow({
+        authorizeUrl,
+        tokenUrl,
+        clientId: this.oauthConfig.clientId,
+        clientSecret: this.oauthConfig.clientSecret,
+        scope: this.oauthConfig.scope,
+        redirectPort: this.oauthConfig.redirectPort,
+        callbackPath: this.oauthConfig.callbackPath
+      });
+    } catch (error) {
+      throw safeAuthError(error, this);
+    }
     return this._acceptAuthCodeTokens(data, account);
   }
 
@@ -340,11 +512,18 @@ export class ServiceNowClient {
    * @returns {Promise<string>} Authorization header value
    */
   async getAuthHeader() {
+    const generation = this._instanceGeneration;
     if (this.authType === 'oauth') {
       const token = await this._getOAuthToken();
+      this._assertCurrentGeneration(generation);
       return `Bearer ${token}`;
     }
-    return `Basic ${this.auth}`;
+    if (hasLegacySecret(this.password)) {
+      return `Basic ${this.auth}`;
+    }
+    const password = await this._resolveCredential('password', generation);
+    this._assertCurrentGeneration(generation);
+    return `Basic ${Buffer.from(`${this.username}:${password}`).toString('base64')}`;
   }
 
   /**

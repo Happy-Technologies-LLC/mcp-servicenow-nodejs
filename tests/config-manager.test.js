@@ -43,6 +43,26 @@ describe('instanceToClientOptions()', () => {
   it('defaults authType to basic when the instance does not set it', () => {
     expect(instanceToClientOptions({}).authType).toBe('basic');
   });
+  it('propagates credential references and injected credential stores while retaining legacy secrets', () => {
+    const credentialStore = { getSecret: jest.fn() };
+    const instance = {
+      authType: 'oauth',
+      clientId: 'cid',
+      clientSecret: 'legacy-client-secret',
+      password: 'legacy-password',
+      credentialRef: {
+        password: 'keychain:instance/dev/password',
+        clientSecret: 'keychain:instance/dev/client-secret'
+      }
+    };
+
+    expect(instanceToClientOptions(instance, { credentialStore })).toEqual(expect.objectContaining({
+      clientSecret: 'legacy-client-secret',
+      password: 'legacy-password',
+      credentialRef: instance.credentialRef,
+      credentialStore
+    }));
+  });
 });
 
 describe('ConfigManager.validateInstance()', () => {

@@ -13,13 +13,17 @@ import { InstanceRegistry, InstanceRegistryError } from './instance-registry.js'
  * instance-switch) forwards the same auth fields — including the per-user
  * authorization_code loopback config.
  * @param {object} instance
+ * @param {object} options
  * @returns {object} ServiceNowClient options
  */
-export function instanceToClientOptions(instance) {
+export function instanceToClientOptions(instance, options = {}) {
   return {
     authType: instance.authType || 'basic',
     clientId: instance.clientId,
     clientSecret: instance.clientSecret,
+    password: instance.password,
+    credentialRef: instance.credentialRef,
+    credentialStore: options.credentialStore,
     grantType: instance.grantType,
     scope: instance.scope,
     authorizeUrl: instance.authorizeUrl,

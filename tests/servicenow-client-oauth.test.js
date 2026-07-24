@@ -7,7 +7,8 @@
  * grant (that would re-introduce shared-principal attribution). The auth-code
  * flow and the refresh HTTP POST are injected so the path is testable offline.
  */
-
+import axios from 'axios';
+import { jest } from '@jest/globals';
 import { userInfo } from 'node:os';
 import { ServiceNowClient } from '../src/servicenow-client.js';
 import { InMemoryTokenStore } from '../src/token-store.js';
@@ -23,6 +24,25 @@ function makeClient({ store, flow, postToken } = {}) {
     tokenStore: store,
     performAuthCodeFlow: flow,
     postToken
+  });
+}
+
+function makeGrantClient({
+  username = null,
+  password = null,
+  clientSecret,
+  credentialRef,
+  credentialStore,
+  grantType = 'client_credentials'
+} = {}) {
+  return new ServiceNowClient('https://ex.service-now.com', username, password, {
+    authType: 'oauth',
+    grantType,
+    clientId: 'cid',
+    clientSecret,
+    credentialRef,
+    credentialStore,
+    scope: 'useraccount'
   });
 }
 
@@ -175,5 +195,118 @@ describe('ServiceNowClient authorization_code grant', () => {
 
     expect(setCalls).toBe(1); // changed value → exactly one write
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-rotated');
+  });
+});
+
+
+describe('ServiceNowClient OAuth registered credentials', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('resolves a client-credentials secret once and deduplicates simultaneous token/auth requests', async () => {
+    let releaseSecret;
+    const secretPending = new Promise(resolve => { releaseSecret = resolve; });
+    const credentialStore = {
+      getSecret: jest.fn(() => secretPending)
+    };
+    const tokenPost = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: { access_token: 'cc-token', expires_in: 1800 }
+    });
+    const client = makeGrantClient({
+      credentialRef: 'keychain:instance/prod/client-secret',
+      credentialStore
+    });
+
+    const token = client._getOAuthToken();
+    const header = client.getAuthHeader();
+    releaseSecret('client-secret-fixture');
+
+    await expect(Promise.all([token, header])).resolves.toEqual([
+      'cc-token',
+      'Bearer cc-token'
+    ]);
+    expect(credentialStore.getSecret).toHaveBeenCalledTimes(1);
+    expect(tokenPost).toHaveBeenCalledTimes(1);
+    const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
+    expect(params).toMatchObject({
+      grant_type: 'client_credentials',
+      client_id: 'cid',
+      client_secret: 'client-secret-fixture'
+    });
+  });
+
+  test('resolves password-grant password and client secret references before one token request', async () => {
+    const values = new Map([
+      ['keychain:instance/dev/password', 'password-fixture'],
+      ['keychain:instance/dev/client-secret', 'client-secret-fixture']
+    ]);
+    const credentialStore = {
+      getSecret: jest.fn(async ref => values.get(ref))
+    };
+    const tokenPost = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: { access_token: 'password-token', expires_in: 1800 }
+    });
+    const client = makeGrantClient({
+      username: 'dev-user',
+      credentialRef: {
+        password: 'keychain:instance/dev/password',
+        clientSecret: 'keychain:instance/dev/client-secret'
+      },
+      credentialStore,
+      grantType: 'password'
+    });
+
+    const [token, header] = await Promise.all([
+      client._getOAuthToken(),
+      client.getAuthHeader()
+    ]);
+
+    expect(token).toBe('password-token');
+    expect(header).toBe('Bearer password-token');
+    expect(credentialStore.getSecret).toHaveBeenCalledTimes(2);
+    expect(credentialStore.getSecret).toHaveBeenCalledWith('keychain:instance/dev/password');
+    expect(credentialStore.getSecret).toHaveBeenCalledWith('keychain:instance/dev/client-secret');
+    expect(tokenPost).toHaveBeenCalledTimes(1);
+    const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
+    expect(params).toMatchObject({
+      grant_type: 'password',
+      client_id: 'cid',
+      client_secret: 'client-secret-fixture',
+      username: 'dev-user',
+      password: 'password-fixture'
+    });
+  });
+
+  test('does not look up a credential for a public authorization-code client', async () => {
+    const credentialStore = { getSecret: jest.fn() };
+    const client = new ServiceNowClient('https://ex.service-now.com', null, null, {
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'public-client',
+      credentialStore,
+      tokenStore: new InMemoryTokenStore(),
+      performAuthCodeFlow: async () => ({ access_token: 'public-token', expires_in: 1800 })
+    });
+
+    await expect(client.getAuthHeader()).resolves.toBe('Bearer public-token');
+    expect(credentialStore.getSecret).not.toHaveBeenCalled();
+  });
+
+  test('preserves legacy OAuth secrets without consulting the credential store', async () => {
+    const credentialStore = { getSecret: jest.fn() };
+    const tokenPost = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: { access_token: 'legacy-token', expires_in: 1800 }
+    });
+    const client = makeGrantClient({
+      clientSecret: 'legacy-client-secret',
+      credentialRef: 'keychain:instance/prod/client-secret',
+      credentialStore
+    });
+
+    await expect(client.getAuthHeader()).resolves.toBe('Bearer legacy-token');
+    expect(credentialStore.getSecret).not.toHaveBeenCalled();
+    const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
+    expect(params.client_secret).toBe('legacy-client-secret');
   });
 });
