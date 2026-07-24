@@ -291,7 +291,7 @@ describe('InstanceRegistry validation and defaults', () => {
 });
 
 describe('InstanceRegistry persistence', () => {
-  test('reads legacy plaintext JSON but refuses every mutation', async () => {
+  test('redacts legacy plaintext credentials from public views while retaining raw client access', async () => {
     const { file } = tempPaths();
     writeJson(file, {
       instances: [{
@@ -299,18 +299,40 @@ describe('InstanceRegistry persistence', () => {
         url: 'https://legacy.service-now.com',
         username: 'legacy-user',
         password: 'legacy-password-fixture',
+        clientSecret: 'legacy-client-secret-fixture',
         default: true
       }]
     });
-    const before = fs.readFileSync(file, 'utf8');
     const registry = new InstanceRegistry({ readPath: file, writePath: file });
 
-    expect(registry.get('legacy').password).toBe('legacy-password-fixture');
+    const publicViews = [
+      registry.list()[0],
+      registry.get('legacy'),
+      registry.getDefault()
+    ];
+    for (const view of publicViews) {
+      expect(view).not.toHaveProperty('password');
+      expect(view).not.toHaveProperty('clientSecret');
+      expect(JSON.stringify(view)).not.toContain('legacy-password-fixture');
+      expect(JSON.stringify(view)).not.toContain('legacy-client-secret-fixture');
+    }
+    expect(registry.listForClient()[0]).toEqual(expect.objectContaining({
+      password: 'legacy-password-fixture',
+      clientSecret: 'legacy-client-secret-fixture'
+    }));
+    expect(registry.getForClient('legacy')).toEqual(expect.objectContaining({
+      password: 'legacy-password-fixture',
+      clientSecret: 'legacy-client-secret-fixture'
+    }));
+    expect(registry.getDefaultForClient()).toEqual(expect.objectContaining({
+      password: 'legacy-password-fixture',
+      clientSecret: 'legacy-client-secret-fixture'
+    }));
+
     await expect(registry.update('legacy', { description: 'still legacy' }))
       .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
     await expect(registry.remove('legacy'))
       .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
-    expect(fs.readFileSync(file, 'utf8')).toBe(before);
   });
   test('uses one stable reload error contract for invalid persisted documents', () => {
     const { file } = tempPaths();

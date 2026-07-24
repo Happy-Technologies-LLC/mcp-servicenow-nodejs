@@ -341,11 +341,19 @@ export class InstanceRegistry {
     }
   }
 
-  list() {
+  _redactInstance(instance) {
+    if (instance === undefined) return undefined;
+    const safeInstance = clone(instance);
+    delete safeInstance.password;
+    delete safeInstance.clientSecret;
+    return safeInstance;
+  }
+
+  listForClient() {
     return clone(this.load().instances);
   }
 
-  get(name) {
+  getForClient(name) {
     const instance = this.load().instances.find(candidate => candidate.name === name);
     if (!instance) {
       throw new InstanceRegistryError('INSTANCE_NOT_FOUND', `Instance '${name}' not found`, { name });
@@ -353,9 +361,26 @@ export class InstanceRegistry {
     return clone(instance);
   }
 
-  getDefault() {
+  getDefaultForClient() {
     const instances = this.load().instances;
     return clone(instances.find(instance => instance.default === true) || instances[0]);
+  }
+
+  list() {
+    return this.load().instances.map(instance => this._redactInstance(instance));
+  }
+
+  get(name) {
+    const instance = this.load().instances.find(candidate => candidate.name === name);
+    if (!instance) {
+      throw new InstanceRegistryError('INSTANCE_NOT_FOUND', `Instance '${name}' not found`, { name });
+    }
+    return this._redactInstance(instance);
+  }
+
+  getDefault() {
+    const instances = this.load().instances;
+    return this._redactInstance(instances.find(instance => instance.default === true) || instances[0]);
   }
 
   validate(instance) {

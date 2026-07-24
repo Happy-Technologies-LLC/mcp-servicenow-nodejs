@@ -244,36 +244,48 @@ describe('ConfigManager.loadFromEnv()', () => {
 });
 
 describe('ConfigManager registry facade', () => {
-  test('delegates synchronous reads, validation, and reload to the injected registry', () => {
-    const instances = [{ name: 'dev', url: 'https://dev.service-now.com', default: true }];
+  test('delegates public reads and raw client reads to the injected registry', () => {
+    const publicInstances = [{ name: 'dev', url: 'https://dev.service-now.com', default: true }];
+    const rawInstances = [{
+      ...publicInstances[0],
+      password: 'legacy-password-fixture',
+      clientSecret: 'legacy-client-secret-fixture'
+    }];
     const registry = {
-      load: jest.fn(() => ({ version: 1, instances })),
-      reload: jest.fn(() => ({ version: 1, instances })),
-      get: jest.fn(() => instances[0]),
-      getDefault: jest.fn(() => instances[0]),
-      list: jest.fn(() => instances),
+      load: jest.fn(() => ({ version: 1, instances: publicInstances })),
+      reload: jest.fn(() => ({ version: 1, instances: publicInstances })),
+      get: jest.fn(() => publicInstances[0]),
+      getDefault: jest.fn(() => publicInstances[0]),
+      list: jest.fn(() => publicInstances),
+      getForClient: jest.fn(() => rawInstances[0]),
+      getDefaultForClient: jest.fn(() => rawInstances[0]),
+      listForClient: jest.fn(() => rawInstances),
       validate: jest.fn(() => true),
       hasFile: jest.fn(() => true)
     };
     const cm = new ConfigManager({ registry });
 
-    expect(cm.loadInstances()).toBe(instances);
-    expect(cm.getInstance('dev')).toBe(instances[0]);
-    expect(cm.getDefaultInstance()).toBe(instances[0]);
-    expect(cm.listInstances()).toEqual([{
+    expect(cm.loadInstances()).toBe(rawInstances);
+    expect(cm.getInstance('dev')).toBe(rawInstances[0]);
+    expect(cm.getDefaultInstance()).toBe(rawInstances[0]);
+    const listedInstances = cm.listInstances();
+    expect(listedInstances).toEqual([{
       name: 'dev',
       url: 'https://dev.service-now.com',
       default: true,
       description: ''
     }]);
-    expect(cm.validateInstance(instances[0])).toBe(true);
-    expect(cm.reload()).toBe(instances);
+    expect(JSON.stringify(listedInstances)).not.toContain('legacy-password-fixture');
+    expect(JSON.stringify(listedInstances)).not.toContain('legacy-client-secret-fixture');
+    expect(cm.validateInstance(publicInstances[0])).toBe(true);
+    expect(cm.reload()).toBe(rawInstances);
     expect(registry.load).toHaveBeenCalledTimes(1);
     expect(registry.reload).toHaveBeenCalledTimes(1);
-    expect(registry.get).toHaveBeenCalledWith('dev');
-    expect(registry.getDefault).toHaveBeenCalledTimes(1);
+    expect(registry.getForClient).toHaveBeenCalledWith('dev');
+    expect(registry.getDefaultForClient).toHaveBeenCalledTimes(1);
     expect(registry.list).toHaveBeenCalledTimes(1);
-    expect(registry.validate).toHaveBeenCalledWith(instances[0]);
+    expect(registry.listForClient).toHaveBeenCalledTimes(2);
+    expect(registry.validate).toHaveBeenCalledWith(publicInstances[0]);
   });
 
   test('falls back to environment credentials only when the registry file is absent', () => {
@@ -331,12 +343,19 @@ describe('ConfigManager registry facade', () => {
           url: 'https://configured.service-now.com',
           username: 'configured-user',
           password: 'configured-password-fixture',
+          clientSecret: 'configured-client-secret-fixture',
           default: true
         }]
       }));
       process.env.HAPPY_CONFIG_PATH = file;
 
-      expect(cm.getDefaultInstance().name).toBe('configured');
+      const loaded = cm.getDefaultInstance();
+      expect(loaded.name).toBe('configured');
+      expect(loaded.password).toBe('configured-password-fixture');
+      expect(loaded.clientSecret).toBe('configured-client-secret-fixture');
+      const listed = JSON.stringify(cm.listInstances());
+      expect(listed).not.toContain('configured-password-fixture');
+      expect(listed).not.toContain('configured-client-secret-fixture');
 
       fs.writeFileSync(file, JSON.stringify({
         version: 1,
