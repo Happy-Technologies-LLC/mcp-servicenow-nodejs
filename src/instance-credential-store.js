@@ -24,8 +24,8 @@ export class CredentialNotFoundError extends Error {
 }
 
 export class KeychainUnavailableError extends Error {
-  constructor() {
-    super('Keychain backend unavailable');
+  constructor(cause) {
+    super('Keychain backend unavailable', cause === undefined ? undefined : { cause });
     this.name = 'KeychainUnavailableError';
     this.code = 'KEYCHAIN_UNAVAILABLE';
   }
@@ -85,32 +85,57 @@ export class InstanceCredentialStore {
     if (this._createEntry) {
       return this._createEntry(this.service, account);
     }
-    if (!this._keyringPromise) {
-      this._keyringPromise = import('@napi-rs/keyring');
+    try {
+      if (!this._keyringPromise) {
+        this._keyringPromise = import('@napi-rs/keyring');
+      }
+      const keyringModule = await this._keyringPromise;
+      const Entry = keyringModule.Entry;
+      return new Entry(this.service, account);
+    } catch (cause) {
+      throw new KeychainUnavailableError(cause);
     }
-    const keyringModule = await this._keyringPromise;
-    const Entry = keyringModule.Entry;
-    return new Entry(this.service, account);
   }
 
   async _verifyBackendHealth() {
     const account = `keychain:health-check/${randomUUID()}`;
     let probeValue = `health-check-${randomUUID()}`;
+    let entry;
+    let primaryError = null;
+    let cleanupError = null;
+    let setMayHaveSucceeded = false;
+
     try {
-      const entry = await this._entry(account);
+      entry = await this._entry(account);
+      setMayHaveSucceeded = true;
       await entry.setPassword(probeValue);
       const observed = await entry.getPassword();
-      if (observed === null || observed === undefined || observed !== probeValue) {
+      if (typeof observed !== 'string' || observed !== probeValue) {
         throw new Error('health probe read mismatch');
       }
-      const deleted = await entry.deletePassword();
-      if (deleted !== true) {
-        throw new Error('health probe deletion failed');
-      }
-    } catch {
-      throw new KeychainUnavailableError();
+    } catch (error) {
+      primaryError = error instanceof KeychainUnavailableError
+        ? error
+        : new KeychainUnavailableError();
     } finally {
+      if (entry && setMayHaveSucceeded) {
+        try {
+          const deleted = await entry.deletePassword();
+          if (deleted !== true) {
+            cleanupError = new Error('health probe cleanup failed');
+          }
+        } catch {
+          cleanupError = new Error('health probe cleanup failed');
+        }
+      }
       probeValue = null;
+    }
+
+    if (primaryError) {
+      throw primaryError;
+    }
+    if (cleanupError) {
+      throw new KeychainUnavailableError();
     }
   }
 
@@ -118,7 +143,7 @@ export class InstanceCredentialStore {
     const validatedRef = validateCredentialRef(ref);
     const entry = await this._entry(validatedRef);
     const value = await entry.getPassword();
-    if (value === null || value === undefined) {
+    if (typeof value !== 'string') {
       await this._verifyBackendHealth();
       throw new CredentialNotFoundError(validatedRef);
     }
@@ -138,7 +163,7 @@ export class InstanceCredentialStore {
     const validatedRef = validateCredentialRef(ref);
     const entry = await this._entry(validatedRef);
     const value = await entry.getPassword();
-    if (value === null || value === undefined) {
+    if (typeof value !== 'string') {
       await this._verifyBackendHealth();
       return false;
     }
@@ -148,14 +173,14 @@ export class InstanceCredentialStore {
   async deleteSecret(ref) {
     const validatedRef = validateCredentialRef(ref);
     const entry = await this._entry(validatedRef);
-    let targetValue = await entry.getPassword();
-    if (targetValue === null || targetValue === undefined) {
-      targetValue = null;
-      await this._verifyBackendHealth();
-      return { deleted: false };
-    }
-
+    let targetValue;
     try {
+      targetValue = await entry.getPassword();
+      if (typeof targetValue !== 'string') {
+        await this._verifyBackendHealth();
+        return { deleted: false };
+      }
+
       const deleted = await entry.deletePassword();
       if (deleted === false) {
         throw new KeychainOperationError();

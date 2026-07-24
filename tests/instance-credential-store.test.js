@@ -17,6 +17,33 @@ function createHarness({ entryOverrides = {}, createEntry = null } = {}) {
   }));
   return { values, createEntry: entryFactory, store: new InstanceCredentialStore({ createEntry: entryFactory }) };
 }
+function createMapProbeHarness({ targetValue = null, healthRead = 'stored', healthDelete = 'delete' } = {}) {
+  const values = new Map();
+  const calls = { set: [], get: [], delete: [] };
+  const createEntry = jest.fn(async (_service, account) => ({
+    getPassword: async () => {
+      calls.get.push(account);
+      if (account === 'keychain:instance/dev/password') return targetValue;
+      if (healthRead instanceof Error) throw healthRead;
+      if (healthRead !== 'stored') return healthRead;
+      return values.has(account) ? values.get(account) : null;
+    },
+    setPassword: async (value) => {
+      calls.set.push({ account, value });
+      values.set(account, value);
+    },
+    deletePassword: async () => {
+      calls.delete.push(account);
+      const deleted = values.delete(account);
+      if (healthDelete instanceof Error) {
+        throw healthDelete;
+      }
+      if (healthDelete === 'false') return false;
+      return deleted;
+    }
+  }));
+  return { values, calls, createEntry, store: new InstanceCredentialStore({ createEntry }) };
+}
 
 describe('credentialRefFor', () => {
   test('uses deterministic credential references', () => {
@@ -112,6 +139,100 @@ describe('InstanceCredentialStore', () => {
     await expect(store.hasSecret(ref)).resolves.toBe(true);
   });
 
+test.each([null, undefined, false, 42, {}])(
+  'treats a non-string target value %j as anomalous and uses the missing contract',
+  async (targetValue) => {
+    const ref = credentialRefFor('dev', 'password');
+    const getHarness = createMapProbeHarness({ targetValue });
+    await expect(getHarness.store.getSecret(ref)).rejects.toMatchObject({
+      code: 'CREDENTIAL_NOT_FOUND',
+      ref
+    });
+
+    const hasHarness = createMapProbeHarness({ targetValue });
+    await expect(hasHarness.store.hasSecret(ref)).resolves.toBe(false);
+
+    const deleteHarness = createMapProbeHarness({ targetValue });
+    await expect(deleteHarness.store.deleteSecret(ref)).resolves.toEqual({ deleted: false });
+  }
+);
+
+test.each([
+  ['null', null],
+  ['false', false],
+  ['mismatch', 'different-probe-value'],
+  ['get exception', new Error('probe read failed')]
+])('cleans up a health probe after %s', async (_label, healthRead) => {
+  const { values, calls, store } = createMapProbeHarness({ healthRead });
+  const ref = credentialRefFor('dev', 'password');
+  await expect(store.hasSecret(ref)).rejects.toBeInstanceOf(KeychainUnavailableError);
+
+  const probeAccount = calls.set[0].account;
+  expect(calls.delete).toContain(probeAccount);
+  expect(values.has(probeAccount)).toBe(false);
+});
+
+test('reports unavailable when health probe cleanup returns false', async () => {
+  const { values, calls, store } = createMapProbeHarness({ healthDelete: 'false' });
+  const ref = credentialRefFor('dev', 'password');
+  await expect(store.hasSecret(ref)).rejects.toBeInstanceOf(KeychainUnavailableError);
+
+  const probeAccount = calls.set[0].account;
+  expect(calls.delete).toContain(probeAccount);
+  expect(values.has(probeAccount)).toBe(false);
+});
+
+test('reports unavailable when health probe cleanup throws', async () => {
+  const cleanupError = new Error('probe cleanup failed');
+  const { values, calls, store } = createMapProbeHarness({ healthDelete: cleanupError });
+  const ref = credentialRefFor('dev', 'password');
+  await expect(store.hasSecret(ref)).rejects.toBeInstanceOf(KeychainUnavailableError);
+
+  const probeAccount = calls.set[0].account;
+  expect(calls.delete).toContain(probeAccount);
+  expect(values.has(probeAccount)).toBe(false);
+});
+
+test('keeps the original unavailable error when probe cleanup also fails', async () => {
+  const originalError = new KeychainUnavailableError();
+  const cleanupError = new Error('probe cleanup failed');
+  const { values, calls, store } = createMapProbeHarness({
+    healthRead: originalError,
+    healthDelete: cleanupError
+  });
+  const ref = credentialRefFor('dev', 'password');
+
+  await expect(store.hasSecret(ref)).rejects.toBe(originalError);
+  const probeAccount = calls.set[0].account;
+  expect(calls.delete).toContain(probeAccount);
+  expect(values.has(probeAccount)).toBe(false);
+});
+
+test('cleans up when setting a health probe throws after storing it', async () => {
+  const values = new Map();
+  const calls = { set: [], delete: [] };
+  const createEntry = jest.fn(async (_service, account) => ({
+    getPassword: async () => null,
+    setPassword: async (value) => {
+      calls.set.push(account);
+      values.set(account, value);
+      throw new Error('probe write failed');
+    },
+    deletePassword: async () => {
+      calls.delete.push(account);
+      values.delete(account);
+      return true;
+    }
+  }));
+  const store = new InstanceCredentialStore({ createEntry });
+
+  await expect(store.hasSecret(credentialRefFor('dev', 'password')))
+    .rejects.toBeInstanceOf(KeychainUnavailableError);
+  const probeAccount = calls.set[0];
+  expect(calls.delete).toContain(probeAccount);
+  expect(values.has(probeAccount)).toBe(false);
+});
+
   test('deletes entries and returns a safe status', async () => {
     const { store } = createHarness();
     const ref = credentialRefFor('dev', 'password');
@@ -205,6 +326,21 @@ describe('InstanceCredentialStore', () => {
       expect(error.code).toBe('KEYCHAIN_OPERATION_FAILED');
       expect(error.message).not.toContain(secret);
       expect(JSON.stringify(error)).not.toContain(secret);
+    }
+  });
+  test('wraps native entry construction failures with a safe typed error', async () => {
+    const store = new InstanceCredentialStore({ service: null });
+
+    try {
+      await store.getSecret(credentialRefFor('dev', 'password'));
+      throw new Error('expected getSecret to reject');
+    } catch (error) {
+      expect(error).toBeInstanceOf(KeychainUnavailableError);
+      expect(error.code).toBe('KEYCHAIN_UNAVAILABLE');
+      expect(error.message).toBe('Keychain backend unavailable');
+      expect(error.message).not.toContain('Null');
+      expect(error.cause).toBeDefined();
+      expect(error.cause.message).toContain('Null');
     }
   });
 });
