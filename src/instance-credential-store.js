@@ -60,17 +60,23 @@ export class InstanceCredentialStore {
   constructor({ service = SERVICE_NAME, createEntry } = {}) {
     this.service = service;
     this._createEntry = createEntry || null;
-    this._Entry = null;
+    this._keytarPromise = null;
   }
 
   async _entry(ref) {
     if (this._createEntry) {
       return this._createEntry(this.service, ref);
     }
-    if (!this._Entry) {
-      ({ Entry: this._Entry } = await import('@napi-rs/keyring'));
+    if (!this._keytarPromise) {
+      this._keytarPromise = import('@postman/node-keytar');
     }
-    return new this._Entry(this.service, ref);
+    const keytarModule = await this._keytarPromise;
+    const keytar = keytarModule.default || keytarModule;
+    return {
+      getPassword: () => keytar.getPassword(this.service, ref),
+      setPassword: (value) => keytar.setPassword(this.service, ref, value),
+      deletePassword: () => keytar.deletePassword(this.service, ref)
+    };
   }
 
   async getSecret(ref) {

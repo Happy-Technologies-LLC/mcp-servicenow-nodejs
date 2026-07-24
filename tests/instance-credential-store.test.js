@@ -7,10 +7,10 @@ import {
 
 function createHarness({ entryOverrides = {}, createEntry = null } = {}) {
   const values = new Map();
-  const entryFactory = createEntry || jest.fn((_service, account) => ({
-    getPassword: () => values.get(account) ?? null,
-    setPassword: (value) => values.set(account, value),
-    deletePassword: () => values.delete(account),
+  const entryFactory = createEntry || jest.fn(async (_service, account) => ({
+    getPassword: async () => values.get(account) ?? null,
+    setPassword: async (value) => values.set(account, value),
+    deletePassword: async () => values.delete(account),
     ...entryOverrides
   }));
   return { values, createEntry: entryFactory, store: new InstanceCredentialStore({ createEntry: entryFactory }) };
@@ -122,7 +122,7 @@ describe('InstanceCredentialStore', () => {
   test.each(['getPassword', 'setPassword', 'deletePassword'])('propagates keychain %s failures', async (method) => {
     const failure = new Error('keychain locked');
     const { store } = createHarness({
-      entryOverrides: { [method]: () => { throw failure; } }
+      entryOverrides: { [method]: async () => { throw failure; } }
     });
     const ref = credentialRefFor('dev', 'password');
     const operation = method === 'getPassword'
