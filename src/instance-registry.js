@@ -245,23 +245,42 @@ export class InstanceRegistry {
   constructor(options = {}) {
     const suppliedRegistry = options && typeof options.load === 'function' ? options : null;
     const config = suppliedRegistry ? {} : options;
-    const paths = config.readPath && config.writePath
-      ? { readPath: config.readPath, writePath: config.writePath, source: 'explicit' }
-      : resolveConfigPaths({
-        env: config.env || process.env,
-        homeDir: config.homeDir || os.homedir(),
-        legacyPath: config.legacyPath || DEFAULT_LEGACY_PATH,
-        existsSync: config.existsSync || fs.existsSync
-      });
+    const hasExplicitPaths = config.readPath && config.writePath;
 
-    this.readPath = path.resolve(paths.readPath);
-    this.writePath = path.resolve(paths.writePath);
-    this.source = paths.source;
+    this._pathOptions = hasExplicitPaths ? null : {
+      env: config.env,
+      homeDir: config.homeDir || os.homedir(),
+      legacyPath: config.legacyPath || DEFAULT_LEGACY_PATH,
+      existsSync: config.existsSync || fs.existsSync
+    };
+    this._pathsResolved = false;
     this.fs = config.fs || fs;
     this._document = null;
     this._loaded = false;
     this._legacyPlaintext = false;
     this._mutationQueue = Promise.resolve();
+
+    if (hasExplicitPaths) {
+      this.readPath = path.resolve(config.readPath);
+      this.writePath = path.resolve(config.writePath);
+      this.source = 'explicit';
+      this._pathsResolved = true;
+    }
+  }
+
+  _resolvePaths() {
+    if (this._pathsResolved) return;
+
+    const paths = resolveConfigPaths({
+      env: this._pathOptions.env || process.env,
+      homeDir: this._pathOptions.homeDir,
+      legacyPath: this._pathOptions.legacyPath,
+      existsSync: this._pathOptions.existsSync
+    });
+    this.readPath = path.resolve(paths.readPath);
+    this.writePath = path.resolve(paths.writePath);
+    this.source = paths.source;
+    this._pathsResolved = true;
   }
 
   get document() {
@@ -269,10 +288,12 @@ export class InstanceRegistry {
   }
 
   hasFile() {
+    this._resolvePaths();
     return this.fs.existsSync(this.readPath);
   }
 
   load() {
+    this._resolvePaths();
     if (this._loaded) return this._document;
     let document;
     try {

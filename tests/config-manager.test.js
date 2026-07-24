@@ -316,6 +316,48 @@ describe('ConfigManager registry facade', () => {
     expect(cm.getDefaultInstance().name).toBe('configured');
     fs.rmSync(dir, { recursive: true, force: true });
   });
+  test('resolves HAPPY_CONFIG_PATH after ConfigManager construction', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-env-path-'));
+    const file = path.join(dir, 'instances.json');
+    const originalConfigPath = process.env.HAPPY_CONFIG_PATH;
+
+    try {
+      delete process.env.HAPPY_CONFIG_PATH;
+      const cm = new ConfigManager();
+      fs.writeFileSync(file, JSON.stringify({
+        version: 1,
+        instances: [{
+          name: 'configured',
+          url: 'https://configured.service-now.com',
+          username: 'configured-user',
+          password: 'configured-password-fixture',
+          default: true
+        }]
+      }));
+      process.env.HAPPY_CONFIG_PATH = file;
+
+      expect(cm.getDefaultInstance().name).toBe('configured');
+
+      fs.writeFileSync(file, JSON.stringify({
+        version: 1,
+        instances: [{
+          name: 'reloaded',
+          url: 'https://reloaded.service-now.com',
+          username: 'reloaded-user',
+          password: 'reloaded-password-fixture',
+          default: true
+        }]
+      }));
+      expect(cm.reload()[0].name).toBe('reloaded');
+    } finally {
+      if (originalConfigPath === undefined) {
+        delete process.env.HAPPY_CONFIG_PATH;
+      } else {
+        process.env.HAPPY_CONFIG_PATH = originalConfigPath;
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test('restores the environment fallback cache when a malformed registry appears', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-reload-'));
     const file = path.join(dir, 'instances.json');
