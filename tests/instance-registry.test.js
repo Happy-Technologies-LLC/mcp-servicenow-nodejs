@@ -325,6 +325,99 @@ describe('InstanceRegistry validation and defaults', () => {
         .toThrow(expect.objectContaining({ code: 'INVALID_INSTANCE_CONFIG' }));
     }
   });
+  test('rejects malformed legacy instances with a stable reload error', () => {
+    const { file } = tempPaths();
+    const cases = [
+      {
+        name: 'missing URL',
+        instances: [{
+          name: 'missing-url',
+          authType: 'basic',
+          username: 'user',
+          password: 'secret'
+        }]
+      },
+      {
+        name: 'wrong secret type',
+        instances: [{
+          name: 'wrong-secret-type',
+          url: 'https://wrong-secret-type.service-now.com',
+          authType: 'basic',
+          username: 'user',
+          password: 42
+        }]
+      },
+      {
+        name: 'wrong structural type',
+        instances: [{
+          name: 'wrong-structural-type',
+          url: 'https://wrong-structural-type.service-now.com',
+          authType: 'oauth',
+          grantType: 'client_credentials',
+          clientId: 42,
+          clientSecret: 'secret'
+        }]
+      },
+      {
+        name: 'duplicate names',
+        instances: [
+          {
+            name: 'duplicate',
+            url: 'https://duplicate.service-now.com',
+            authType: 'basic',
+            username: 'user',
+            password: 'secret'
+          },
+          {
+            name: 'duplicate',
+            url: 'https://duplicate.service-now.com',
+            authType: 'basic',
+            username: 'user',
+            password: 'secret'
+          }
+        ]
+      },
+      {
+        name: 'multiple defaults',
+        instances: [
+          {
+            name: 'default-one',
+            url: 'https://default-one.service-now.com',
+            authType: 'basic',
+            username: 'user',
+            password: 'secret',
+            default: true
+          },
+          {
+            name: 'default-two',
+            url: 'https://default-two.service-now.com',
+            authType: 'basic',
+            username: 'user',
+            password: 'secret',
+            default: true
+          }
+        ]
+      },
+      {
+        name: 'unsafe HTTP',
+        instances: [{
+          name: 'unsafe-http',
+          url: 'http://unsafe-http.service-now.com',
+          authType: 'basic',
+          username: 'user',
+          password: 'secret'
+        }]
+      }
+    ];
+
+    for (const document of cases) {
+      writeJson(file, document);
+      const registry = new InstanceRegistry({ readPath: file, writePath: file });
+      expect(() => registry.load()).toThrow(expect.objectContaining({
+        code: 'REGISTRY_RELOAD_FAILED'
+      }));
+    }
+  });
 });
 
 describe('InstanceRegistry persistence', () => {
@@ -341,10 +434,6 @@ describe('InstanceRegistry persistence', () => {
         username: 'legacy-user',
         password: 'legacy-password-fixture',
         clientSecret: 'legacy-client-secret-fixture',
-        nested: {
-          password: 'nested-password-fixture',
-          clientSecret: 'nested-client-secret-fixture'
-        },
         credentialRef: {
           password: 'password/ref',
           clientSecret: 'secret/ref'
@@ -380,6 +469,48 @@ describe('InstanceRegistry persistence', () => {
     await expect(registry.update('legacy', { description: 'still legacy' }))
       .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
     await expect(registry.remove('legacy'))
+      .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
+  });
+
+  test('redacts common secret keys recursively without stripping tokenUrl', async () => {
+    const { file } = tempPaths();
+    const secrets = {
+      password: 'password-fixture',
+      clientSecret: 'client-secret-fixture',
+      githubToken: 'github-token-fixture',
+      accessToken: 'access-token-fixture',
+      refreshToken: 'refresh-token-fixture',
+      apiKey: 'api-key-fixture',
+      token: 'token-fixture'
+    };
+    writeJson(file, {
+      docs: {
+        githubToken: secrets.githubToken,
+        tokenUrl: 'https://docs.example.com/token'
+      },
+      metadata: {
+        nested: {
+          ...secrets,
+          tokenUrl: 'https://metadata.example.com/token'
+        }
+      },
+      instances: [{
+        ...publicInstance('tokenized', {
+          grantType: 'client_credentials',
+          token: secrets.token,
+          tokenUrl: 'https://tokenized.service-now.com/oauth_token.do',
+          credentialRef: 'token/ref'
+        })
+      }]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+
+    const publicView = registry.load();
+    expect(publicView.docs.tokenUrl).toBe('https://docs.example.com/token');
+    expect(publicView.metadata.nested.tokenUrl).toBe('https://metadata.example.com/token');
+    expect(publicView.instances[0].tokenUrl).toBe('https://tokenized.service-now.com/oauth_token.do');
+    expect(publicView.instances[0].credentialRef).toBe('token/ref');
+    await expect(registry.register(publicInstance('new')))
       .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
   });
 
@@ -490,6 +621,7 @@ describe('InstanceRegistry persistence', () => {
     expect(open).toHaveBeenCalledTimes(10);
     const tempFiles = fs.readdirSync(path.dirname(file))
       .filter(name => name.startsWith('.instances.json.') && name.endsWith('.tmp'));
+
     expect(tempFiles).toHaveLength(10);
     for (const tempFile of tempFiles) {
       expect(fs.readFileSync(path.join(path.dirname(file), tempFile), 'utf8')).toBe('foreign-temp');
@@ -536,6 +668,21 @@ describe('InstanceRegistry persistence', () => {
 
     expect(registry.list().map(instance => instance.name).sort()).toEqual(['one', 'three', 'two']);
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).instances).toHaveLength(3);
+  });
+
+  test('serializes registrations across registry objects sharing a write path', async () => {
+    const { file } = tempPaths();
+    const first = new InstanceRegistry({ readPath: file, writePath: file });
+    const second = new InstanceRegistry({ readPath: file, writePath: file });
+
+    await Promise.all([
+      first.register(publicInstance('first')),
+      second.register(publicInstance('second'))
+    ]);
+
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).instances
+      .map(instance => instance.name)
+      .sort()).toEqual(['first', 'second']);
   });
 
   test('writes a user registry without mutating a distinct legacy read path', async () => {

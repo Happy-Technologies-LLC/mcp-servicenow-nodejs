@@ -430,4 +430,39 @@ describe('ConfigManager registry facade', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('throws a typed REGISTRY_EMPTY error after removing the last persisted instance', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-empty-'));
+    const file = path.join(dir, 'instances.json');
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const cm = new ConfigManager({ registry });
+    const previousInstance = process.env.SERVICENOW_INSTANCE;
+
+    try {
+      delete process.env.SERVICENOW_INSTANCE;
+      await registry.register({
+        name: 'only',
+        url: 'https://only.service-now.com',
+        authType: 'oauth',
+        grantType: 'authorization_code',
+        clientId: 'only-client',
+        default: true
+      });
+      await registry.remove('only');
+
+      expect(() => cm.getDefaultInstance()).toThrow(expect.objectContaining({
+        code: 'REGISTRY_EMPTY'
+      }));
+      expect(() => cm.getInstanceOrDefault()).toThrow(expect.objectContaining({
+        code: 'REGISTRY_EMPTY'
+      }));
+    } finally {
+      if (previousInstance === undefined) {
+        delete process.env.SERVICENOW_INSTANCE;
+      } else {
+        process.env.SERVICENOW_INSTANCE = previousInstance;
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

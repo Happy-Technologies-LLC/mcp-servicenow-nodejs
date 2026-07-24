@@ -13,10 +13,27 @@ const ALLOWED_FIELDS = new Set([
   'credentialRef', 'scope', 'authorizeUrl', 'tokenUrl', 'redirectPort',
   'callbackPath', 'default', 'description'
 ]);
-const SECRET_FIELDS = new Set(['password', 'clientSecret']);
+const SECRET_FIELDS = new Set(['password', 'clientSecret', 'githubToken', 'accessToken', 'refreshToken', 'apiKey', 'token']);
 const GRANT_TYPES = new Set(['client_credentials', 'password', 'authorization_code']);
 const AUTH_TYPES = new Set(['basic', 'oauth']);
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+const mutationQueues = new Map();
+
+function enqueuePathMutation(writePath, operation) {
+  const previous = mutationQueues.get(writePath) || Promise.resolve();
+  const mutation = previous.catch(() => undefined).then(operation);
+  mutationQueues.set(writePath, mutation);
+  mutation.then(
+    () => {
+      if (mutationQueues.get(writePath) === mutation) mutationQueues.delete(writePath);
+    },
+    () => {
+      if (mutationQueues.get(writePath) === mutation) mutationQueues.delete(writePath);
+    }
+  );
+  return mutation;
+}
 
 function clone(value) {
   return value === undefined ? value : JSON.parse(JSON.stringify(value));
@@ -227,6 +244,7 @@ function validateDocument(document) {
   if (!Array.isArray(document.instances)) {
     throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry instances must be an array');
   }
+  const legacyPlaintext = hasSecretField(document);
   const seen = new Set();
   let defaultCount = 0;
   for (const instance of document.instances) {
@@ -241,9 +259,7 @@ function validateDocument(document) {
         throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry may contain at most one default instance', { field: 'default' });
       }
     }
-    if (!hasSecretField(instance)) {
-      validateNewInstance(instance);
-    }
+    validateNewInstance(instance, { allowSecrets: legacyPlaintext });
   }
   return document;
 }
@@ -274,7 +290,6 @@ export class InstanceRegistry {
     this._document = null;
     this._loaded = false;
     this._legacyPlaintext = false;
-    this._mutationQueue = Promise.resolve();
 
     if (hasExplicitPaths) {
       this.readPath = path.resolve(config.readPath);
@@ -308,19 +323,17 @@ export class InstanceRegistry {
     return this.fs.existsSync(this.readPath);
   }
 
-  load() {
-    this._resolvePaths();
-    if (this._loaded) return redactSecrets(this._document);
+  _readDocument(filePath, redact = true) {
     let document;
     try {
-      document = JSON.parse(this.fs.readFileSync(this.readPath, 'utf8'));
+      document = JSON.parse(this.fs.readFileSync(filePath, 'utf8'));
     } catch (error) {
       if (error.code === 'ENOENT') {
         document = { version: 1, instances: [] };
       } else if (error instanceof SyntaxError) {
-        throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Failed to parse instance registry JSON', { path: this.readPath });
+        throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Failed to parse instance registry JSON', { path: filePath });
       } else {
-        throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', `Failed to load instance registry: ${error.message}`, { path: this.readPath });
+        throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', `Failed to load instance registry: ${error.message}`, { path: filePath });
       }
     }
 
@@ -331,14 +344,25 @@ export class InstanceRegistry {
       const message = error instanceof Error ? error.message : 'Invalid instance registry document';
       throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', message, {
         ...details,
-        path: this.readPath
+        path: filePath
       });
     }
     if (document.version === undefined) document = { ...document, version: 1 };
     this._document = document;
     this._legacyPlaintext = hasSecretField(document);
     this._loaded = true;
-    return redactSecrets(this._document);
+    return redact ? redactSecrets(this._document) : this._document;
+  }
+
+  _loadForMutation() {
+    const sourcePath = this.fs.existsSync(this.writePath) ? this.writePath : this.readPath;
+    return this._readDocument(sourcePath, false);
+  }
+
+  load() {
+    this._resolvePaths();
+    if (this._loaded) return redactSecrets(this._document);
+    return this._readDocument(this.readPath);
   }
 
   reload() {
@@ -457,8 +481,10 @@ export class InstanceRegistry {
   }
 
   _enqueueMutation(operation, resultSelector) {
-    const mutation = this._mutationQueue.then(async () => {
-      this.load();
+    this._resolvePaths();
+    const writePath = this.writePath;
+    return enqueuePathMutation(writePath, async () => {
+      this._loadForMutation();
       if (this._legacyPlaintext) {
         throw new InstanceRegistryError(
           'LEGACY_MIGRATION_REQUIRED',
@@ -479,8 +505,6 @@ export class InstanceRegistry {
       }
       return clone(resultSelector(nextDocument));
     });
-    this._mutationQueue = mutation.catch(() => undefined);
-    return mutation;
   }
 
   async _writeAtomic(document) {

@@ -5,7 +5,7 @@
  * Licensed under the MIT License - see LICENSE file for details
  */
 
-import { InstanceRegistry } from './instance-registry.js';
+import { InstanceRegistry, InstanceRegistryError } from './instance-registry.js';
 
 /**
  * Map a loaded instance config to the options object ServiceNowClient expects.
@@ -160,12 +160,20 @@ export class ConfigManager {
 
   getDefaultInstance() {
     const instances = this.loadInstances();
-    if (this._usingEnvFallback) {
-      return instances.find(instance => instance.default === true) || instances[0];
+    const instance = this._usingEnvFallback
+      ? (instances.find(candidate => candidate.default === true) || instances[0])
+      : (typeof this.registry._getDefaultForClient === 'function'
+        ? this.registry._getDefaultForClient()
+        : this.registry.getDefault());
+    if (!instance) {
+      const path = this.registry.writePath || this.registry.readPath;
+      throw new InstanceRegistryError(
+        'REGISTRY_EMPTY',
+        'Instance registry contains no instances',
+        path ? { path } : {}
+      );
     }
-    return typeof this.registry._getDefaultForClient === 'function'
-      ? this.registry._getDefaultForClient()
-      : this.registry.getDefault();
+    return instance;
   }
 
   getInstanceOrDefault(name = null) {
