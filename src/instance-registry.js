@@ -46,6 +46,9 @@ function validateUrl(url, name) {
   } catch {
     invalid(`Instance '${name || 'unknown'}' has an invalid URL`, { field: 'url' });
   }
+  if (parsed.username || parsed.password) {
+    invalid(`Instance '${name || 'unknown'}' URL must not include username or password`, { field: 'url' });
+  }
 
   if (parsed.protocol === 'https:') return;
   const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -65,6 +68,9 @@ function validateOptionalUrl(value, name, field) {
   } catch {
     invalid(`Instance '${name}' ${field} must be a valid URL`, { field });
   }
+  if (parsed.username || parsed.password) {
+    invalid(`Instance '${name}' ${field} URL must not include username or password`, { field });
+  }
   const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
   const hostname = parsed.hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopbackHosts.has(hostname))) {
@@ -75,6 +81,12 @@ function validateOptionalUrl(value, name, field) {
 function validateOptionalString(value, name, field) {
   if (typeof value !== 'string') {
     invalid(`Instance '${name}' ${field} must be a string`, { field });
+  }
+}
+
+function validateNonEmptyString(value, name, field) {
+  if (typeof value !== 'string' || !value.trim()) {
+    invalid(`Instance '${name}' ${field} must be a non-empty string`, { field });
   }
 }
 
@@ -143,6 +155,10 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
   if (instance.redirectPort !== undefined && (!Number.isInteger(instance.redirectPort) || instance.redirectPort < 0 || instance.redirectPort > 65535)) {
     invalid(`Instance '${name}' redirectPort must be an integer from 0 to 65535`, { field: 'redirectPort' });
   }
+  if (instance.username !== undefined) validateNonEmptyString(instance.username, name, 'username');
+  if (instance.clientId !== undefined) validateNonEmptyString(instance.clientId, name, 'clientId');
+  if (allowSecrets && instance.password !== undefined) validateNonEmptyString(instance.password, name, 'password');
+  if (allowSecrets && instance.clientSecret !== undefined) validateNonEmptyString(instance.clientSecret, name, 'clientSecret');
 
   if (authType === 'basic') {
     if (instance.grantType !== undefined) {

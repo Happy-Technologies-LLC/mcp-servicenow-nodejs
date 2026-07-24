@@ -118,18 +118,26 @@ export class ConfigManager {
   }
 
   reload() {
+    const previousInstances = this.instances;
+    const previousUsingEnvFallback = this._usingEnvFallback;
     this.instances = null;
     this._usingEnvFallback = false;
-    const document = this.registry.reload();
-    const hasFile = typeof this.registry.hasFile === 'function'
-      ? this.registry.hasFile()
-      : true;
-    if (!hasFile) {
-      this._usingEnvFallback = true;
-      return this.loadFromEnv();
+    try {
+      const document = this.registry.reload();
+      const hasFile = typeof this.registry.hasFile === 'function'
+        ? this.registry.hasFile()
+        : true;
+      if (!hasFile) {
+        this._usingEnvFallback = true;
+        return this.loadFromEnv();
+      }
+      this.instances = document.instances || this.registry.list();
+      return this.instances;
+    } catch (error) {
+      this.instances = previousInstances;
+      this._usingEnvFallback = previousUsingEnvFallback;
+      throw error;
     }
-    this.instances = document.instances || this.registry.list();
-    return this.instances;
   }
 
   getInstance(name) {

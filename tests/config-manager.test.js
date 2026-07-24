@@ -316,4 +316,27 @@ describe('ConfigManager registry facade', () => {
     expect(cm.getDefaultInstance().name).toBe('configured');
     fs.rmSync(dir, { recursive: true, force: true });
   });
+  test('restores the environment fallback cache when a malformed registry appears', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-reload-'));
+    const file = path.join(dir, 'instances.json');
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    process.env.SERVICENOW_INSTANCE_URL = 'https://env.service-now.com';
+    process.env.SERVICENOW_USERNAME = 'env-user';
+    process.env.SERVICENOW_PASSWORD = 'env-password-fixture';
+    const cm = new ConfigManager({ registry });
+
+    try {
+      const previousInstances = cm.loadInstances();
+      fs.writeFileSync(file, '{"version":1,"instances":[}\n');
+
+      expect(() => cm.reload()).toThrow(expect.objectContaining({
+        code: 'REGISTRY_RELOAD_FAILED'
+      }));
+      expect(cm.loadInstances()).toBe(previousInstances);
+      expect(cm.getInstance('default')).toBe(previousInstances[0]);
+      expect(cm.getDefaultInstance()).toBe(previousInstances[0]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

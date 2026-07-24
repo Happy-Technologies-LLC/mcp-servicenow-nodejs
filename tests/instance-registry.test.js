@@ -201,6 +201,93 @@ describe('InstanceRegistry validation and defaults', () => {
         .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
     }
   });
+
+  test('validates optional username and clientId in every auth branch', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const cases = [
+      {
+        name: 'basic-invalid-client-id',
+        url: 'https://basic-invalid-client-id.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        clientId: false,
+        credentialRef: 'password/ref'
+      },
+      {
+        name: 'oauth-invalid-username',
+        url: 'https://oauth-invalid-username.service-now.com',
+        authType: 'oauth',
+        grantType: 'authorization_code',
+        username: 0,
+        clientId: 'cid'
+      },
+      {
+        name: 'client-credentials-invalid-username',
+        url: 'https://client-credentials-invalid-username.service-now.com',
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        username: '',
+        clientId: 'cid',
+        credentialRef: 'secret/ref'
+      }
+    ];
+
+    for (const instance of cases) {
+      await expect(registry.register(instance))
+        .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+    }
+  });
+
+  test('rejects URL userinfo in primary and optional endpoint URLs', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const cases = [
+      publicInstance('userinfo-primary', {
+        url: 'https://user:password@userinfo-primary.service-now.com'
+      }),
+      publicInstance('userinfo-authorize', {
+        authorizeUrl: 'https://user:password@oauth.service-now.com/oauth_auth.do'
+      }),
+      publicInstance('userinfo-token', {
+        tokenUrl: 'https://user:password@oauth.service-now.com/oauth_token.do'
+      })
+    ];
+
+    for (const instance of cases) {
+      await expect(registry.register(instance))
+        .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+    }
+  });
+
+  test('validates legacy plaintext password and clientSecret values when present', () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const cases = [
+      {
+        name: 'legacy-basic-password',
+        url: 'https://legacy-basic-password.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        password: false,
+        credentialRef: 'password/ref'
+      },
+      {
+        name: 'legacy-client-secret',
+        url: 'https://legacy-client-secret.service-now.com',
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        clientId: 'cid',
+        clientSecret: 0,
+        credentialRef: 'secret/ref'
+      }
+    ];
+
+    for (const instance of cases) {
+      expect(() => registry.validate(instance))
+        .toThrow(expect.objectContaining({ code: 'INVALID_INSTANCE_CONFIG' }));
+    }
+  });
 });
 
 describe('InstanceRegistry persistence', () => {
