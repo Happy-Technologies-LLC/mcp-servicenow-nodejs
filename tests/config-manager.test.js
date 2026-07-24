@@ -257,9 +257,9 @@ describe('ConfigManager registry facade', () => {
       get: jest.fn(() => publicInstances[0]),
       getDefault: jest.fn(() => publicInstances[0]),
       list: jest.fn(() => publicInstances),
-      getForClient: jest.fn(() => rawInstances[0]),
-      getDefaultForClient: jest.fn(() => rawInstances[0]),
-      listForClient: jest.fn(() => rawInstances),
+      _getForClient: jest.fn(() => rawInstances[0]),
+      _getDefaultForClient: jest.fn(() => rawInstances[0]),
+      _listForClient: jest.fn(() => rawInstances),
       validate: jest.fn(() => true),
       hasFile: jest.fn(() => true)
     };
@@ -281,11 +281,41 @@ describe('ConfigManager registry facade', () => {
     expect(cm.reload()).toBe(rawInstances);
     expect(registry.load).toHaveBeenCalledTimes(1);
     expect(registry.reload).toHaveBeenCalledTimes(1);
-    expect(registry.getForClient).toHaveBeenCalledWith('dev');
-    expect(registry.getDefaultForClient).toHaveBeenCalledTimes(1);
+    expect(registry._getForClient).toHaveBeenCalledWith('dev');
+    expect(registry._getDefaultForClient).toHaveBeenCalledTimes(1);
     expect(registry.list).toHaveBeenCalledTimes(1);
-    expect(registry.listForClient).toHaveBeenCalledTimes(2);
+    expect(registry._listForClient).toHaveBeenCalledTimes(2);
     expect(registry.validate).toHaveBeenCalledWith(publicInstances[0]);
+  });
+
+  test('keeps legacy credentials available only through ConfigManager client reads', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-legacy-'));
+    const file = path.join(dir, 'instances.json');
+    fs.writeFileSync(file, JSON.stringify({
+      version: 1,
+      instances: [{
+        name: 'legacy',
+        url: 'https://legacy.service-now.com',
+        username: 'legacy-user',
+        password: 'legacy-password-fixture',
+        clientSecret: 'legacy-client-secret-fixture',
+        default: true
+      }]
+    }));
+
+    try {
+      const registry = new InstanceRegistry({ readPath: file, writePath: file });
+      const cm = new ConfigManager({ registry });
+
+      expect(cm.getInstance('legacy')).toEqual(expect.objectContaining({
+        password: 'legacy-password-fixture',
+        clientSecret: 'legacy-client-secret-fixture'
+      }));
+      expect(JSON.stringify(cm.listInstances())).not.toContain('legacy-password-fixture');
+      expect(JSON.stringify(cm.listInstances())).not.toContain('legacy-client-secret-fixture');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('falls back to environment credentials only when the registry file is absent', () => {

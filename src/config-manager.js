@@ -64,8 +64,8 @@ export class ConfigManager {
     }
 
     this._usingEnvFallback = false;
-    this.instances = typeof this.registry.listForClient === 'function'
-      ? this.registry.listForClient()
+    this.instances = typeof this.registry._listForClient === 'function'
+      ? this.registry._listForClient()
       : document.instances || this.registry.list();
     return this.instances;
   }
@@ -133,8 +133,8 @@ export class ConfigManager {
         this._usingEnvFallback = true;
         return this.loadFromEnv();
       }
-      this.instances = typeof this.registry.listForClient === 'function'
-        ? this.registry.listForClient()
+      this.instances = typeof this.registry._listForClient === 'function'
+        ? this.registry._listForClient()
         : document.instances || this.registry.list();
       return this.instances;
     } catch (error) {
@@ -153,8 +153,8 @@ export class ConfigManager {
       }
       return instance;
     }
-    return typeof this.registry.getForClient === 'function'
-      ? this.registry.getForClient(name)
+    return typeof this.registry._getForClient === 'function'
+      ? this.registry._getForClient(name)
       : this.registry.get(name);
   }
 
@@ -163,8 +163,8 @@ export class ConfigManager {
     if (this._usingEnvFallback) {
       return instances.find(instance => instance.default === true) || instances[0];
     }
-    return typeof this.registry.getDefaultForClient === 'function'
-      ? this.registry.getDefaultForClient()
+    return typeof this.registry._getDefaultForClient === 'function'
+      ? this.registry._getDefaultForClient()
       : this.registry.getDefault();
   }
 

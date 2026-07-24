@@ -22,6 +22,20 @@ function clone(value) {
   return value === undefined ? value : JSON.parse(JSON.stringify(value));
 }
 
+function redactSecrets(value, insideCredentialRef = false) {
+  if (Array.isArray(value)) {
+    return value.map(nested => redactSecrets(nested, insideCredentialRef));
+  }
+  if (!value || typeof value !== 'object') return value;
+
+  const redacted = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (!insideCredentialRef && SECRET_FIELDS.has(key)) continue;
+    redacted[key] = redactSecrets(nested, insideCredentialRef || key === 'credentialRef');
+  }
+  return redacted;
+}
+
 function hasSecretField(value, insideCredentialRef = false) {
   if (!value || typeof value !== 'object') return false;
   if (Array.isArray(value)) return value.some(nested => hasSecretField(nested, insideCredentialRef));
@@ -172,7 +186,9 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     return true;
   }
 
-  const grantType = instance.grantType === undefined ? 'password' : instance.grantType;
+  const grantType = instance.grantType === undefined
+    ? (instance.username === undefined ? 'client_credentials' : 'password')
+    : instance.grantType;
   if (!GRANT_TYPES.has(grantType)) {
     invalid(`OAuth instance '${name}' has an unsupported grantType`, { field: 'grantType' });
   }
@@ -284,7 +300,7 @@ export class InstanceRegistry {
   }
 
   get document() {
-    return clone(this.load());
+    return this.load();
   }
 
   hasFile() {
@@ -294,7 +310,7 @@ export class InstanceRegistry {
 
   load() {
     this._resolvePaths();
-    if (this._loaded) return this._document;
+    if (this._loaded) return redactSecrets(this._document);
     let document;
     try {
       document = JSON.parse(this.fs.readFileSync(this.readPath, 'utf8'));
@@ -322,7 +338,7 @@ export class InstanceRegistry {
     this._document = document;
     this._legacyPlaintext = hasSecretField(document);
     this._loaded = true;
-    return this._document;
+    return redactSecrets(this._document);
   }
 
   reload() {
@@ -342,27 +358,28 @@ export class InstanceRegistry {
   }
 
   _redactInstance(instance) {
-    if (instance === undefined) return undefined;
-    const safeInstance = clone(instance);
-    delete safeInstance.password;
-    delete safeInstance.clientSecret;
-    return safeInstance;
+    return redactSecrets(instance);
   }
 
-  listForClient() {
-    return clone(this.load().instances);
+  _rawDocument() {
+    this.load();
+    return this._document;
   }
 
-  getForClient(name) {
-    const instance = this.load().instances.find(candidate => candidate.name === name);
+  _listForClient() {
+    return clone(this._rawDocument().instances);
+  }
+
+  _getForClient(name) {
+    const instance = this._rawDocument().instances.find(candidate => candidate.name === name);
     if (!instance) {
       throw new InstanceRegistryError('INSTANCE_NOT_FOUND', `Instance '${name}' not found`, { name });
     }
     return clone(instance);
   }
 
-  getDefaultForClient() {
-    const instances = this.load().instances;
+  _getDefaultForClient() {
+    const instances = this._rawDocument().instances;
     return clone(instances.find(instance => instance.default === true) || instances[0]);
   }
 

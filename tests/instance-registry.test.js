@@ -152,6 +152,43 @@ describe('InstanceRegistry validation and defaults', () => {
       name: 'ropc-ok', url: 'https://ropc-ok.service-now.com', authType: 'oauth', grantType: 'password', username: 'user', clientId: 'cid', credentialRef: { password: 'password/ref', clientSecret: 'secret/ref' }
     })).resolves.toEqual(expect.objectContaining({ name: 'ropc-ok' }));
   });
+  test('infers OAuth grant type from username presence when omitted', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+
+    await expect(registry.register({
+      name: 'client-credentials-inferred',
+      url: 'https://client-credentials-inferred.service-now.com',
+      authType: 'oauth',
+      clientId: 'cid',
+      credentialRef: 'secret/ref'
+    })).resolves.toEqual(expect.objectContaining({
+      name: 'client-credentials-inferred',
+      authType: 'oauth'
+    }));
+
+    await expect(registry.register({
+      name: 'password-inferred',
+      url: 'https://password-inferred.service-now.com',
+      authType: 'oauth',
+      username: 'user',
+      clientId: 'cid',
+      credentialRef: { password: 'password/ref', clientSecret: 'secret/ref' }
+    })).resolves.toEqual(expect.objectContaining({
+      name: 'password-inferred',
+      authType: 'oauth'
+    }));
+
+    expect(registry.get('client-credentials-inferred').grantType).toBeUndefined();
+    expect(registry.get('password-inferred').grantType).toBeUndefined();
+    expect(registry.validate({
+      name: 'client-credentials-validation',
+      url: 'https://client-credentials-validation.service-now.com',
+      authType: 'oauth',
+      clientId: 'cid',
+      credentialRef: 'secret/ref'
+    })).toBe(true);
+  });
 
   test('allows a public authorization-code client without a credential reference', async () => {
     const { file } = tempPaths();
@@ -291,7 +328,62 @@ describe('InstanceRegistry validation and defaults', () => {
 });
 
 describe('InstanceRegistry persistence', () => {
-  test('redacts legacy plaintext credentials from public views while retaining raw client access', async () => {
+  test('recursively redacts legacy plaintext credentials from public views', async () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      metadata: {
+        password: 'nested-document-password-fixture',
+        clientSecret: 'nested-document-client-secret-fixture'
+      },
+      instances: [{
+        name: 'legacy',
+        url: 'https://legacy.service-now.com',
+        username: 'legacy-user',
+        password: 'legacy-password-fixture',
+        clientSecret: 'legacy-client-secret-fixture',
+        nested: {
+          password: 'nested-password-fixture',
+          clientSecret: 'nested-client-secret-fixture'
+        },
+        credentialRef: {
+          password: 'password/ref',
+          clientSecret: 'secret/ref'
+        },
+        default: true
+      }]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+
+    for (const view of [
+      registry.load(),
+      registry.document,
+      registry.list()[0],
+      registry.get('legacy'),
+      registry.getDefault()
+    ]) {
+      const serialized = JSON.stringify(view);
+      expect(serialized).not.toContain('legacy-password-fixture');
+      expect(serialized).not.toContain('legacy-client-secret-fixture');
+      expect(serialized).not.toContain('nested-password-fixture');
+      expect(serialized).not.toContain('nested-client-secret-fixture');
+      expect(serialized).not.toContain('nested-document-password-fixture');
+      expect(serialized).not.toContain('nested-document-client-secret-fixture');
+    }
+    expect(registry.load().instances[0].credentialRef).toEqual({
+      password: 'password/ref',
+      clientSecret: 'secret/ref'
+    });
+    expect(registry.listForClient).toBeUndefined();
+    expect(registry.getForClient).toBeUndefined();
+    expect(registry.getDefaultForClient).toBeUndefined();
+
+    await expect(registry.update('legacy', { description: 'still legacy' }))
+      .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
+    await expect(registry.remove('legacy'))
+      .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
+  });
+
+  test('returns defensive redacted clones from load, document, and reload', () => {
     const { file } = tempPaths();
     writeJson(file, {
       instances: [{
@@ -299,40 +391,24 @@ describe('InstanceRegistry persistence', () => {
         url: 'https://legacy.service-now.com',
         username: 'legacy-user',
         password: 'legacy-password-fixture',
-        clientSecret: 'legacy-client-secret-fixture',
         default: true
       }]
     });
     const registry = new InstanceRegistry({ readPath: file, writePath: file });
 
-    const publicViews = [
-      registry.list()[0],
-      registry.get('legacy'),
-      registry.getDefault()
-    ];
-    for (const view of publicViews) {
-      expect(view).not.toHaveProperty('password');
-      expect(view).not.toHaveProperty('clientSecret');
-      expect(JSON.stringify(view)).not.toContain('legacy-password-fixture');
-      expect(JSON.stringify(view)).not.toContain('legacy-client-secret-fixture');
-    }
-    expect(registry.listForClient()[0]).toEqual(expect.objectContaining({
-      password: 'legacy-password-fixture',
-      clientSecret: 'legacy-client-secret-fixture'
-    }));
-    expect(registry.getForClient('legacy')).toEqual(expect.objectContaining({
-      password: 'legacy-password-fixture',
-      clientSecret: 'legacy-client-secret-fixture'
-    }));
-    expect(registry.getDefaultForClient()).toEqual(expect.objectContaining({
-      password: 'legacy-password-fixture',
-      clientSecret: 'legacy-client-secret-fixture'
-    }));
+    const loaded = registry.load();
+    loaded.instances[0].name = 'mutated';
+    loaded.instances.push({ name: 'injected' });
+    const documented = registry.document;
+    documented.instances[0].username = 'mutated';
+    const reloaded = registry.reload();
+    reloaded.instances[0].name = 'mutated-again';
 
-    await expect(registry.update('legacy', { description: 'still legacy' }))
-      .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
-    await expect(registry.remove('legacy'))
-      .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
+    expect(registry.list().map(instance => instance.name)).toEqual(['legacy']);
+    expect(registry.get('legacy').username).toBe('legacy-user');
+    expect(loaded).not.toBe(reloaded);
+    expect(documented).not.toBe(loaded);
+    expect(reloaded.instances[0]).not.toHaveProperty('password');
   });
   test('uses one stable reload error contract for invalid persisted documents', () => {
     const { file } = tempPaths();
