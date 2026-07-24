@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 const SERVICE_NAME = 'happy-platform-mcp';
 const CREDENTIAL_PREFIX = 'keychain:instance/';
 const INSTANCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -18,6 +20,22 @@ export class CredentialNotFoundError extends Error {
     this.code = 'CREDENTIAL_NOT_FOUND';
     this.ref = ref;
     this.details = { ref };
+  }
+}
+
+export class KeychainUnavailableError extends Error {
+  constructor() {
+    super('Keychain backend unavailable');
+    this.name = 'KeychainUnavailableError';
+    this.code = 'KEYCHAIN_UNAVAILABLE';
+  }
+}
+
+export class KeychainOperationError extends Error {
+  constructor() {
+    super('Keychain operation failed');
+    this.name = 'KeychainOperationError';
+    this.code = 'KEYCHAIN_OPERATION_FAILED';
   }
 }
 
@@ -60,29 +78,48 @@ export class InstanceCredentialStore {
   constructor({ service = SERVICE_NAME, createEntry } = {}) {
     this.service = service;
     this._createEntry = createEntry || null;
-    this._keytarPromise = null;
+    this._keyringPromise = null;
   }
 
-  async _entry(ref) {
+  async _entry(account) {
     if (this._createEntry) {
-      return this._createEntry(this.service, ref);
+      return this._createEntry(this.service, account);
     }
-    if (!this._keytarPromise) {
-      this._keytarPromise = import('@postman/node-keytar');
+    if (!this._keyringPromise) {
+      this._keyringPromise = import('@napi-rs/keyring');
     }
-    const keytarModule = await this._keytarPromise;
-    const keytar = keytarModule.default || keytarModule;
-    return {
-      getPassword: () => keytar.getPassword(this.service, ref),
-      setPassword: (value) => keytar.setPassword(this.service, ref, value),
-      deletePassword: () => keytar.deletePassword(this.service, ref)
-    };
+    const keyringModule = await this._keyringPromise;
+    const Entry = keyringModule.Entry;
+    return new Entry(this.service, account);
+  }
+
+  async _verifyBackendHealth() {
+    const account = `keychain:health-check/${randomUUID()}`;
+    let probeValue = `health-check-${randomUUID()}`;
+    try {
+      const entry = await this._entry(account);
+      await entry.setPassword(probeValue);
+      const observed = await entry.getPassword();
+      if (observed === null || observed === undefined || observed !== probeValue) {
+        throw new Error('health probe read mismatch');
+      }
+      const deleted = await entry.deletePassword();
+      if (deleted !== true) {
+        throw new Error('health probe deletion failed');
+      }
+    } catch {
+      throw new KeychainUnavailableError();
+    } finally {
+      probeValue = null;
+    }
   }
 
   async getSecret(ref) {
     const validatedRef = validateCredentialRef(ref);
-    const value = await (await this._entry(validatedRef)).getPassword();
+    const entry = await this._entry(validatedRef);
+    const value = await entry.getPassword();
     if (value === null || value === undefined) {
+      await this._verifyBackendHealth();
       throw new CredentialNotFoundError(validatedRef);
     }
     return value;
@@ -99,13 +136,33 @@ export class InstanceCredentialStore {
 
   async hasSecret(ref) {
     const validatedRef = validateCredentialRef(ref);
-    const value = await (await this._entry(validatedRef)).getPassword();
-    return value !== null && value !== undefined;
+    const entry = await this._entry(validatedRef);
+    const value = await entry.getPassword();
+    if (value === null || value === undefined) {
+      await this._verifyBackendHealth();
+      return false;
+    }
+    return true;
   }
 
   async deleteSecret(ref) {
     const validatedRef = validateCredentialRef(ref);
-    const deleted = await (await this._entry(validatedRef)).deletePassword();
-    return { deleted: deleted !== false };
+    const entry = await this._entry(validatedRef);
+    let targetValue = await entry.getPassword();
+    if (targetValue === null || targetValue === undefined) {
+      targetValue = null;
+      await this._verifyBackendHealth();
+      return { deleted: false };
+    }
+
+    try {
+      const deleted = await entry.deletePassword();
+      if (deleted === false) {
+        throw new KeychainOperationError();
+      }
+      return { deleted: deleted !== false };
+    } finally {
+      targetValue = null;
+    }
   }
 }

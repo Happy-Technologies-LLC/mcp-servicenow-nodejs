@@ -1,6 +1,8 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import {
   CredentialNotFoundError,
+  KeychainOperationError,
+  KeychainUnavailableError,
   InstanceCredentialStore,
   credentialRefFor
 } from '../src/instance-credential-store.js';
@@ -125,6 +127,9 @@ describe('InstanceCredentialStore', () => {
       entryOverrides: { [method]: async () => { throw failure; } }
     });
     const ref = credentialRefFor('dev', 'password');
+    if (method === 'deletePassword') {
+      await store.setSecret(ref, 'fixture-secret');
+    }
     const operation = method === 'getPassword'
       ? store.getSecret(ref)
       : method === 'setPassword'
@@ -132,5 +137,74 @@ describe('InstanceCredentialStore', () => {
         : store.deleteSecret(ref);
 
     await expect(operation).rejects.toBe(failure);
+  });
+
+  test('returns false for a missing credential after a successful backend health probe', async () => {
+    const values = new Map();
+    const createEntry = jest.fn(async (_service, account) => ({
+      getPassword: async () => values.has(account) ? values.get(account) : null,
+      setPassword: async (value) => values.set(account, value),
+      deletePassword: async () => values.delete(account)
+    }));
+    const store = new InstanceCredentialStore({ createEntry });
+    const ref = credentialRefFor('dev', 'password');
+
+    await expect(store.hasSecret(ref)).resolves.toBe(false);
+    await expect(store.getSecret(ref)).rejects.toMatchObject({ code: 'CREDENTIAL_NOT_FOUND' });
+  });
+
+  test('throws an unavailable error when a missing read has a null health probe', async () => {
+    const entry = {
+      getPassword: jest.fn().mockResolvedValue(null),
+      setPassword: jest.fn().mockResolvedValue(undefined),
+      deletePassword: jest.fn().mockResolvedValue(true)
+    };
+    const { store } = createHarness({ createEntry: jest.fn(async () => entry) });
+    const ref = credentialRefFor('dev', 'password');
+
+    await expect(store.getSecret(ref)).rejects.toMatchObject({ code: 'KEYCHAIN_UNAVAILABLE' });
+    await expect(store.hasSecret(ref)).rejects.toBeInstanceOf(KeychainUnavailableError);
+  });
+
+  test('does not expose the health probe in unavailable errors', async () => {
+    let probeValue = null;
+    const entry = {
+      getPassword: jest.fn()
+        .mockResolvedValueOnce(null)
+        .mockImplementationOnce(() => 'unexpected-probe-read'),
+      setPassword: jest.fn(async (value) => { probeValue = value; }),
+      deletePassword: jest.fn().mockResolvedValue(true)
+    };
+    const store = new InstanceCredentialStore({ createEntry: async () => entry });
+    const ref = credentialRefFor('dev', 'password');
+
+    try {
+      await store.hasSecret(ref);
+      throw new Error('expected hasSecret to reject');
+    } catch (error) {
+      expect(error).toBeInstanceOf(KeychainUnavailableError);
+      expect(error.message).not.toContain(probeValue);
+      expect(JSON.stringify(error)).not.toContain(probeValue);
+    }
+  });
+
+  test('throws an operation error when deleting a present credential returns false', async () => {
+    const secret = 'fixture-secret';
+    const entry = {
+      getPassword: jest.fn().mockResolvedValue(secret),
+      deletePassword: jest.fn().mockResolvedValue(false)
+    };
+    const store = new InstanceCredentialStore({ createEntry: async () => entry });
+    const ref = credentialRefFor('dev', 'password');
+
+    try {
+      await store.deleteSecret(ref);
+      throw new Error('expected deleteSecret to reject');
+    } catch (error) {
+      expect(error).toBeInstanceOf(KeychainOperationError);
+      expect(error.code).toBe('KEYCHAIN_OPERATION_FAILED');
+      expect(error.message).not.toContain(secret);
+      expect(JSON.stringify(error)).not.toContain(secret);
+    }
   });
 });
