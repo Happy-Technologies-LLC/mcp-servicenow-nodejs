@@ -237,6 +237,9 @@ function registryError(error) {
   if (error?.code === 'INVALID_INSTANCE_CONFIG') {
     return invalid('Instance metadata failed canonical validation');
   }
+  if (error?.code === 'CREDENTIAL_NOT_FOUND' || typeof error?.code === 'string' && error.code.startsWith('KEYCHAIN_')) {
+    return errorResponse(error.code, error.message || 'The local credential store could not be checked; no registration was committed.', error.details || {});
+  }
   if (error?.code === 'REGISTRY_WRITE_FAILED') {
     return errorResponse('REGISTRY_WRITE_FAILED', 'The instance registry could not be updated. No registration was committed.');
   }
@@ -274,6 +277,14 @@ async function checkCredentials(store, requirements, name) {
     });
   }
   return null;
+}
+function credentialResponseError(result) {
+  const payload = JSON.parse(result.content[0].text);
+  const error = new Error(payload.message);
+  error.code = payload.code;
+  const { success: _success, code: _code, message: _message, ...details } = payload;
+  error.details = details;
+  return error;
 }
 
 export async function handleInstanceSetupTool(name, args = {}, dependencies = {}) {
@@ -324,37 +335,66 @@ export async function handleInstanceSetupTool(name, args = {}, dependencies = {}
   const credentialError = await checkCredentials(dependencies.credentialStore, requirements, args.name);
   if (credentialError) return credentialError;
 
+  const configManager = dependencies.configManager;
+  if (!configManager || typeof configManager.reload !== 'function') {
+    return errorResponse('CONFIG_MANAGER_UNAVAILABLE', 'Configuration reload is unavailable; no registration was committed.');
+  }
+
   let registered;
   try {
     registered = await registry.register(canonical.metadata, {
-      makeDefault: args.makeDefault === undefined ? false : args.makeDefault
+      makeDefault: args.makeDefault === undefined ? false : args.makeDefault,
+      precommit: async () => {
+        const finalCredentialError = await checkCredentials(dependencies.credentialStore, requirements, args.name);
+        if (finalCredentialError) throw credentialResponseError(finalCredentialError);
+      }
     });
   } catch (error) {
     return registryError(error);
   }
 
-  const configManager = dependencies.configManager;
-  if (!configManager || typeof configManager.reload !== 'function') {
-    return errorResponse('CONFIG_MANAGER_UNAVAILABLE', 'Instance registered, but configuration reload is unavailable. Restart the MCP server to load it.', {
-      restartRequired: true,
-      metadata: outputMetadata(registered, args)
-    });
+  const postCommitCredentialError = await checkCredentials(
+    dependencies.credentialStore,
+    requirements,
+    args.name
+  );
+  if (postCommitCredentialError) {
+    try {
+      await registry.remove(args.name, { expected: registered });
+    } catch (error) {
+      return registryError(error);
+    }
+    return postCommitCredentialError;
   }
 
+  let reloadResult;
   try {
-    await configManager.reload();
+    reloadResult = await configManager.reload();
+    if (typeof dependencies.onConfigReload === 'function') {
+      dependencies.onConfigReload();
+    }
   } catch {
-    return errorResponse('REGISTRY_RELOAD_FAILED', 'Instance registered, but configuration reload failed. Restart the MCP server to load the persisted instance.', {
+    return response({
+      success: true,
+      code: 'REGISTRY_RELOAD_FAILED',
       restartRequired: true,
+      partial: true,
+      message: 'Instance registered, but configuration reload failed. Restart the MCP server to load the persisted instance.',
       metadata: outputMetadata(registered, args)
     });
   }
 
+  const restartRequired = dependencies.docsOnly === true || reloadResult === false;
   return response({
     success: true,
-    restartRequired: dependencies.docsOnly === true,
-    ...(dependencies.docsOnly === true
-      ? { message: 'Instance registered. Restart the MCP server to enable live ServiceNow tools.' }
+    restartRequired,
+    ...(restartRequired
+      ? {
+        ...(reloadResult === false ? { partial: true } : {}),
+        message: dependencies.docsOnly === true
+          ? 'Instance registered. Restart the MCP server to enable live ServiceNow tools.'
+          : 'Instance registered, but configuration reload did not complete. Restart the MCP server to load the persisted instance.'
+      }
       : {}),
     metadata: outputMetadata(registered, args)
   });

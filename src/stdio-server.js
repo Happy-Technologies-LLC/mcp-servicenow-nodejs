@@ -12,7 +12,8 @@ import { pathToFileURL } from 'url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ServiceNowClient } from './servicenow-client.js';
 import { createMcpServer } from './mcp-server-consolidated.js';
-import { configManager, instanceToClientOptions } from './config-manager.js';
+import { configManager as defaultConfigManager, instanceToClientOptions } from './config-manager.js';
+import { InstanceCredentialStore } from './instance-credential-store.js';
 
 // Load environment variables
 dotenv.config();
@@ -49,14 +50,26 @@ function shouldFallbackToDocsOnly(error, env = process.env) {
 
 export async function createConfiguredMcpServer({
   env = process.env,
-  manager = configManager,
+  manager,
+  configManager: injectedConfigManager,
+  instanceRegistry,
+  registry,
+  credentialStore,
   ServiceNowClientClass = ServiceNowClient,
   createServer = createMcpServer
 } = {}) {
+  const selectedConfigManager = injectedConfigManager || manager || defaultConfigManager;
+  const selectedRegistry = instanceRegistry || registry || selectedConfigManager?.registry;
+  const selectedCredentialStore = credentialStore || new InstanceCredentialStore();
+  const serverDependencies = {
+    configManager: selectedConfigManager,
+    instanceRegistry: selectedRegistry,
+    credentialStore: selectedCredentialStore
+  };
   const startDocsOnly = async () => {
     console.error('📚 Starting Happy MCP in docs-only mode');
     return {
-      server: await createServer(null, { docsOnly: true }),
+      server: await createServer(null, { docsOnly: true, ...serverDependencies }),
       docsOnly: true,
       instance: null
     };
@@ -69,7 +82,7 @@ export async function createConfiguredMcpServer({
   // Get instance configuration (from SERVICENOW_INSTANCE env var or default)
   let instance;
   try {
-    instance = manager.getInstanceOrDefault(env.SERVICENOW_INSTANCE);
+    instance = selectedConfigManager.getInstanceOrDefault(env.SERVICENOW_INSTANCE);
   } catch (error) {
     if (shouldFallbackToDocsOnly(error, env)) {
       return startDocsOnly();
@@ -85,12 +98,12 @@ export async function createConfiguredMcpServer({
     instance.url,
     instance.username,
     instance.password,
-    instanceToClientOptions(instance)
+    instanceToClientOptions(instance, { credentialStore: selectedCredentialStore })
   );
   serviceNowClient.currentInstanceName = instance.name;
 
   return {
-    server: await createServer(serviceNowClient),
+    server: await createServer(serviceNowClient, serverDependencies),
     docsOnly: false,
     instance
   };

@@ -24,7 +24,7 @@ function parseResponse(response) {
   return JSON.parse(response.content[0].text);
 }
 
-async function createHarness({ docsOnly = false, credentialStore, reload = true } = {}) {
+async function createHarness({ docsOnly = false, credentialStore, reload = true, createServiceNowClient } = {}) {
   const registry = new InstanceRegistry({
     readPath: tempRegistryPath(),
     writePath: tempRegistryPath()
@@ -33,6 +33,8 @@ async function createHarness({ docsOnly = false, credentialStore, reload = true 
   registry.readPath = registry.writePath;
   const configManager = {
     registry,
+    getInstance: jest.fn(name => registry.get(name)),
+    listInstances: jest.fn(() => registry.list()),
     reload: jest.fn(() => {
       if (reload) return registry.reload();
       throw new Error('configuration reload failed with secret-value');
@@ -43,7 +45,8 @@ async function createHarness({ docsOnly = false, credentialStore, reload = true 
     docsOnly,
     configManager,
     instanceRegistry: registry,
-    credentialStore: store
+    credentialStore: store,
+    ...(createServiceNowClient ? { createServiceNowClient } : {})
   });
   const listTools = server._requestHandlers.get('tools/list');
   const callTool = server._requestHandlers.get('tools/call');
@@ -112,6 +115,25 @@ describe('SN-Register-Instance', () => {
       expect.objectContaining({ name: 'dev', default: true })
     ]);
     expect(JSON.stringify(result)).not.toMatch(/password|clientSecret|fixture-secret/i);
+  });
+  test('makes a newly registered named instance resolvable immediately', async () => {
+    const routedClient = {
+      currentInstanceName: 'dev',
+      setProgressCallback: jest.fn(),
+      getRecords: jest.fn(async () => [])
+    };
+    const createServiceNowClient = jest.fn(() => routedClient);
+    const harness = await createHarness({ createServiceNowClient });
+
+    await harness.callTool('SN-Register-Instance', publicMetadata());
+    const result = await harness.callTool('SN-Query-Table', {
+      instance: 'dev',
+      table_name: 'incident'
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(createServiceNowClient).toHaveBeenCalledWith(expect.objectContaining({ name: 'dev' }));
+    expect(routedClient.getRecords).toHaveBeenCalledWith('incident', expect.any(Object));
   });
 
   test('allows docs-only registration but asks the process to restart', async () => {
@@ -315,14 +337,14 @@ describe('SN-Register-Instance', () => {
     expect(harness.configManager.reload).not.toHaveBeenCalled();
   });
 
-  test('persists metadata but asks for restart when config reload fails', async () => {
+  test('returns a successful partial response when config reload fails after persistence', async () => {
     const harness = await createHarness({ reload: false });
     const result = await harness.callTool('SN-Register-Instance', publicMetadata());
     const payload = parseResponse(result);
 
-    expect(result.isError).toBe(true);
+    expect(result.isError).toBeUndefined();
     expect(payload).toMatchObject({
-      success: false,
+      success: true,
       code: 'REGISTRY_RELOAD_FAILED',
       restartRequired: true
     });
@@ -330,6 +352,49 @@ describe('SN-Register-Instance', () => {
     expect(harness.registry.get('dev')).toEqual(expect.objectContaining({ name: 'dev' }));
     expect(JSON.stringify(result)).not.toContain('secret-value');
     expect(harness.configManager.reload).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects registration when credentials disappear before the precommit write', async () => {
+    const store = {
+      hasSecret: jest.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+    };
+    const harness = await createHarness({ credentialStore: store });
+    const result = await harness.callTool('SN-Register-Instance', {
+      name: 'dev',
+      url: 'https://dev.service-now.com',
+      authType: 'basic',
+      username: 'developer'
+    });
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({ success: false, code: 'CREDENTIAL_NOT_FOUND' });
+    expect(harness.registry.list()).toEqual([]);
+    expect(harness.configManager.reload).not.toHaveBeenCalled();
+  });
+
+  test('compensates when credentials disappear immediately after the registry commit', async () => {
+    const store = {
+      hasSecret: jest.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+    };
+    const harness = await createHarness({ credentialStore: store });
+    const result = await harness.callTool('SN-Register-Instance', {
+      name: 'dev',
+      url: 'https://dev.service-now.com',
+      authType: 'basic',
+      username: 'developer'
+    });
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({ success: false, code: 'CREDENTIAL_NOT_FOUND' });
+    expect(harness.registry.list()).toEqual([]);
+    expect(harness.configManager.reload).not.toHaveBeenCalled();
   });
 
   test('serializes concurrent duplicate registrations', async () => {

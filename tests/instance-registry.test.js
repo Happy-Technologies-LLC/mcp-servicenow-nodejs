@@ -913,6 +913,34 @@ describe('InstanceRegistry persistence', () => {
     expect(registry.list()).toEqual([]);
     expect(registry.document.docs.enabled).toBe(true);
   });
+  test('runs registration precommit validation after the latest reload and before writing', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const precommit = jest.fn(async document => {
+      expect(document.instances.map(instance => instance.name)).toEqual(['dev']);
+      expect(fs.existsSync(file)).toBe(false);
+    });
+
+    await registry.register(publicInstance('dev'), { precommit });
+
+    expect(precommit).toHaveBeenCalledTimes(1);
+    expect(registry.list().map(instance => instance.name)).toEqual(['dev']);
+  });
+
+  test('does not write when registration precommit validation rejects', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const precommit = jest.fn(async () => {
+      throw Object.assign(new Error('credential disappeared'), {
+        code: 'CREDENTIAL_NOT_FOUND'
+      });
+    });
+
+    await expect(registry.register(publicInstance('dev'), { precommit }))
+      .rejects.toMatchObject({ code: 'CREDENTIAL_NOT_FOUND' });
+    expect(registry.list()).toEqual([]);
+    expect(fs.existsSync(file)).toBe(false);
+  });
 });
 
 

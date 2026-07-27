@@ -2,49 +2,53 @@
 
 ## Overview
 
-You can now switch between ServiceNow instances **during your Claude Code session** without restarting the MCP server. This is useful for working across dev, test, and production environments.
+Choose an instance per call or change the current session client's implicit target without restarting the MCP server. Explicit routing is recommended and is required when overlapping work may target different instances or race with `SN-Set-Instance`. Session switching remains useful for sequential workflows.
 
 ## Quick Start
 
-### 1. List Available Instances
+### Parallel Workstreams: Route Each Call
 
-Simply ask Claude Code:
-```
-"What ServiceNow instances are available?"
-```
+Every live ServiceNow operation accepts an optional `instance` parameter except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Omitting it uses the current session client's implicit target.
 
-Or call the tool directly:
-```
-SN-Set-Instance (with no instance_name)
-```
-
-### 2. Switch to a Different Instance
-
-At the start of your session (or anytime):
-```
-"Switch to the prod ServiceNow instance"
-"Use the test instance"
-"Set target instance to dev"
+```javascript
+await Promise.all([
+  client.callTool({
+    name: 'SN-Query-Table',
+    arguments: { table_name: 'incident', instance: 'dev', limit: 10 }
+  }),
+  client.callTool({
+    name: 'SN-Query-Table',
+    arguments: { table_name: 'incident', instance: 'prod', limit: 10 }
+  })
+]);
 ```
 
-Claude Code will automatically call:
-```
-SN-Set-Instance { instance_name: "prod" }
+Explicit calls are cached by instance name, so calls to the same named instance share that client. Concurrent calls against one stable implicit target do not require explicit routing. Do not call `SN-Set-Instance` to isolate overlapping operations.
+
+### Sequential Workflows: Switch the Session Target
+
+List available instances:
+
+```text
+SN-Set-Instance
+{}
 ```
 
-### 3. Check Current Instance
+Change the current instance:
 
-To see which instance you're currently using:
-```
-"Which ServiceNow instance am I connected to?"
+```text
+SN-Set-Instance
+{ "instance_name": "prod" }
 ```
 
-Or call:
-```
+Check the current instance:
+
+```text
 SN-Get-Current-Instance
+{}
 ```
 
-## Example Workflow
+## Sequential Example Workflow
 
 ```
 You: "Switch to prod instance"
@@ -106,20 +110,24 @@ Claude: [Calls SN-Create-Incident]
 
 ### How It Works
 
-1. **ServiceNowClient** has a `setInstance()` method that reconfigures:
-   - Base URL
-   - Authentication credentials
-   - Axios client instance
+1. **Explicit per-call routing:**
+   - Resolves a client cached under the named instance
+   - Calls with the same name share that named client
+   - Does not mutate the session client's implicit target
 
-2. **Instance switching is session-scoped:**
-   - Each MCP session maintains its own ServiceNowClient instance
-   - Switching instances affects only your current Claude Code session
-   - Other sessions/users are unaffected
+2. **`SN-Set-Instance`:**
+   - Reconfigures only the current session client for subsequent calls that omit `instance`
+   - Does not edit JSON or environment configuration
+   - Is intended for sequential workflows
 
-3. **No server restart required:**
-   - Instance switching happens in-memory
-   - Credentials loaded from `config/servicenow-instances.json`
-   - Instant switchover (< 1ms)
+3. **Session scope:**
+   - Each MCP session maintains its own current implicit target
+   - A switch affects only that session
+   - A new MCP session or server starts from startup selection again
+
+4. **No server restart required:**
+   - Selection changes happen in memory
+   - Configured credentials are loaded at startup
 
 ### Configuration File
 
@@ -148,11 +156,13 @@ Instances are defined in `config/servicenow-instances.json`:
 }
 ```
 
-### Default Instance
+### Startup Default and Current Target
 
-- When you start a new Claude Code session, it connects to the **default** instance
-- Default is marked with `"default": true` in the config
-- You can switch away from default at any time
+- For stdio, startup first honors the named `SERVICENOW_INSTANCE` override, then `"default": true`, then the first configured entry
+- HTTP sessions start with the configured default, or the first entry if none is marked
+- If the JSON file is missing, ServiceNow environment credentials can provide the single fallback instance
+- After startup, calls that omit `instance` use the session client's current implicit target
+- `SN-Set-Instance` changes that session target in memory only; it does not change the configured startup default
 
 ## Natural Language Examples
 
@@ -166,28 +176,32 @@ Claude Code understands natural requests for instance switching:
 - "What instances are available?"
 - "Which instance am I using?"
 
-❌ **Doesn't Work:**
-- You cannot create new instances via Claude Code (must edit config file)
-- You cannot modify instance credentials via Claude Code (security)
+**Outside the MCP tool surface:**
+- Happy MCP exposes no tool for creating instance configuration entries
+- Happy MCP exposes no tool for editing credentials; manage local JSON, environment variables, and secret stores outside the MCP tool surface
 
 ## Best Practices
 
-1. **Start each session by verifying instance:**
-   ```
-   "Which ServiceNow instance am I connected to?"
+1. **Route explicitly when overlapping work may use different targets:**
+   ```text
+   SN-Query-Table
+   { "table_name": "incident", "instance": "dev" }
+   SN-Query-Table
+   { "table_name": "incident", "instance": "prod" }
    ```
 
-2. **Switch before bulk operations:**
+2. **Use session switching only for sequential work:**
    ```
    "Switch to dev instance"
    [Do all dev work]
    "Switch to prod instance"
    [Do all prod work]
    ```
+   `SN-Set-Instance` changes the current session target; it is not a parallel isolation mechanism.
 
 3. **Be explicit when working with production:**
    ```
-   "Make sure I'm on the dev instance before I create these test records"
+   "Query production incidents using instance prod"
    ```
 
 ## Error Handling
@@ -213,7 +227,7 @@ Error: Request failed with status code 401
 
 ## Security Notes
 
-- Credentials are never exposed via MCP tools
-- Instance switching only affects your session
+- Happy MCP exposes no credential-edit tool, and instance listings omit credential fields
+- `SN-Set-Instance` affects only the current session client; explicit routes do not mutate it
 - All operations still require proper ServiceNow permissions
 - Switching to prod doesn't bypass any access controls

@@ -503,9 +503,12 @@ export class InstanceRegistry {
     return validateDocument(document);
   }
 
-  register(instance, { makeDefault = false } = {}) {
+  register(instance, { makeDefault = false, precommit } = {}) {
     if (typeof makeDefault !== 'boolean') {
       invalid('register options makeDefault must be a boolean', { field: 'makeDefault' });
+    }
+    if (precommit !== undefined && typeof precommit !== 'function') {
+      invalid('register options precommit must be a function', { field: 'precommit' });
     }
     return this._enqueueMutation(() => {
       validateNewInstance(instance);
@@ -523,7 +526,7 @@ export class InstanceRegistry {
       const instances = current.map(existing => shouldDefault ? { ...existing, default: false } : existing);
       instances.push(candidate);
       return { ...this._document, version: 1, instances };
-    }, updated => updated.instances.find(candidate => candidate.name === instance.name));
+    }, updated => updated.instances.find(candidate => candidate.name === instance.name), precommit);
   }
 
   update(name, patch) {
@@ -543,10 +546,14 @@ export class InstanceRegistry {
     }, updated => updated.instances.find(candidate => candidate.name === name));
   }
 
-  remove(name) {
+  remove(name, { expected } = {}) {
     return this._enqueueMutation(() => {
-      if (!this._document.instances.some(instance => instance.name === name)) {
+      const current = this._document.instances.find(instance => instance.name === name);
+      if (!current) {
         throw new InstanceRegistryError('INSTANCE_NOT_FOUND', `Instance '${name}' not found`, { name });
+      }
+      if (expected !== undefined && JSON.stringify(current) !== JSON.stringify(expected)) {
+        throw new InstanceRegistryError('INSTANCE_CHANGED', `Instance '${name}' changed before compensation`, { name });
       }
       return {
         ...this._document,
@@ -556,7 +563,8 @@ export class InstanceRegistry {
     }, () => undefined);
   }
 
-  _enqueueMutation(operation, resultSelector) {
+
+  _enqueueMutation(operation, resultSelector, precommit) {
     this._resolvePaths();
     const writePath = this.writePath;
     return enqueuePathMutation(writePath, async () => {
@@ -571,6 +579,9 @@ export class InstanceRegistry {
 
       const nextDocument = operation();
       validateDocument(nextDocument);
+      if (precommit) {
+        await precommit(clone(nextDocument));
+      }
       await this._writeAtomic(nextDocument);
       this._document = nextDocument;
       this._loaded = true;

@@ -19,6 +19,10 @@ on:
           - trusted
           - token
 
+concurrency:
+  group: publish-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -30,26 +34,32 @@ jobs:
       should-publish: ${{ steps.check.outputs.should-publish }}
       npm_publish_mode: ${{ steps.publish-mode.outputs.mode }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Get package version
         id: package-version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: echo "version=$(node scripts/package-version-changed.mjs --print-version package.json)" >> "$GITHUB_OUTPUT"
 
       - name: Check if version changed
         id: check
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should-publish=true" >> $GITHUB_OUTPUT
+            echo "should-publish=true" >> "$GITHUB_OUTPUT"
             echo "Manual dispatch, will publish"
-          elif git diff HEAD^ HEAD -- package.json | grep -q '"version"'; then
-            echo "should-publish=true" >> $GITHUB_OUTPUT
-            echo "Version changed, will publish"
           else
-            echo "should-publish=false" >> $GITHUB_OUTPUT
-            echo "Version unchanged, skipping publish"
+            changed="$(git show "${{ github.event.before }}:package.json" | node scripts/package-version-changed.mjs package.json)"
+            if [ "$changed" = "true" ]; then
+              echo "should-publish=true" >> "$GITHUB_OUTPUT"
+              echo "Version changed, will publish"
+            elif [ "$changed" = "false" ]; then
+              echo "should-publish=false" >> "$GITHUB_OUTPUT"
+              echo "Version unchanged, skipping publish"
+            else
+              echo "Unexpected version comparison result: $changed" >&2
+              exit 1
+            fi
           fi
 
       - name: Select npm publish mode
@@ -63,11 +73,12 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: 'npm'
@@ -79,20 +90,21 @@ jobs:
         run: npm test
 
       - name: Run security audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=low
 
   publish-npm:
     needs: [check-version, test]
     if: needs.check-version.outputs.should-publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -110,6 +122,11 @@ jobs:
         run: npm whoami
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Run security audit
+        run: npm audit --audit-level=low
+
+      - name: Verify published package
+        run: npm run test:package
 
       - name: Publish to npm with trusted publishing
         if: needs.check-version.outputs.npm_publish_mode == 'trusted'
@@ -121,10 +138,38 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+
+  create-release:
+    needs: [check-version, publish-npm]
+    if: needs.check-version.outputs.should-publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Bind release tag to the publishing commit
+        run: |
+          TAG="v${{ needs.check-version.outputs.version }}"
+          if git rev-parse --verify --quiet "refs/tags/$TAG"; then
+            EXISTING_SHA="$(git rev-list -n 1 "$TAG")"
+            if [ "$EXISTING_SHA" != "$GITHUB_SHA" ]; then
+              echo "::error::Release tag $TAG points to $EXISTING_SHA instead of $GITHUB_SHA"
+              exit 1
+            fi
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+          fi
+          git push origin "refs/tags/$TAG"
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           name: Release v${{ needs.check-version.outputs.version }}
           body: |
             See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
@@ -133,37 +178,53 @@ jobs:
           generate_release_notes: true
 
   publish-docker:
-    needs: [check-version, test]
+    needs: [check-version, test, publish-npm, create-release]
     if: needs.check-version.outputs.should-publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check whether this release may promote moving tags
+        id: promotion
+        run: |
+          LATEST_VERSION="$(
+            npm view happy-platform-mcp dist-tags.latest --json |
+              node -e "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => input += chunk).on('end', () => { const value = JSON.parse(input); if (typeof value !== 'string') throw new TypeError('npm latest version must be a string'); process.stdout.write(value); });"
+          )"
+          CURRENT_VERSION="${{ needs.check-version.outputs.version }}"
+          if [ "$LATEST_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "promote=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "promote=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Publishing immutable Docker tag only; npm latest is $LATEST_VERSION"
+          fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract metadata (new image)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/happy-platform-mcp
           tags: |
             type=semver,pattern={{version}},value=v${{ needs.check-version.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.check-version.outputs.version }}
-            type=semver,pattern={{major}},value=v${{ needs.check-version.outputs.version }}
-            type=raw,value=latest
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.check-version.outputs.version }},enable=${{ steps.promotion.outputs.promote == 'true' }}
+            type=semver,pattern={{major}},value=v${{ needs.check-version.outputs.version }},enable=${{ steps.promotion.outputs.promote == 'true' }}
+            type=raw,value=latest,enable=${{ steps.promotion.outputs.promote == 'true' }}
 
       - name: Build and push Docker image (new name)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -173,13 +234,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Extract metadata (migration image)
+        id: old-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-servicenow-nodejs
+          tags: |
+            type=raw,value=${{ needs.check-version.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.promotion.outputs.promote == 'true' }}
+
       - name: Push final migration tag to old image name
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/mcp-servicenow-nodejs:${{ needs.check-version.outputs.version }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/mcp-servicenow-nodejs:latest
+          tags: ${{ steps.old-meta.outputs.tags }}
           cache-from: type=gha

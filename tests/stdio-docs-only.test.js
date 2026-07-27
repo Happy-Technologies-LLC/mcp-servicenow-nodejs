@@ -37,7 +37,31 @@ describe('stdio docs-only startup', () => {
 
     expect(result).toMatchObject({ docsOnly: true, instance: null });
     expect(manager.getInstanceOrDefault).not.toHaveBeenCalled();
-    expect(createServer).toHaveBeenCalledWith(null, { docsOnly: true });
+    expect(createServer).toHaveBeenCalledWith(null, expect.objectContaining({
+      docsOnly: true,
+      configManager: manager,
+      credentialStore: expect.any(Object)
+    }));
+  });
+  test('forwards the selected manager registry and credential store to docs-only servers', async () => {
+    const registry = { marker: 'registry' };
+    const manager = { registry };
+    const credentialStore = { marker: 'credential-store' };
+    const createServer = jest.fn(async () => ({ id: 'server' }));
+
+    await createConfiguredMcpServer({
+      env: { HAPPY_MCP_DOCS_ONLY: 'true' },
+      manager,
+      credentialStore,
+      createServer
+    });
+
+    expect(createServer).toHaveBeenCalledWith(null, {
+      docsOnly: true,
+      configManager: manager,
+      instanceRegistry: registry,
+      credentialStore
+    });
   });
 
   test('production docs-only server advertises registration without touching keychain', async () => {
@@ -67,7 +91,11 @@ describe('stdio docs-only startup', () => {
 
     expect(result).toMatchObject({ docsOnly: true, instance: null });
     expect(manager.getInstanceOrDefault).toHaveBeenCalledWith(undefined);
-    expect(createServer).toHaveBeenCalledWith(null, { docsOnly: true });
+    expect(createServer).toHaveBeenCalledWith(null, expect.objectContaining({
+      docsOnly: true,
+      configManager: manager,
+      credentialStore: expect.any(Object)
+    }));
   });
 
   test('creates full MCP server when ServiceNow credentials are configured', async () => {
@@ -103,7 +131,40 @@ describe('stdio docs-only startup', () => {
       instance.password,
       expect.objectContaining({ authType: 'basic' })
     );
-    expect(createServer).toHaveBeenCalledWith(expect.any(ServiceNowClientClass));
+    expect(createServer).toHaveBeenCalledWith(expect.any(ServiceNowClientClass), expect.objectContaining({
+      configManager: manager,
+      credentialStore: expect.any(Object)
+    }));
+  });
+  test('forwards manager and credential dependencies on normal startup', async () => {
+    const instance = {
+      name: 'dev',
+      url: 'https://example.service-now.com',
+      username: 'admin',
+      password: 'password'
+    };
+    const registry = { marker: 'registry' };
+    const manager = {
+      registry,
+      getInstanceOrDefault: jest.fn(() => instance)
+    };
+    const credentialStore = { marker: 'credential-store' };
+    const ServiceNowClientClass = jest.fn(function ServiceNowClientMock() {});
+    const createServer = jest.fn(async () => ({ id: 'server' }));
+
+    await createConfiguredMcpServer({
+      env: { SERVICENOW_INSTANCE_URL: instance.url },
+      manager,
+      credentialStore,
+      ServiceNowClientClass,
+      createServer
+    });
+
+    expect(createServer).toHaveBeenCalledWith(expect.any(ServiceNowClientClass), {
+      configManager: manager,
+      instanceRegistry: registry,
+      credentialStore
+    });
   });
 
   test('does NOT silently fall back to docs-only when a passwordless (authorization_code) config errors', async () => {

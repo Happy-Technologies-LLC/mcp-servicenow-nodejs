@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+## 5.0.0 - 2026-07-23
+
+### Breaking changes
+
+- Raised the minimum supported Node.js runtime from 18 to 20 for the patched HTTP adapter dependency.
+
+### Added
+
+- Optional per-call `instance` routing for every live ServiceNow operation except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. Named routes use clients cached by instance name, preventing cross-instance and session-switch races without changing the session client's implicit target.
+
+### Security
+
+- Remediated npm advisories by pinning MCP SDK 1.29.0 and Axios 1.18.1, scoping the SDK's HTTP adapter to patched version 2.0.11, and refreshing affected transitive dependencies. `npm audit` now reports zero vulnerabilities.
 
 ## 4.0.0 - 2026-07-16
 
