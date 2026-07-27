@@ -15,6 +15,34 @@ function isCredentialValidationError(error) {
     && /requires (?:clientId|username|credentialRef)|credential reference/i.test(error.message || '');
 }
 
+const PRESERVED_INSTANCE_SECRET_FIELDS = new Set(['password', 'clientSecret']);
+const SECRET_SHAPED_INSTANCE_KEY = /(?:token|secret|password|api[_-]?key|private[_-]?key)/i;
+
+function sanitizeRawInstance(instance) {
+  if (!instance || typeof instance !== 'object' || Array.isArray(instance)) return instance;
+  let sanitized = instance;
+  for (const key of Object.keys(instance)) {
+    if (PRESERVED_INSTANCE_SECRET_FIELDS.has(key) || key === 'credentialRef' || key === 'tokenUrl') continue;
+    if (!SECRET_SHAPED_INSTANCE_KEY.test(key)) continue;
+    if (sanitized === instance) sanitized = { ...instance };
+    delete sanitized[key];
+  }
+  return sanitized;
+}
+
+function sanitizeRawInstances(instances) {
+  if (!Array.isArray(instances)) return instances;
+  let sanitized = instances;
+  for (let index = 0; index < instances.length; index += 1) {
+    const instance = sanitizeRawInstance(instances[index]);
+    if (instance !== instances[index]) {
+      if (sanitized === instances) sanitized = [...instances];
+      sanitized[index] = instance;
+    }
+  }
+  return sanitized;
+}
+
 /**
  * Map a loaded instance config to the options object ServiceNowClient expects.
  * Single source of truth so every call site (server, stdio, resources,
@@ -76,9 +104,11 @@ export class ConfigManager {
     }
 
     this._usingEnvFallback = false;
-    this.instances = typeof this.registry._listForClient === 'function'
-      ? this.registry._listForClient()
-      : document.instances || this.registry.list();
+    this.instances = sanitizeRawInstances(
+      typeof this.registry._listForClient === 'function'
+        ? this.registry._listForClient()
+        : document.instances || this.registry.list()
+    );
     return this.instances;
   }
 
@@ -164,9 +194,11 @@ export class ConfigManager {
         this._usingEnvFallback = true;
         return this.loadFromEnv();
       }
-      this.instances = typeof this.registry._listForClient === 'function'
-        ? this.registry._listForClient()
-        : document.instances || this.registry.list();
+      this.instances = sanitizeRawInstances(
+        typeof this.registry._listForClient === 'function'
+          ? this.registry._listForClient()
+          : document.instances || this.registry.list()
+      );
       return this.instances;
     } catch (error) {
       this.instances = previousInstances;
@@ -185,7 +217,7 @@ export class ConfigManager {
       return instance;
     }
     return typeof this.registry._getForClient === 'function'
-      ? this.registry._getForClient(name)
+      ? sanitizeRawInstance(this.registry._getForClient(name))
       : this.registry.get(name);
   }
 
@@ -194,7 +226,7 @@ export class ConfigManager {
     const instance = this._usingEnvFallback
       ? (instances.find(candidate => candidate.default === true) || instances[0])
       : (typeof this.registry._getDefaultForClient === 'function'
-        ? this.registry._getDefaultForClient()
+        ? sanitizeRawInstance(this.registry._getDefaultForClient())
         : this.registry.getDefault());
     if (!instance) {
       const path = this.registry.writePath || this.registry.readPath;

@@ -396,6 +396,40 @@ describe('ConfigManager registry facade', () => {
     expect(registry._listForClient).toHaveBeenCalledTimes(2);
     expect(registry.validate).toHaveBeenCalledWith(publicInstances[0]);
   });
+  test('strips unsupported secret-shaped fields from raw client reads', () => {
+    const rawInstance = {
+      name: 'unsafe',
+      url: 'https://unsafe.service-now.com',
+      username: 'user',
+      password: 'legacy-password',
+      clientSecret: 'legacy-client-secret',
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      apiKey: 'api-key',
+      githubToken: 'github-token',
+      privateKey: 'private-key',
+      tokenUrl: 'https://unsafe.service-now.com/oauth/token'
+    };
+    const registry = {
+      load: jest.fn(() => ({ version: 1, instances: [rawInstance] })),
+      hasFile: jest.fn(() => true),
+      _listForClient: jest.fn(() => [rawInstance]),
+      _getForClient: jest.fn(() => rawInstance),
+      _getDefaultForClient: jest.fn(() => rawInstance)
+    };
+    const cm = new ConfigManager({ registry });
+
+    expect(cm.loadInstances()[0]).toEqual(expect.objectContaining({
+      password: 'legacy-password',
+      clientSecret: 'legacy-client-secret',
+      tokenUrl: rawInstance.tokenUrl
+    }));
+    for (const key of ['accessToken', 'refreshToken', 'apiKey', 'githubToken', 'privateKey']) {
+      expect(cm.loadInstances()[0]).not.toHaveProperty(key);
+    }
+    expect(cm.getInstance('unsafe')).not.toHaveProperty('accessToken');
+    expect(cm.getDefaultInstance()).not.toHaveProperty('githubToken');
+  });
 
   test('keeps legacy credentials available only through ConfigManager client reads', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-config-manager-legacy-'));

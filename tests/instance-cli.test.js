@@ -261,6 +261,91 @@ test('remove restores all secrets when metadata removal fails', async () => {
     expect(registry.update).toHaveBeenCalledWith('dev', { description: 'Updated' });
     expect(prompt.password).not.toHaveBeenCalled();
   });
+  test('uses the inferred password grant for credential choices and preserves the canonical object when setting either credential', async () => {
+    const { out, err } = streams();
+    const refs = {
+      password: 'keychain:instance/inferred/password',
+      clientSecret: 'keychain:instance/inferred/client-secret'
+    };
+    const instance = {
+      name: 'inferred',
+      url: 'https://inferred.service-now.com',
+      authType: 'oauth',
+      clientId: 'client',
+      username: 'developer',
+      credentialRef: { clientSecret: refs.clientSecret }
+    };
+    const registry = registryWith([instance]);
+    const store = credentialStore();
+    const prompt = prompts({ secret: 'new-password' });
+
+    expect(await runInstanceCli(['instance', 'credential', 'set', 'inferred', '--type', 'password'], {
+      registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
+    })).toBe(0);
+    expect(registry.update).toHaveBeenCalledWith('inferred', {
+      credentialRef: { password: refs.password, clientSecret: refs.clientSecret }
+    });
+
+    registry.update.mockClear();
+    prompt.password.mockClear();
+    prompt.password.mockResolvedValueOnce('new-client-secret');
+    expect(await runInstanceCli(['instance', 'credential', 'set', 'inferred', '--type', 'client-secret'], {
+      registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
+    })).toBe(0);
+    expect(registry.update).toHaveBeenCalledWith('inferred', {
+      credentialRef: { password: refs.password, clientSecret: refs.clientSecret }
+    });
+  });
+
+  test.each(['12junk', '12.5', '1e2', '0x10', '+12', '-1', ''])(
+    'rejects invalid add redirect port %j before registry validation',
+    async value => {
+      const { out, err } = streams();
+      const registry = registryWith([]);
+      const code = await runInstanceCli([
+        'instance', 'add', '--name', 'redirect', '--url', 'https://redirect.service-now.com',
+        '--auth-type', 'oauth', '--grant-type', 'authorization_code', '--client-id', 'client',
+        '--redirect-port', value
+      ], { registry, prompts: prompts(), stdout: out, stderr: err });
+      expect(err.chunks.join('')).toMatch(/redirect[- ]port/i);
+      expect(registry.validate).not.toHaveBeenCalled();
+    }
+  );
+
+  test('normalizes a valid add redirect port before validation and persistence', async () => {
+    const { out, err } = streams();
+    const registry = registryWith([]);
+    expect(await runInstanceCli([
+      'instance', 'add', '--name', 'redirect', '--url', 'https://redirect.service-now.com',
+      '--auth-type', 'oauth', '--grant-type', 'authorization_code', '--client-id', 'client',
+      '--redirect-port', '8455'
+    ], { registry, prompts: prompts(), stdout: out, stderr: err })).toBe(0);
+    expect(registry.validate).toHaveBeenCalledWith(expect.objectContaining({ redirectPort: 8455 }));
+    expect(registry.register).toHaveBeenCalledWith(expect.objectContaining({ redirectPort: 8455 }), expect.anything());
+  });
+
+  test.each(['12junk', '12.5', '1e2', '0x10', '+12', '-1', ''])(
+    'rejects invalid update redirect port %j before registry update',
+    async value => {
+      const { out, err } = streams();
+      const registry = registryWith([basic]);
+      const code = await runInstanceCli(['instance', 'update', 'dev', '--redirect-port', value], {
+        registry, prompts: prompts(), stdout: out, stderr: err
+      });
+      expect(err.chunks.join('')).toMatch(/redirect[- ]port/i);
+      expect(registry.update).not.toHaveBeenCalled();
+    }
+  );
+
+  test('normalizes a valid update redirect port before registry update', async () => {
+    const { out, err } = streams();
+    const registry = registryWith([basic]);
+    expect(await runInstanceCli(['instance', 'update', 'dev', '--redirect-port', '8455'], {
+      registry, prompts: prompts(), stdout: out, stderr: err
+    })).toBe(0);
+    expect(registry.update).toHaveBeenCalledWith('dev', { redirectPort: 8455 });
+  });
+
 
   test('unknown commands return usage code 2', async () => {
     const { out, err } = streams();

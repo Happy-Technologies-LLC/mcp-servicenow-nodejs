@@ -150,6 +150,24 @@ function parseBoolean(value, field) {
   if (value === false || value === 'false') return false;
   throw usageError(`Option --${field} must be true or false.`);
 }
+function parseRedirectPort(value) {
+  const trimmed = String(value).trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw usageError('Option --redirect-port must be a decimal integer from 0 to 65535.');
+  }
+  const port = Number(trimmed);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw usageError('Option --redirect-port must be a decimal integer from 0 to 65535.');
+  }
+  return port;
+}
+
+function effectiveOAuthGrantType(instance) {
+  return instance?.grantType === undefined
+    ? (instance?.username ? 'password' : 'client_credentials')
+    : instance.grantType;
+}
+
 
 function instanceCredentialRefs(instance) {
   const ref = instance?.credentialRef;
@@ -163,13 +181,14 @@ function instanceCredentialRefs(instance) {
 function expectedCredentialType(instance, requested) {
   if (instance.authType === 'basic') return requested === 'password' ? requested : null;
   if (instance.authType !== 'oauth') return null;
-  if (instance.grantType === 'authorization_code') return null;
-  if (instance.grantType === 'password') return requested === 'password' || requested === 'client-secret' ? requested : null;
+  const grantType = effectiveOAuthGrantType(instance);
+  if (grantType === 'authorization_code') return null;
+  if (grantType === 'password') return requested === 'password' || requested === 'client-secret' ? requested : null;
   return requested === 'client-secret' ? requested : null;
 }
 
 function credentialRefPatch(instance, type, ref) {
-  if (instance.authType === 'oauth' && instance.grantType === 'password') {
+  if (instance.authType === 'oauth' && effectiveOAuthGrantType(instance) === 'password') {
     const current = instance.credentialRef && typeof instance.credentialRef === 'object'
       ? { ...instance.credentialRef }
       : {};
@@ -179,6 +198,7 @@ function credentialRefPatch(instance, type, ref) {
   }
   return { credentialRef: ref };
 }
+
 
 async function hasSecret(store, ref) {
   try {
@@ -274,21 +294,24 @@ async function addCommand(args, context) {
   if (positionals.length) throw usageError('instance add does not accept positional arguments.');
   const initial = {};
   for (const [flag, field] of METADATA_FLAGS) {
-    if (flags[flag] !== undefined && field !== 'noDefault') initial[field] = flags[flag];
+    if (flags[flag] !== undefined && field !== 'noDefault') {
+      initial[field] = field === 'redirectPort' ? parseRedirectPort(flags[flag]) : flags[flag];
+    }
   }
   if (flags.default !== undefined) initial.default = parseBoolean(flags.default, 'default');
   if (flags['no-default']) initial.default = false;
   const instance = await promptMetadata(prompts, initial);
+  const grantType = effectiveOAuthGrantType(instance);
   const refs = {};
   if (instance.authType === 'basic') refs.password = credentialRefFor(instance.name, 'password');
-  else if (instance.grantType === 'client_credentials') refs.clientSecret = credentialRefFor(instance.name, 'client-secret');
-  else if (instance.grantType === 'password') {
+  else if (grantType === 'client_credentials') refs.clientSecret = credentialRefFor(instance.name, 'client-secret');
+  else if (grantType === 'password') {
     refs.password = credentialRefFor(instance.name, 'password');
     refs.clientSecret = credentialRefFor(instance.name, 'client-secret');
   }
   const candidate = {
     ...instance,
-    ...(instance.authType === 'oauth' && instance.grantType === 'password'
+    ...(instance.authType === 'oauth' && grantType === 'password'
       ? { credentialRef: { password: refs.password, clientSecret: refs.clientSecret } }
       : refs.password ? { credentialRef: refs.password } : refs.clientSecret ? { credentialRef: refs.clientSecret } : {})
   };
@@ -312,11 +335,11 @@ async function addCommand(args, context) {
       const secret = await promptSecret(prompts, 'password', 'Password:');
       await setWithSnapshot(store, refs.password, secret, snapshots);
       instance.credentialRef = refs.password;
-    } else if (instance.grantType === 'client_credentials') {
+    } else if (grantType === 'client_credentials') {
       const secret = await promptSecret(prompts, 'clientSecret', 'Client secret:');
       await setWithSnapshot(store, refs.clientSecret, secret, snapshots);
       instance.credentialRef = refs.clientSecret;
-    } else if (instance.grantType === 'password') {
+    } else if (grantType === 'password') {
       const passwordValue = await promptSecret(prompts, 'password', 'Password:');
       const clientSecretValue = await promptSecret(prompts, 'clientSecret', 'Client secret:');
       await setWithSnapshot(store, refs.password, passwordValue, snapshots);
@@ -355,7 +378,7 @@ async function updateCommand(name, args, context) {
   if (flags['no-default']) patch.default = false;
   for (const field of fields) {
     const flag = [...METADATA_FLAGS.entries()].find(([, value]) => value === field)?.[0];
-    if (flags[flag] !== undefined) patch[field] = field === 'redirectPort' ? Number(flags[flag]) : flags[flag];
+    if (flags[flag] !== undefined) patch[field] = field === 'redirectPort' ? parseRedirectPort(flags[flag]) : flags[flag];
   }
   if (!seenMetadataFlag && flags.default === undefined && !flags['no-default']) {
     patch.url = await ask(context.prompts, 'input', { name: 'url', message: 'ServiceNow URL:', default: existing.url });
@@ -378,11 +401,12 @@ async function credentialSetCommand(name, args, context) {
   const { flags, positionals } = parseFlags(args, new Map([['type', 'type']]));
   if (positionals.length) throw usageError('instance credential set accepts --type only.');
   const instance = await context.registry.get(name);
+  const grantType = effectiveOAuthGrantType(instance);
   const requested = flags.type || await ask(context.prompts, 'select', {
     name: 'type', message: 'Credential type:', choices: [
       ...(instance.authType === 'basic' ? [{ name: 'Password', value: 'password' }] : []),
-      ...(instance.authType === 'oauth' && instance.grantType === 'password' ? [{ name: 'Password', value: 'password' }] : []),
-      ...(instance.authType === 'oauth' && instance.grantType !== 'authorization_code' ? [{ name: 'Client secret', value: 'client-secret' }] : [])
+      ...(instance.authType === 'oauth' && grantType === 'password' ? [{ name: 'Password', value: 'password' }] : []),
+      ...(instance.authType === 'oauth' && grantType !== 'authorization_code' ? [{ name: 'Client secret', value: 'client-secret' }] : [])
     ]
   });
   const type = expectedCredentialType(instance, requested);

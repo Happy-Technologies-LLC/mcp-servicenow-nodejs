@@ -14,6 +14,7 @@ const ALLOWED_FIELDS = new Set([
   'credentialRef', 'scope', 'authorizeUrl', 'tokenUrl', 'redirectPort',
   'callbackPath', 'default', 'description'
 ]);
+const LEGACY_INSTANCE_SECRET_FIELDS = new Set(['password', 'clientSecret']);
 const SECRET_FIELDS = new Set(['password', 'clientSecret', 'githubToken', 'accessToken', 'refreshToken', 'apiKey', 'token']);
 const GRANT_TYPES = new Set(['client_credentials', 'password', 'authorization_code']);
 const AUTH_TYPES = new Set(['basic', 'oauth']);
@@ -54,13 +55,14 @@ function redactSecrets(value, insideCredentialRef = false) {
   return redacted;
 }
 
-function hasSecretField(value, insideCredentialRef = false) {
-  if (!value || typeof value !== 'object') return false;
-  if (Array.isArray(value)) return value.some(nested => hasSecretField(nested, insideCredentialRef));
-  return Object.entries(value).some(([key, nested]) => {
-    if (!insideCredentialRef && SECRET_FIELDS.has(key)) return true;
-    return hasSecretField(nested, insideCredentialRef || key === 'credentialRef');
-  });
+function hasLegacyInstanceSecrets(document) {
+  return Array.isArray(document?.instances)
+    && document.instances.some(instance => (
+      instance
+      && typeof instance === 'object'
+      && (Object.prototype.hasOwnProperty.call(instance, 'password')
+        || Object.prototype.hasOwnProperty.call(instance, 'clientSecret'))
+    ));
 }
 
 function invalid(message, details = {}) {
@@ -178,7 +180,7 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
   }
 
   for (const field of Object.keys(instance)) {
-    if (!ALLOWED_FIELDS.has(field) && !(allowSecrets && SECRET_FIELDS.has(field))) {
+    if (!ALLOWED_FIELDS.has(field) && !(allowSecrets && LEGACY_INSTANCE_SECRET_FIELDS.has(field))) {
       invalid(`Unknown instance field '${field}'`, { field });
     }
   }
@@ -220,9 +222,8 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     canonicalCredentialRef(instance.credentialRef, name, 'password');
     return true;
   }
-
   const grantType = instance.grantType === undefined
-    ? (instance.username === undefined ? 'client_credentials' : 'password')
+    ? (instance.username ? 'password' : 'client_credentials')
     : instance.grantType;
   if (!GRANT_TYPES.has(grantType)) {
     invalid(`OAuth instance '${name}' has an unsupported grantType`, { field: 'grantType' });
@@ -262,7 +263,7 @@ function validateDocument(document) {
   if (!Array.isArray(document.instances)) {
     throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry instances must be an array');
   }
-  const legacyPlaintext = hasSecretField(document);
+  const legacyPlaintext = hasLegacyInstanceSecrets(document);
   const seen = new Set();
   let defaultCount = 0;
   for (const instance of document.instances) {
@@ -277,7 +278,7 @@ function validateDocument(document) {
         throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry may contain at most one default instance', { field: 'default' });
       }
     }
-    validateNewInstance(instance, { allowSecrets: legacyPlaintext });
+    validateNewInstance(instance, { allowSecrets: legacyPlaintext && hasLegacyInstanceSecrets({ instances: [instance] }) });
   }
   return document;
 }
@@ -374,7 +375,7 @@ export class InstanceRegistry {
     };
     if (document.version === undefined) document = { ...document, version: 1 };
     this._document = document;
-    this._legacyPlaintext = hasSecretField(document);
+    this._legacyPlaintext = hasLegacyInstanceSecrets(document);
     this._loaded = true;
     return redact ? redactSecrets(this._document) : this._document;
   }

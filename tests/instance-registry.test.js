@@ -322,6 +322,35 @@ describe('InstanceRegistry validation and defaults', () => {
       })).rejects.toThrow(/^(?!.*fixture-secret-value).*$/s);
     }
   });
+  test('rejects unsupported legacy instance secret fields even when supported plaintext credentials exist', () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      version: 1,
+      instances: [{
+        name: 'legacy',
+        url: 'https://legacy.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        password: 'legacy-password',
+        accessToken: 'unsupported-token'
+      }]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    expect(() => registry.load()).toThrow(expect.objectContaining({ code: 'REGISTRY_RELOAD_FAILED' }));
+  });
+
+  test('does not let docs.githubToken enable instance secret fields', () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      version: 1,
+      docs: { githubToken: 'docs-token' },
+      instances: [publicInstance('public')]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    expect(registry.load().docs).not.toHaveProperty('githubToken');
+    expect(registry.get('public')).not.toHaveProperty('githubToken');
+  });
+
   test('rejects invalid provided schema field types and malformed endpoints', async () => {
     const { file } = tempPaths();
     const registry = new InstanceRegistry({ readPath: file, writePath: file });
@@ -636,7 +665,6 @@ describe('InstanceRegistry persistence', () => {
       instances: [{
         ...publicInstance('tokenized', {
           grantType: 'client_credentials',
-          token: secrets.token,
           tokenUrl: 'https://tokenized.service-now.com/oauth_token.do',
           credentialRef: credentialRefFor('tokenized', 'client-secret')
         })
@@ -650,7 +678,7 @@ describe('InstanceRegistry persistence', () => {
     expect(publicView.instances[0].tokenUrl).toBe('https://tokenized.service-now.com/oauth_token.do');
     expect(publicView.instances[0].credentialRef).toBe(credentialRefFor('tokenized', 'client-secret'));
     await expect(registry.register(publicInstance('new')))
-      .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
+      .resolves.toEqual(expect.objectContaining({ name: 'new' }));
   });
 
   test('returns defensive redacted clones from load, document, and reload', () => {
