@@ -224,22 +224,48 @@ function normalizeInstanceUrl(value) {
   return typeof value === 'string' ? value.replace(/\/+$/, '') : value;
 }
 
+function normalizePathname(pathname) {
+  const normalized = pathname.replace(/\/+$/, '');
+  return normalized || '/';
+}
+
 function requestBelongsToInstance(config, instanceUrl) {
   if (!config || typeof config !== 'object') return false;
   const capturedUrl = normalizeInstanceUrl(instanceUrl);
   if (normalizeInstanceUrl(config.baseURL) !== capturedUrl) return false;
   if (typeof config.url !== 'string' || config.url.length === 0) return false;
+
+  let base;
   try {
-    const expected = new URL(capturedUrl);
-    const resolved = new URL(config.url, `${capturedUrl}/`);
-    const expectedPath = expected.pathname.replace(/\/+$/, '');
-    return resolved.origin === expected.origin
-      && (!expectedPath || expectedPath === '/'
-        || resolved.pathname === expectedPath
-        || resolved.pathname.startsWith(`${expectedPath}/`));
+    base = new URL(capturedUrl);
   } catch {
     return false;
   }
+
+  const basePath = normalizePathname(base.pathname);
+  const requestUrl = config.url;
+  const absoluteRequest = /^[a-z][a-z\d+\-.]*:/i.test(requestUrl) || requestUrl.startsWith('//');
+  let resolved;
+  try {
+    if (absoluteRequest) {
+      resolved = new URL(requestUrl);
+      if (resolved.origin !== base.origin) return false;
+    } else {
+      const pathEnd = requestUrl.search(/[?#]/);
+      const rawPath = pathEnd === -1 ? requestUrl : requestUrl.slice(0, pathEnd);
+      const suffix = pathEnd === -1 ? '' : requestUrl.slice(pathEnd);
+      const relativePath = rawPath.replace(/^\/+/, '');
+      const joinedPath = basePath === '/' ? `/${relativePath}` : `${basePath}/${relativePath}`;
+      resolved = new URL(`${base.origin}${joinedPath}${suffix}`);
+    }
+  } catch {
+    return false;
+  }
+
+  const resolvedPath = normalizePathname(resolved.pathname);
+  return basePath === '/'
+    ? true
+    : resolvedPath === basePath || resolvedPath.startsWith(`${basePath}/`);
 }
 
 /** Default token-endpoint POST: form-encode params via axios, return the body. */
@@ -400,11 +426,16 @@ export class ServiceNowClient {
 
     // Response interceptor — refresh on 401 and retry once against this client only.
     client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        this._assertCapturedRequest(captured, response?.config);
+        return response;
+      },
       async (error) => {
-        const originalRequest = error.config;
-        if (captured.authType === 'oauth' && error.response?.status === 401) {
+        const originalRequest = error?.config || error?.response?.config;
+        if (originalRequest) {
           this._assertCapturedRequest(captured, originalRequest);
+        }
+        if (captured.authType === 'oauth' && error.response?.status === 401) {
           if (!originalRequest._oauthRetry) {
             originalRequest._oauthRetry = true;
             this._assertCapturedRequest(captured, originalRequest);

@@ -744,4 +744,75 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     expect(client.oauthToken).toBeNull();
     expect(oldConfig.headers.Authorization).toBe('Bearer old-access-token');
   });
+  test.each([200, 403, 500])(
+    'rejects a stale old-generation %s response before it reaches the caller',
+    async (status) => {
+      const client = makeGrantClient({ clientSecret: 'old-client-secret' });
+      client.oauthToken = 'old-access-token';
+      client.oauthTokenExpiry = Date.now() + 300000;
+      const oldClient = client.client;
+      let releaseResponse;
+      const responsePending = new Promise(resolve => { releaseResponse = resolve; });
+      const adapter = jest.fn(config => responsePending.then(() => {
+        if (status < 400) {
+          return { status, data: { result: ['stale'] }, headers: {}, config };
+        }
+        const error = new Error(`old ${status} response`);
+        error.config = config;
+        error.response = { status, data: { error: { message: 'stale' } }, config };
+        throw error;
+      }));
+      oldClient.defaults.adapter = adapter;
+
+      const request = oldClient.get('/api/now/table/sys_user');
+      await new Promise(resolve => setImmediate(resolve));
+      expect(adapter).toHaveBeenCalledTimes(1);
+
+      client.setInstance('https://prod.service-now.com', null, null, 'prod', {
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        clientId: 'new-cid',
+        clientSecret: 'new-client-secret'
+      });
+      releaseResponse();
+
+      await expect(request).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    }
+  );
+
+  test.each([
+    '/api/now/table/sys_user',
+    'api/now/table/sys_user'
+  ])('accepts relative request URL %s for an instance path prefix', async (url) => {
+    const client = new ServiceNowClient('https://example.service-now.com/tenant', 'user', 'password');
+    const adapter = jest.fn(async config => ({
+      status: 200,
+      data: { result: [] },
+      headers: {},
+      config
+    }));
+    client.client.defaults.adapter = adapter;
+
+    await expect(client.client.get(url)).resolves.toMatchObject({
+      data: { result: [] }
+    });
+    expect(adapter).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    'https://evil.example.com/api/now/table/sys_user',
+    'https://example.service-now.com/api/now/table/sys_user'
+  ])('rejects absolute request URL outside the captured instance base: %s', async (url) => {
+    const client = new ServiceNowClient('https://example.service-now.com/tenant', 'user', 'password');
+    const adapter = jest.fn(async config => ({
+      status: 200,
+      data: { result: [] },
+      headers: {},
+      config
+    }));
+    client.client.defaults.adapter = adapter;
+
+    await expect(client.client.get(url)).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(adapter).not.toHaveBeenCalled();
+  });
 });

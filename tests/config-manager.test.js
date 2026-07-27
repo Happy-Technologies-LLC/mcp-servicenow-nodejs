@@ -194,6 +194,39 @@ describe('ConfigManager.loadFromEnv()', () => {
     });
   });
 
+  it.each([
+    ['missing OAuth clientId', { grantType: 'client_credentials', clientSecret: 'secret-to-protect' }],
+    ['missing client_credentials clientSecret', { grantType: 'client_credentials', clientId: 'cid' }],
+    ['missing password-grant username/password', { grantType: 'password', clientId: 'cid', clientSecret: 'secret-to-protect' }],
+    ['missing password-grant clientSecret', {
+      grantType: 'password',
+      clientId: 'cid',
+      username: 'oauth-user',
+      password: 'oauth-password'
+    }],
+    ['missing authorization_code clientId', { grantType: 'authorization_code' }]
+  ])('rejects %s with the stable startup error and no secret material', (_label, values) => {
+    process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';
+    process.env.SERVICENOW_AUTH_TYPE = 'oauth';
+    process.env.SERVICENOW_OAUTH_GRANT_TYPE = values.grantType;
+    if (values.clientId) process.env.SERVICENOW_CLIENT_ID = values.clientId;
+    if (values.clientSecret) process.env.SERVICENOW_CLIENT_SECRET = values.clientSecret;
+    if (values.username) process.env.SERVICENOW_USERNAME = values.username;
+    if (values.password) process.env.SERVICENOW_PASSWORD = values.password;
+
+    const cm = new ConfigManager();
+    let thrown;
+    try {
+      cm.loadFromEnv();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown.message).toMatch(/Missing ServiceNow credentials/);
+    expect(thrown.message).not.toContain('secret-to-protect');
+  });
+
   describe('OAuth authorization_code grant (per-user)', () => {
     it('does NOT require USERNAME or PASSWORD (browser sign-in supplies identity)', () => {
       process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';

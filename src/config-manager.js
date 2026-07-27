@@ -7,6 +7,14 @@
 
 import { InstanceRegistry, InstanceRegistryError } from './instance-registry.js';
 
+const MISSING_INSTANCE_URL_ERROR = 'Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD unless SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code) in .env';
+const MISSING_INSTANCE_CREDENTIALS_ERROR = 'Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env (USERNAME and PASSWORD not required when SERVICENOW_AUTH_TYPE=oauth and SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code)';
+
+function isCredentialValidationError(error) {
+  return error?.code === 'INVALID_INSTANCE_CONFIG'
+    && /requires (?:clientId|username|credentialRef)|credential reference/i.test(error.message || '');
+}
+
 /**
  * Map a loaded instance config to the options object ServiceNowClient expects.
  * Single source of truth so every call site (server, stdio, resources,
@@ -82,10 +90,10 @@ export class ConfigManager {
     const requiresUserPass = !(isOAuth && passwordlessGrant);
 
     if (!process.env.SERVICENOW_INSTANCE_URL) {
-      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD unless SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code) in .env');
+      throw new Error(MISSING_INSTANCE_URL_ERROR);
     }
     if (requiresUserPass && (!process.env.SERVICENOW_USERNAME || !process.env.SERVICENOW_PASSWORD)) {
-      throw new Error('Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env (USERNAME and PASSWORD not required when SERVICENOW_AUTH_TYPE=oauth and SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code)');
+      throw new Error(MISSING_INSTANCE_CREDENTIALS_ERROR);
     }
 
     const instance = {
@@ -119,6 +127,19 @@ export class ConfigManager {
       }
     }
 
+    const validationInstance = isOAuth && passwordlessGrant
+      ? { ...instance, username: undefined, password: undefined }
+      : instance;
+    if (typeof this.registry.validate === 'function') {
+      try {
+        this.registry.validate(validationInstance);
+      } catch (error) {
+        if (isCredentialValidationError(error)) {
+          throw new Error(MISSING_INSTANCE_CREDENTIALS_ERROR);
+        }
+        throw error;
+      }
+    }
     this.instances = [instance];
     return this.instances;
   }
