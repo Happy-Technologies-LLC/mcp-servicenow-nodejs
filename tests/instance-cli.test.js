@@ -379,3 +379,24 @@ test('fully specified public authorization-code add runs without a TTY', async (
   expect(registry.register).toHaveBeenCalled();
   expect(store.setSecret).not.toHaveBeenCalled();
 });
+
+test.each([
+  ['default input', ['instance', 'add'], { password: jest.fn() }],
+  ['default select', ['instance', 'credential', 'set', 'dev'], { input: jest.fn() }],
+  ['default password', ['instance', 'credential', 'set', 'dev', '--type', 'password'], { input: jest.fn() }],
+  ['default confirm', ['instance', 'remove', 'dev'], { input: jest.fn() }]
+])('partial prompt injection cannot invoke %s in a non-TTY', async (_label, args, injected) => {
+  const { out, err } = streams();
+  const registry = registryWith([basic]);
+  const code = await runInstanceCli(args, {
+    registry,
+    credentialStore: credentialStore(),
+    prompts: injected,
+    stdin: { isTTY: false },
+    stdout: { ...out, isTTY: false },
+    stderr: { ...err, isTTY: false }
+  });
+
+  expect(code).toBe(2);
+  for (const prompt of Object.values(injected)) expect(prompt).not.toHaveBeenCalled();
+});

@@ -55,6 +55,10 @@ function makeGrantClient({
   });
 }
 
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 describe('ServiceNowClient authorization_code grant', () => {
   it('runs the interactive flow when no refresh token is stored, and persists the new refresh token', async () => {
     const store = new InMemoryTokenStore();
@@ -827,5 +831,55 @@ describe('ServiceNowClient OAuth registered credentials', () => {
 
     await expect(client.client.get(url)).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
     expect(adapter).not.toHaveBeenCalled();
+  });
+});
+
+test('returns a successful client-credentials refresh without falling back to another grant', async () => {
+  const tokenPost = jest.spyOn(axios, 'post')
+    .mockResolvedValueOnce({ data: { access_token: 'refreshed-client-token', refresh_token: 'rotated-client-refresh', expires_in: 1800 } })
+    .mockResolvedValueOnce({ data: { access_token: 'fallback-token', expires_in: 1800 } });
+  const client = makeGrantClient({ clientSecret: 'client-secret-fixture' });
+  client.oauthRefreshToken = 'stored-client-refresh';
+
+  await expect(client._getOAuthToken()).resolves.toBe('refreshed-client-token');
+
+  expect(tokenPost).toHaveBeenCalledTimes(1);
+  const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
+  expect(params).toMatchObject({
+    grant_type: 'refresh_token',
+    refresh_token: 'stored-client-refresh',
+    client_secret: 'client-secret-fixture'
+  });
+});
+
+test('returns a successful password-grant refresh without falling back to another grant', async () => {
+  const credentialStore = {
+    getSecret: jest.fn(async ref => ({
+      'keychain:instance/dev/password': 'password-fixture',
+      'keychain:instance/dev/client-secret': 'client-secret-fixture'
+    }[ref]))
+  };
+  const tokenPost = jest.spyOn(axios, 'post')
+    .mockResolvedValueOnce({ data: { access_token: 'refreshed-password-token', refresh_token: 'rotated-password-refresh', expires_in: 1800 } })
+    .mockResolvedValueOnce({ data: { access_token: 'fallback-token', expires_in: 1800 } });
+  const client = makeGrantClient({
+    username: 'dev-user',
+    credentialRef: {
+      password: 'keychain:instance/dev/password',
+      clientSecret: 'keychain:instance/dev/client-secret'
+    },
+    credentialStore,
+    grantType: 'password'
+  });
+  client.oauthRefreshToken = 'stored-password-refresh';
+
+  await expect(client._getOAuthToken()).resolves.toBe('refreshed-password-token');
+
+  expect(tokenPost).toHaveBeenCalledTimes(1);
+  const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
+  expect(params).toMatchObject({
+    grant_type: 'refresh_token',
+    refresh_token: 'stored-password-refresh',
+    client_secret: 'client-secret-fixture'
   });
 });

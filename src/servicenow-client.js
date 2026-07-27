@@ -628,6 +628,8 @@ export class ServiceNowClient {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
+        this._assertCurrentGeneration(generation);
+        return this._handleTokenResponse(response.data, generation);
       } catch (refreshError) {
         this._assertCurrentGeneration(generation);
         const status = refreshError?.response?.status;

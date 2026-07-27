@@ -44,49 +44,18 @@ function getPrompts(dependencies) {
     input: dependencies.stdin || process.stdin,
     output: dependencies.stdout || process.stdout
   };
-  return {
+  const injectedKinds = new Set(
+    ['input', 'password', 'select', 'confirm'].filter(kind => typeof source?.[kind] === 'function')
+  );
+  const prompts = {
     input: source.input || (options => defaultInput(options, promptContext)),
     password: source.password || (options => defaultPassword(options, promptContext)),
     select: source.select || (options => defaultSelect(options, promptContext)),
     confirm: source.confirm || (options => defaultConfirm(options, promptContext))
   };
-}
-
-function hasInjectedPrompt(dependencies) {
-  const source = dependencies.prompts || dependencies.prompt || dependencies;
-  return ['input', 'password', 'select', 'confirm'].some(kind => typeof source?.[kind] === 'function');
-}
-
-function promptWouldBeRequired(args) {
-  const command = args[0];
-  if (command === 'add') {
-    try {
-      const { flags } = parseFlags(args.slice(1), new Map([...METADATA_FLAGS, ['make-default', true]]));
-      if (flags['auth-type'] === 'oauth' && flags['grant-type'] === 'authorization_code') {
-        return !['name', 'url', 'auth-type', 'grant-type', 'client-id', 'scope', 'authorize-url', 'token-url', 'callback-path', 'description']
-          .every(flag => flags[flag] !== undefined);
-      }
-    } catch {
-      return true;
-    }
-    return true;
-  }
-  if (command === 'remove' || command === 'migrate') return true;
-  if (command === 'credential' && args[1] === 'set') return true;
-  if (command === 'update') return args.length <= 2;
-  return false;
-}
-
-function ensureInteractive(context, args) {
-  if (
-    !context.promptInjected
-    && promptWouldBeRequired(args)
-    && (context.stdin?.isTTY !== true || context.stdout?.isTTY !== true)
-  ) {
-    output(context.stderr, 'Non-interactive use requires an interactive TTY for masked prompts; rerun in a terminal or inject prompts for testing.');
-    return false;
-  }
-  return true;
+  prompts.defaultKinds = new Set(['input', 'password', 'select', 'confirm'].filter(kind => !injectedKinds.has(kind)));
+  prompts.nonTTY = promptContext.input?.isTTY !== true || promptContext.output?.isTTY !== true;
+  return prompts;
 }
 
 function clone(value) {
@@ -166,6 +135,11 @@ function rejectSecretArguments(argv) {
 }
 
 async function ask(prompts, kind, options) {
+  if (prompts.nonTTY && prompts.defaultKinds.has(kind)) {
+    throw Object.assign(new Error('Non-interactive use requires an interactive TTY for masked prompts; rerun in a terminal or inject the required prompt function.'), {
+      code: 'NON_INTERACTIVE_PROMPT'
+    });
+  }
   const answer = await prompts[kind](options);
   return answer === undefined || answer === null ? options.default : answer;
 }
@@ -685,7 +659,6 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
     registry,
     credentialStore,
     prompts: getPrompts(dependencies),
-    promptInjected: hasInjectedPrompt(dependencies),
     stdin: dependencies.stdin || process.stdin,
     clientFactory: dependencies.clientFactory || dependencies.createClient || createDefaultClient,
     stdout,
@@ -701,7 +674,6 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
     output(stdout, USAGE);
     return 0;
   }
-  if (!ensureInteractive(context, args)) return 2;
   try {
     switch (args[0]) {
       case 'list':
@@ -727,6 +699,10 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
         throw usageError(`Unknown instance command '${args[0]}'.`);
     }
   } catch (error) {
+    if (error?.code === 'NON_INTERACTIVE_PROMPT') {
+      output(stderr, error.message);
+      return 2;
+    }
     if (error?.code === 'USAGE') {
       output(stderr, `${error.message}\n${USAGE}`);
       return 2;
