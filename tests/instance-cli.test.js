@@ -502,6 +502,103 @@ test('migrate refuses same-file plaintext source before keychain writes', async 
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+test('migrate refuses symlink aliases before keychain writes', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-migration-symlink-'));
+  const sourcePath = path.join(directory, 'instances.json');
+  const aliasPath = path.join(directory, 'alias.json');
+  fs.writeFileSync(sourcePath, '{}', 'utf8');
+  fs.symlinkSync(sourcePath, aliasPath);
+  const registry = {
+    readPath: sourcePath,
+    writePath: aliasPath,
+    _rawDocument: () => ({
+      instances: [{ name: 'dev', url: 'https://dev.service-now.com', username: 'developer', password: 'fixture-password' }]
+    }),
+    _writeAtomic: jest.fn(async () => {})
+  };
+  const store = credentialStore();
+  const result = streams();
+
+  try {
+    expect(await runInstanceCli(['instance', 'migrate'], {
+      registry,
+      credentialStore: store,
+      prompts: prompts({ confirm: true }),
+      stdout: result.out,
+      stderr: result.err
+    })).toBe(2);
+    expect(store.setSecret).not.toHaveBeenCalled();
+    expect(registry._writeAtomic).not.toHaveBeenCalled();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('migrate allows a genuinely nonexistent destination after canonicalizing its parent', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-migration-new-target-'));
+  const sourcePath = path.join(directory, 'legacy.json');
+  const targetPath = path.join(directory, 'nested', 'instances.json');
+  const registry = {
+    readPath: sourcePath,
+    writePath: targetPath,
+    _rawDocument: () => ({
+      instances: [{ name: 'dev', url: 'https://dev.service-now.com', username: 'developer', password: 'fixture-password' }]
+    }),
+    _writeAtomic: jest.fn(async document => { registry.written = document; }),
+    written: null
+  };
+  const store = credentialStore();
+  const result = streams();
+
+  try {
+    expect(await runInstanceCli(['instance', 'migrate'], {
+      registry,
+      credentialStore: store,
+      prompts: prompts({ confirm: true }),
+      stdout: result.out,
+      stderr: result.err
+    })).toBe(0);
+    expect(store.setSecret).toHaveBeenCalledWith('keychain:instance/dev/password', 'fixture-password');
+    expect(registry._writeAtomic).toHaveBeenCalledTimes(1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('migrate refuses permission errors while resolving source or target identity', async () => {
+  const registry = {
+    readPath: '/tmp/plaintext-source.json',
+    writePath: '/tmp/user-target.json',
+    fs: {
+      realpathSync: jest.fn((candidate) => {
+        const error = new Error(`cannot inspect ${candidate}`);
+        error.code = candidate.endsWith('source.json') ? 'EIO' : 'EACCES';
+        throw error;
+      })
+    },
+    _rawDocument: () => ({
+      instances: [{ name: 'dev', url: 'https://dev.service-now.com', username: 'developer', password: 'fixture-password' }]
+    }),
+    _writeAtomic: jest.fn(async () => {})
+  };
+  const store = credentialStore();
+  const result = streams();
+
+  expect(await runInstanceCli(['instance', 'migrate'], {
+    registry,
+    credentialStore: store,
+    prompts: prompts({ confirm: true }),
+    stdout: result.out,
+    stderr: result.err
+  })).toBe(2);
+  const errorOutput = result.err.chunks.join('');
+  expect(errorOutput).toContain('MIGRATION_SOURCE_IDENTITY_FAILED');
+  expect(errorOutput).toContain(path.resolve(registry.readPath));
+  expect(errorOutput).toContain(path.resolve(registry.writePath));
+  expect(errorOutput).not.toContain('fixture-password');
+  expect(store.setSecret).not.toHaveBeenCalled();
+  expect(registry._writeAtomic).not.toHaveBeenCalled();
+});
 
 
 test('migrate rolls back only newly-created secrets when registry write fails', async () => {

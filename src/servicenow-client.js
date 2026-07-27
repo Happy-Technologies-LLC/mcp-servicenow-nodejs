@@ -693,7 +693,7 @@ export class ServiceNowClient {
     this._assertCurrentGeneration(generation);
     const clientSecret = await this._resolveCredential('clientSecret', generation);
     this._assertCurrentGeneration(generation);
-    const tokenUrl = `${this.instanceUrl}/oauth_token.do`;
+    const tokenUrl = this.oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
 
     // Try refresh token first if we have one
     if (this.oauthRefreshToken) {

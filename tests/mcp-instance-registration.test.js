@@ -148,6 +148,40 @@ describe('SN-Register-Instance', () => {
     });
     expect(JSON.stringify(writePayload)).not.toContain('fixture-secret');
   });
+  test('maps malformed registry reload failures to a safe actionable error', async () => {
+    const harness = await createHarness();
+    const secret = 'malformed-fixture-secret';
+    fs.writeFileSync(harness.registry.readPath, `{"instances":"${secret}"}`, 'utf8');
+
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata('malformed'));
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      code: 'REGISTRY_RELOAD_FAILED',
+      path: path.resolve(harness.registry.readPath)
+    });
+    expect(payload.message).toMatch(/repair|restart/i);
+    expect(payload.message).not.toContain(secret);
+    expect(JSON.stringify(payload)).not.toContain(secret);
+  });
+  test('guides users to register when the registry is empty', async () => {
+    const harness = await createHarness();
+    jest.spyOn(harness.registry, 'validate').mockRejectedValue(Object.assign(new Error('raw registry details'), {
+      code: 'REGISTRY_EMPTY',
+      details: { path: harness.registry.readPath }
+    }));
+
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata('empty'));
+    const payload = parseResponse(result);
+
+    expect(payload).toMatchObject({
+      code: 'REGISTRY_EMPTY',
+      path: path.resolve(harness.registry.readPath)
+    });
+    expect(payload.message).toMatch(/register|add/i);
+    expect(payload.message).not.toContain('raw registry details');
+  });
 
   test('registers public authorization-code metadata and reloads normal configuration once', async () => {
     const harness = await createHarness();
@@ -557,6 +591,26 @@ describe('SN-Register-Instance', () => {
     expect(payload).toMatchObject({ success: false, code: 'CREDENTIAL_NOT_FOUND' });
     expect(harness.registry.get('old')).toEqual(expect.objectContaining({ default: true }));
     expect(() => harness.registry.get('new')).toThrow(expect.objectContaining({ code: 'INSTANCE_NOT_FOUND' }));
+  });
+  test('keeps the first concurrent default when the second registration reload fails', async () => {
+    const harness = await createHarness();
+    harness.configManager.reload
+      .mockImplementationOnce(() => Promise.resolve(harness.registry.reload()))
+      .mockImplementationOnce(() => Promise.reject(new Error('second reload failed')));
+
+    const [first, second] = await Promise.all([
+      harness.callTool('SN-Register-Instance', publicMetadata('first')),
+      harness.callTool('SN-Register-Instance', publicMetadata('second'))
+    ]);
+
+    expect(parseResponse(first)).toMatchObject({ success: true });
+    expect(parseResponse(second)).toMatchObject({
+      success: false,
+      code: 'REGISTRY_RELOAD_FAILED',
+      rolledBack: true
+    });
+    expect(harness.registry.get('first')).toEqual(expect.objectContaining({ default: true }));
+    expect(() => harness.registry.get('second')).toThrow(expect.objectContaining({ code: 'INSTANCE_NOT_FOUND' }));
   });
 
   test('reports a partial rollback requirement when compensation detects a concurrent change', async () => {

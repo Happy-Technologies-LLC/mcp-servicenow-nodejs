@@ -42,7 +42,8 @@ function makeGrantClient({
   clientSecret,
   credentialRef,
   credentialStore,
-  grantType = 'client_credentials'
+  grantType = 'client_credentials',
+  tokenUrl
 } = {}) {
   return new ServiceNowClient('https://ex.service-now.com', username, password, {
     authType: 'oauth',
@@ -51,7 +52,8 @@ function makeGrantClient({
     clientSecret,
     credentialRef,
     credentialStore,
-    scope: 'useraccount'
+    scope: 'useraccount',
+    tokenUrl
   });
 }
 test('exports a secret-safe stale-instance error with a stable dedicated code', () => {
@@ -807,7 +809,8 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     });
     const client = makeGrantClient({
       credentialRef: 'keychain:instance/prod/client-secret',
-      credentialStore
+      credentialStore,
+      tokenUrl: 'https://oauth.example.com/client-credentials-token'
     });
 
     const token = client._getOAuthToken();
@@ -819,7 +822,7 @@ describe('ServiceNowClient OAuth registered credentials', () => {
       'Bearer cc-token'
     ]);
     expect(credentialStore.getSecret).toHaveBeenCalledTimes(1);
-    expect(tokenPost).toHaveBeenCalledTimes(1);
+    expect(tokenPost.mock.calls[0][0]).toBe('https://oauth.example.com/client-credentials-token');
     const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
     expect(params).toMatchObject({
       grant_type: 'client_credentials',
@@ -846,7 +849,8 @@ describe('ServiceNowClient OAuth registered credentials', () => {
         clientSecret: 'keychain:instance/dev/client-secret'
       },
       credentialStore,
-      grantType: 'password'
+      grantType: 'password',
+      tokenUrl: 'https://oauth.example.com/password-token'
     });
 
     const [token, header] = await Promise.all([
@@ -859,7 +863,7 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     expect(credentialStore.getSecret).toHaveBeenCalledTimes(2);
     expect(credentialStore.getSecret).toHaveBeenCalledWith('keychain:instance/dev/password');
     expect(credentialStore.getSecret).toHaveBeenCalledWith('keychain:instance/dev/client-secret');
-    expect(tokenPost).toHaveBeenCalledTimes(1);
+    expect(tokenPost.mock.calls[0][0]).toBe('https://oauth.example.com/password-token');
     const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
     expect(params).toMatchObject({
       grant_type: 'password',
@@ -1031,12 +1035,16 @@ test('returns a successful client-credentials refresh without falling back to an
   const tokenPost = jest.spyOn(axios, 'post')
     .mockResolvedValueOnce({ data: { access_token: 'refreshed-client-token', refresh_token: 'rotated-client-refresh', expires_in: 1800 } })
     .mockResolvedValueOnce({ data: { access_token: 'fallback-token', expires_in: 1800 } });
-  const client = makeGrantClient({ clientSecret: 'client-secret-fixture' });
+  const client = makeGrantClient({
+    clientSecret: 'client-secret-fixture',
+    tokenUrl: 'https://oauth.example.com/refresh-token'
+  });
   client.oauthRefreshToken = 'stored-client-refresh';
 
   await expect(client._getOAuthToken()).resolves.toBe('refreshed-client-token');
 
   expect(tokenPost).toHaveBeenCalledTimes(1);
+  expect(tokenPost.mock.calls[0][0]).toBe('https://oauth.example.com/refresh-token');
   const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
   expect(params).toMatchObject({
     grant_type: 'refresh_token',
@@ -1062,13 +1070,15 @@ test('returns a successful password-grant refresh without falling back to anothe
       clientSecret: 'keychain:instance/dev/client-secret'
     },
     credentialStore,
-    grantType: 'password'
+    grantType: 'password',
+    tokenUrl: 'https://oauth.example.com/password-refresh-token'
   });
   client.oauthRefreshToken = 'stored-password-refresh';
 
   await expect(client._getOAuthToken()).resolves.toBe('refreshed-password-token');
 
   expect(tokenPost).toHaveBeenCalledTimes(1);
+  expect(tokenPost.mock.calls[0][0]).toBe('https://oauth.example.com/password-refresh-token');
   const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
   expect(params).toMatchObject({
     grant_type: 'refresh_token',

@@ -560,12 +560,15 @@ export class InstanceRegistry {
     return validateDocument(document);
   }
 
-  register(instance, { makeDefault = false, precommit } = {}) {
+  register(instance, { makeDefault = false, precommit, captureContext } = {}) {
     if (typeof makeDefault !== 'boolean') {
       invalid('register options makeDefault must be a boolean', { field: 'makeDefault' });
     }
     if (precommit !== undefined && typeof precommit !== 'function') {
       invalid('register options precommit must be a function', { field: 'precommit' });
+    }
+    if (captureContext !== undefined && typeof captureContext !== 'function') {
+      invalid('register options captureContext must be a function', { field: 'captureContext' });
     }
     return this._enqueueMutation(() => {
       const canonicalInstance = normalizeInstanceCredentialRefs(instance);
@@ -584,7 +587,7 @@ export class InstanceRegistry {
       const instances = current.map(existing => shouldDefault ? { ...existing, default: false } : existing);
       instances.push(candidate);
       return { ...this._document, version: 1, instances };
-    }, updated => updated.instances.find(candidate => candidate.name === instance.name), precommit);
+    }, updated => updated.instances.find(candidate => candidate.name === instance.name), precommit, captureContext);
   }
 
   update(name, patch) {
@@ -646,9 +649,7 @@ export class InstanceRegistry {
       };
     }, () => undefined);
   }
-
-
-  _enqueueMutation(operation, resultSelector, precommit) {
+  _enqueueMutation(operation, resultSelector, precommit, captureContext) {
     this._resolvePaths();
     const writePath = this.writePath;
     return enqueuePathMutation(writePath, async () => {
@@ -663,6 +664,16 @@ export class InstanceRegistry {
 
       const nextDocument = operation();
       validateDocument(nextDocument);
+      if (captureContext) {
+        try {
+          const result = captureContext(clone(this._document), clone(nextDocument));
+          if (result && typeof result.then === 'function') {
+            throw new Error('register captureContext must be synchronous');
+          }
+        } catch {
+          throw new InstanceRegistryError('REGISTRY_CONTEXT_FAILED', 'Registry mutation context could not be captured');
+        }
+      }
       if (precommit) {
         await precommit(clone(nextDocument));
       }

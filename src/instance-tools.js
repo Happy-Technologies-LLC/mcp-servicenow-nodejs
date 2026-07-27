@@ -243,6 +243,22 @@ function registryError(error) {
       { persisted: true, partial: true, rollbackRequired: true, restartRequired: true }
     );
   }
+  if (error?.code === 'REGISTRY_RELOAD_FAILED') {
+    const details = safeRegistryDetails(error);
+    return errorResponse(
+      'REGISTRY_RELOAD_FAILED',
+      'The instance registry could not be loaded. Repair the registry file or restart the MCP server after fixing it.',
+      details.path ? { path: details.path } : {}
+    );
+  }
+  if (error?.code === 'REGISTRY_EMPTY') {
+    const details = safeRegistryDetails(error);
+    return errorResponse(
+      'REGISTRY_EMPTY',
+      'No registered instances are available. Register an instance with the local CLI, then restart the MCP server.',
+      details.path ? { path: details.path } : {}
+    );
+  }
   if (error?.code === 'REGISTRY_WRITE_FAILED') {
     return errorResponse('REGISTRY_WRITE_FAILED', 'The instance registry could not be updated. No registration was committed.', {
       details: safeRegistryDetails(error)
@@ -307,21 +323,6 @@ function registrationReloadFailure(dependencies, args, registry, configManager, 
   });
 }
 
-async function snapshotPriorDefault(registry) {
-  if (typeof registry?.getDefault === 'function') {
-    const instance = await registry.getDefault();
-    return instance?.name
-      ? { name: instance.name, default: instance.default }
-      : undefined;
-  }
-  if (typeof registry?.list === 'function') {
-    const instance = (await registry.list()).find(candidate => candidate?.default === true);
-    return instance?.name
-      ? { name: instance.name, default: instance.default }
-      : undefined;
-  }
-  return undefined;
-}
 
 async function checkCredentials(store, requirements, name) {
   if (requirements.length === 0) return null;
@@ -408,22 +409,23 @@ export async function handleInstanceSetupTool(name, args = {}, dependencies = {}
   const requirements = credentialRequirements(canonical.authType, canonical.grantType, args.name);
   const credentialError = await checkCredentials(dependencies.credentialStore, requirements, args.name);
   if (credentialError) return credentialError;
-  let priorDefault;
-  try {
-    priorDefault = await snapshotPriorDefault(registry);
-  } catch (error) {
-    return registryError(error);
-  }
 
   const configManager = dependencies.configManager;
   if (!configManager || typeof configManager.reload !== 'function') {
     return errorResponse('CONFIG_MANAGER_UNAVAILABLE', 'Configuration reload is unavailable; no registration was committed.');
   }
+  let priorDefault;
 
   let registered;
   try {
     registered = await registry.register(canonical.metadata, {
       makeDefault: args.makeDefault === undefined ? false : args.makeDefault,
+      captureContext: currentDocument => {
+        const previous = currentDocument.instances.find(instance => instance.default === true);
+        priorDefault = previous?.name
+          ? { name: previous.name, default: previous.default }
+          : undefined;
+      },
       precommit: async () => {
         const finalCredentialError = await checkCredentials(dependencies.credentialStore, requirements, args.name);
         if (finalCredentialError) throw credentialResponseError(finalCredentialError);

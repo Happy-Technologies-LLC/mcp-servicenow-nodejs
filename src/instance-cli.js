@@ -103,6 +103,14 @@ function safeRegistryError(error) {
   }
   return `${code}${fields.length ? ` (${fields.join(', ')})` : ''}`;
 }
+function safeMigrationError(error) {
+  const details = error?.details && typeof error.details === 'object' ? error.details : {};
+  const fields = [];
+  for (const field of ['readPath', 'writePath']) {
+    if (typeof details[field] === 'string' && details[field]) fields.push(`${field}=${path.resolve(details[field])}`);
+  }
+  return `${error.code}${fields.length ? ` (${fields.join(', ')})` : ''}: ${error.message}`;
+}
 
 function cliErrorMessage(error) {
   if (typeof error?.code === 'string' && error.code.startsWith('REGISTRY_')) return safeRegistryError(error);
@@ -683,6 +691,38 @@ function buildMigratedDocument(document, registry) {
   };
 }
 
+function migrationSourceIdentityError(registry) {
+  const readPath = typeof registry?.readPath === 'string' ? path.resolve(registry.readPath) : undefined;
+  const writePath = typeof registry?.writePath === 'string' ? path.resolve(registry.writePath) : undefined;
+  const error = new Error(
+    'Migration refused: the plaintext source and registry target identities could not be established safely. '
+      + 'Check file permissions and choose a distinct registry target; the source bytes and OS keychain were left unchanged.'
+  );
+  error.code = 'MIGRATION_SOURCE_IDENTITY_FAILED';
+  error.details = {
+    ...(readPath ? { readPath } : {}),
+    ...(writePath ? { writePath } : {})
+  };
+  return error;
+}
+
+function canonicalMigrationPath(filePath, registryFs, registry) {
+  let candidate = path.resolve(filePath);
+  const missing = [];
+  while (true) {
+    try {
+      const canonicalParent = registryFs.realpathSync(candidate);
+      return path.resolve(canonicalParent, ...missing.reverse());
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw migrationSourceIdentityError(registry);
+      const parent = path.dirname(candidate);
+      if (parent === candidate) throw migrationSourceIdentityError(registry);
+      missing.unshift(path.basename(candidate));
+      candidate = parent;
+    }
+  }
+}
+
 function migrationSourceEqualsTarget(registry) {
   if (typeof registry?.readPath !== 'string' || typeof registry?.writePath !== 'string') return false;
   const readPath = path.resolve(registry.readPath);
@@ -690,11 +730,9 @@ function migrationSourceEqualsTarget(registry) {
   if (readPath === writePath) return true;
   const registryFs = registry.fs || fs;
   if (typeof registryFs.realpathSync !== 'function') return false;
-  try {
-    return registryFs.realpathSync(readPath) === registryFs.realpathSync(writePath);
-  } catch {
-    return false;
-  }
+  const canonicalReadPath = canonicalMigrationPath(readPath, registryFs, registry);
+  const canonicalWritePath = canonicalMigrationPath(writePath, registryFs, registry);
+  return canonicalReadPath === canonicalWritePath;
 }
 
 function migrationSourceTargetError(registry) {
@@ -704,7 +742,7 @@ function migrationSourceTargetError(registry) {
       + 'package-legacy -> user-registry migration. The source bytes and OS keychain were left unchanged.'
   );
   error.code = 'MIGRATION_SOURCE_EQUALS_TARGET';
-  error.details = { readPath: registry.readPath, writePath: registry.writePath };
+  error.details = { readPath: path.resolve(registry.readPath), writePath: path.resolve(registry.writePath) };
   return error;
 }
 
@@ -821,8 +859,8 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
       output(stderr, error.message);
       return 2;
     }
-    if (error?.code === 'MIGRATION_SOURCE_EQUALS_TARGET') {
-      output(stderr, error.message);
+    if (error?.code === 'MIGRATION_SOURCE_EQUALS_TARGET' || error?.code === 'MIGRATION_SOURCE_IDENTITY_FAILED') {
+      output(stderr, safeMigrationError(error));
       return 2;
     }
     if (error?.code === 'USAGE') {
