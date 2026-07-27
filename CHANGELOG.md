@@ -16,6 +16,7 @@
 - Redacted credentials, authorization headers, newly issued OAuth tokens, keychain failures, and registration rollback diagnostics from errors and logs.
 - Added strict authentication schemas, credential identity checks, serialized mutations, state-aware rollback, and fail-closed migration source validation.
 - Treat empty or whitespace-only keychain values as missing credentials and prevent incomplete instance metadata from being persisted.
+- Refreshed and constrained the development test dependency graph to patched globbing packages so release audits remain clean.
 
 ### Fixed
 
