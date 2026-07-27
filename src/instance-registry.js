@@ -41,6 +41,38 @@ function clone(value) {
   return value === undefined ? value : JSON.parse(JSON.stringify(value));
 }
 
+function isValidCredentialRef(instance) {
+  if (!Object.prototype.hasOwnProperty.call(instance || {}, 'credentialRef')) return true;
+  try {
+    const name = instance.name;
+    const authType = instance.authType || 'basic';
+    if (authType === 'basic') {
+      canonicalCredentialRef(instance.credentialRef, name, 'password');
+      return true;
+    }
+    const grantType = instance.grantType === undefined
+      ? (instance.username ? 'password' : 'client_credentials')
+      : instance.grantType;
+    if (grantType === 'authorization_code') return false;
+    if (grantType === 'client_credentials') {
+      canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
+      return true;
+    }
+    passwordGrantRefs(instance.credentialRef, name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function redactInstanceSecrets(instance) {
+  const redacted = redactSecrets(instance);
+  if (!isValidCredentialRef(instance) && redacted && typeof redacted === 'object') {
+    delete redacted.credentialRef;
+  }
+  return redacted;
+}
+
 function redactSecrets(value, insideCredentialRef = false) {
   if (Array.isArray(value)) {
     return value.map(nested => redactSecrets(nested, insideCredentialRef));
@@ -50,6 +82,10 @@ function redactSecrets(value, insideCredentialRef = false) {
   const redacted = {};
   for (const [key, nested] of Object.entries(value)) {
     if (!insideCredentialRef && SECRET_FIELDS.has(key)) continue;
+    if (!insideCredentialRef && key === 'instances' && Array.isArray(nested)) {
+      redacted[key] = nested.map(instance => redactInstanceSecrets(instance));
+      continue;
+    }
     redacted[key] = redactSecrets(nested, insideCredentialRef || key === 'credentialRef');
   }
   return redacted;
@@ -218,6 +254,9 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     if (typeof instance.username !== 'string' || !instance.username.trim()) {
       invalid(`Basic instance '${name}' requires username as a non-empty string`, { field: 'username' });
     }
+    if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) {
+      canonicalCredentialRef(instance.credentialRef, name, 'password');
+    }
     if (allowSecrets && instance.password) return true;
     canonicalCredentialRef(instance.credentialRef, name, 'password');
     return true;
@@ -240,6 +279,9 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
   }
 
   if (grantType === 'client_credentials') {
+    if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) {
+      canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
+    }
     if (allowSecrets && instance.clientSecret) return true;
     canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
     return true;
@@ -247,6 +289,9 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
 
   if (typeof instance.username !== 'string' || !instance.username.trim()) {
     invalid(`OAuth password instance '${name}' requires username as a non-empty string`, { field: 'username' });
+  }
+  if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) {
+    passwordGrantRefs(instance.credentialRef, name);
   }
   if (allowSecrets && instance.password && instance.clientSecret) return true;
   passwordGrantRefs(instance.credentialRef, name);

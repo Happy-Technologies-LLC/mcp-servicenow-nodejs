@@ -493,6 +493,39 @@ describe('InstanceRegistry validation and defaults', () => {
         .toThrow(expect.objectContaining({ code: 'INVALID_INSTANCE_CONFIG' }));
     }
   });
+  test('reload rejects invalid credential references even when legacy plaintext is present', () => {
+    const { file } = tempPaths();
+    writeJson(file, {
+      version: 1,
+      instances: [{
+        name: 'legacy-ref',
+        url: 'https://legacy-ref.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        password: 'legacy-password',
+        credentialRef: 'plaintext-password'
+      }]
+    });
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    expect(() => registry.load()).toThrow(expect.objectContaining({ code: 'REGISTRY_RELOAD_FAILED' }));
+  });
+
+  test('public redaction omits invalid credential references from injected documents', () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    registry._document = {
+      version: 1,
+      instances: [{
+        name: 'injected',
+        url: 'https://injected.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        credentialRef: 'plaintext-password'
+      }]
+    };
+    registry._loaded = true;
+    expect(registry.list()[0]).not.toHaveProperty('credentialRef');
+  });
   test('rejects malformed legacy instances with a stable reload error', () => {
     const { file } = tempPaths();
     const cases = [
@@ -599,12 +632,15 @@ describe('InstanceRegistry persistence', () => {
       instances: [{
         name: 'legacy',
         url: 'https://legacy.service-now.com',
+        authType: 'oauth',
+        grantType: 'password',
+        clientId: 'legacy-client',
         username: 'legacy-user',
         password: 'legacy-password-fixture',
         clientSecret: 'legacy-client-secret-fixture',
         credentialRef: {
-          password: 'password/ref',
-          clientSecret: 'secret/ref'
+          password: credentialRefFor('legacy', 'password'),
+          clientSecret: credentialRefFor('legacy', 'client-secret')
         },
         default: true
       }]
@@ -627,8 +663,8 @@ describe('InstanceRegistry persistence', () => {
       expect(serialized).not.toContain('nested-document-client-secret-fixture');
     }
     expect(registry.load().instances[0].credentialRef).toEqual({
-      password: 'password/ref',
-      clientSecret: 'secret/ref'
+      password: credentialRefFor('legacy', 'password'),
+      clientSecret: credentialRefFor('legacy', 'client-secret')
     });
     expect(registry.listForClient).toBeUndefined();
     expect(registry.getForClient).toBeUndefined();

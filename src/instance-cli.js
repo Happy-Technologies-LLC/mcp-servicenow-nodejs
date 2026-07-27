@@ -7,7 +7,7 @@ const SECRET_FLAG = /^--(?:password|client[-_]secret)(?:=|$)/i;
 const USAGE = `Usage:
   happy-platform-mcp instance add
   happy-platform-mcp instance list
-  happy-platform-mcp instance update <name> [metadata flags]
+  happy-platform-mcp instance update <name> [metadata flags; auth changes require remove/re-add]
   happy-platform-mcp instance test <name>
   happy-platform-mcp instance remove <name>
   happy-platform-mcp instance credential set <name> --type password|client-secret
@@ -371,6 +371,14 @@ async function updateCommand(name, args, context) {
   const { flags, positionals } = parseFlags(args, METADATA_FLAGS);
   if (positionals.length) throw usageError('instance update accepts metadata options only.');
   const existing = await context.registry.get(name);
+  const requestedAuthType = flags['auth-type'];
+  const requestedGrantType = flags['grant-type'];
+  if (requestedAuthType !== undefined && requestedAuthType !== existing.authType) {
+    throw usageError('Authentication changes require remove/re-add; use instance remove then instance add.');
+  }
+  if (requestedGrantType !== undefined && requestedGrantType !== effectiveOAuthGrantType(existing)) {
+    throw usageError('Authentication changes require remove/re-add; use instance remove then instance add.');
+  }
   const patch = {};
   const fields = ['url', 'authType', 'grantType', 'username', 'clientId', 'scope', 'authorizeUrl', 'tokenUrl', 'redirectPort', 'callbackPath', 'description'];
   const seenMetadataFlag = fields.some(field => [...METADATA_FLAGS.entries()].some(([flag, value]) => value === field && flags[flag] !== undefined));

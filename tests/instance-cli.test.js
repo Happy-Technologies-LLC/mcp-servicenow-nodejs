@@ -261,6 +261,19 @@ test('remove restores all secrets when metadata removal fails', async () => {
     expect(registry.update).toHaveBeenCalledWith('dev', { description: 'Updated' });
     expect(prompt.password).not.toHaveBeenCalled();
   });
+  test.each([
+    ['auth-type', 'oauth'],
+    ['grant-type', 'client_credentials']
+  ])('rejects --%s changes before registry mutation with re-add guidance', async (flag, value) => {
+    const { out, err } = streams();
+    const registry = registryWith([basic]);
+    const code = await runInstanceCli(['instance', 'update', 'dev', `--${flag}`, value], {
+      registry, prompts: prompts(), stdout: out, stderr: err
+    });
+    expect(code).toBe(2);
+    expect(registry.update).not.toHaveBeenCalled();
+    expect(err.chunks.join('')).toMatch(/auth(?:entication)? changes require remove\/re-add/i);
+  });
   test('uses the inferred password grant for credential choices and preserves the canonical object when setting either credential', async () => {
     const { out, err } = streams();
     const refs = {
