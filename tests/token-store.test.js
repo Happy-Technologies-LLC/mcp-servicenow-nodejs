@@ -45,4 +45,18 @@ describe('KeychainTokenStore (with injected entry factory)', () => {
     });
     await expect(store.getRefreshToken('acct')).rejects.toThrow(/keychain locked/);
   });
+  it('fails loud when clearing the keychain throws', async () => {
+    const backendError = new Error('keychain locked');
+    const store = new KeychainTokenStore({
+      createEntry: () => ({ deletePassword: () => { throw backendError; } })
+    });
+    await expect(store.clearRefreshToken('acct')).rejects.toBe(backendError);
+  });
+
+  it('treats a false delete result as an idempotent missing entry', async () => {
+    const store = new KeychainTokenStore({
+      createEntry: () => ({ deletePassword: () => false })
+    });
+    await expect(store.clearRefreshToken('acct')).resolves.toBeUndefined();
+  });
 });

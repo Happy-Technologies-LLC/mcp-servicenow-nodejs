@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { ServiceNowClient } from '../src/servicenow-client.js';
+import { ServiceNowClient, StaleInstanceError } from '../src/servicenow-client.js';
 
 const BASIC_REF = 'keychain:instance/dev/password';
 const NEXT_BASIC_REF = 'keychain:instance/prod/password';
@@ -75,7 +75,7 @@ describe('ServiceNowClient registered credentials', () => {
     });
     releaseOld('old-secret');
 
-    await expect(oldHeader).rejects.toThrow(/instance changed/i);
+    await expect(oldHeader).rejects.toBeInstanceOf(StaleInstanceError);
     await expect(client.getAuthHeader()).resolves.toBe(
       `Basic ${Buffer.from('prod-user:new-secret').toString('base64')}`
     );
@@ -305,7 +305,7 @@ describe('ServiceNowClient registered credentials', () => {
     });
     releaseOld('old-secret');
 
-    await expect(request).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    await expect(request).rejects.toMatchObject({ code: 'INSTANCE_STALE_DURING_REQUEST' });
     expect(adapter).not.toHaveBeenCalled();
     await expect(client.getAuthHeader()).resolves.toBe(
       `Basic ${Buffer.from('prod-user:new-secret').toString('base64')}`

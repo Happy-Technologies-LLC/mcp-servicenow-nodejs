@@ -10,7 +10,7 @@
 import axios from 'axios';
 import { jest } from '@jest/globals';
 import { userInfo } from 'node:os';
-import { ServiceNowClient } from '../src/servicenow-client.js';
+import { ServiceNowClient, StaleInstanceError } from '../src/servicenow-client.js';
 import { InMemoryTokenStore } from '../src/token-store.js';
 
 const DEFAULT_ACCOUNT = `${userInfo().username}@default`;
@@ -54,6 +54,15 @@ function makeGrantClient({
     scope: 'useraccount'
   });
 }
+test('exports a secret-safe stale-instance error with a stable dedicated code', () => {
+  const error = new StaleInstanceError();
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.name).toBe('StaleInstanceError');
+  expect(error.code).toBe('INSTANCE_STALE_DURING_REQUEST');
+  expect(JSON.stringify(error)).not.toContain('refresh-secret');
+});
+
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -233,6 +242,28 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(flowCalls).toBe(1);
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-fresh');
   });
+  it('does not start browser sign-in when clearing an invalid_grant refresh token fails', async () => {
+    const clearError = new Error('keychain locked');
+    const store = {
+      getRefreshToken: jest.fn(async () => 'rt-expired'),
+      clearRefreshToken: jest.fn(async () => { throw clearError; }),
+      setRefreshToken: jest.fn()
+    };
+    const flow = jest.fn(async () => ({ access_token: 'unexpected-browser-token' }));
+    const postToken = jest.fn(async () => {
+      const error = new Error('invalid_grant');
+      error.response = { status: 400, data: { error: 'invalid_grant' } };
+      throw error;
+    });
+    const client = makeClient({ store, flow, postToken });
+
+    await expect(client._getOAuthToken()).rejects.toBe(clearError);
+
+    expect(store.clearRefreshToken).toHaveBeenCalledWith(DEFAULT_ACCOUNT);
+    expect(flow).not.toHaveBeenCalled();
+    expect(client.oauthRefreshToken).toBeNull();
+  });
+
 
   it.each([
     [400, 'invalid_client'],
@@ -271,6 +302,63 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(flowCalls).toBe(0);
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-good'); // token preserved
   });
+  it.each([
+    ['network', Object.assign(new Error('socket timeout refresh-secret'), { code: 'ECONNRESET' })],
+    ['timeout', Object.assign(new Error('request timed out refresh-secret'), { code: 'ETIMEDOUT' })],
+    ['5xx', Object.assign(new Error('upstream failure refresh-secret'), {
+      response: { status: 503, data: { error: 'temporarily_unavailable', refresh_token: 'refresh-secret' } }
+    })],
+    ['malformed OAuth error', Object.assign(new Error('malformed response refresh-secret'), {
+      response: { status: 400, data: { refresh_token: 'refresh-secret' } }
+    })],
+    ['invalid_client', Object.assign(new Error('invalid client refresh-secret'), {
+      response: { status: 400, data: { error: 'invalid_client', refresh_token: 'refresh-secret' } }
+    })],
+    ['invalid_request', Object.assign(new Error('invalid request refresh-secret'), {
+      response: { status: 401, data: { error: 'invalid_request', refresh_token: 'refresh-secret' } }
+    })]
+  ])('preserves a non-authorization-code refresh token and does not fall back after %s', async (_kind, refreshError) => {
+    const tokenPost = jest.spyOn(axios, 'post')
+      .mockRejectedValueOnce(refreshError)
+      .mockResolvedValueOnce({ data: { access_token: 'unexpected-fallback' } });
+    const client = makeGrantClient({ clientSecret: 'client-secret' });
+    client.oauthRefreshToken = 'refresh-secret';
+
+    let thrown;
+    try {
+      await client._getOAuthToken();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(tokenPost).toHaveBeenCalledTimes(1);
+    expect(client.oauthRefreshToken).toBe('refresh-secret');
+    const serialized = JSON.stringify({
+      message: thrown.message,
+      code: thrown.code,
+      status: thrown.status
+    });
+    expect(serialized).not.toContain('refresh-secret');
+  });
+
+  it('clears a non-authorization-code invalid_grant refresh and uses the configured primary grant', async () => {
+    const tokenPost = jest.spyOn(axios, 'post')
+      .mockRejectedValueOnce(Object.assign(new Error('invalid_grant refresh-secret'), {
+        response: { status: 400, data: { error: 'invalid_grant', refresh_token: 'refresh-secret' } }
+      }))
+      .mockResolvedValueOnce({ data: { access_token: 'primary-token', expires_in: 1800 } });
+    const client = makeGrantClient({ clientSecret: 'client-secret', grantType: 'client_credentials' });
+    client.oauthRefreshToken = 'refresh-secret';
+
+    await expect(client._getOAuthToken()).resolves.toBe('primary-token');
+
+    expect(tokenPost).toHaveBeenCalledTimes(2);
+    expect(client.oauthRefreshToken).toBeNull();
+    const primaryParams = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[1][1]));
+    expect(primaryParams.grant_type).toBe('client_credentials');
+  });
+
 
   it('does not re-persist a stale refresh token when a refresh response omits refresh_token (rotation)', async () => {
     let setCalls = 0;
@@ -352,7 +440,7 @@ describe('ServiceNowClient authorization_code grant', () => {
     });
     releaseFlow({ access_token: 'old-token', refresh_token: 'old-refresh', expires_in: 1800 });
 
-    await expect(oldToken).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    await expect(oldToken).rejects.toBeInstanceOf(StaleInstanceError);
     expect(client.oauthToken).toBeNull();
     expect(client.oauthRefreshToken).toBeNull();
     expect(client.oauthTokenExpiry).toBeNull();
@@ -384,7 +472,7 @@ describe('ServiceNowClient authorization_code grant', () => {
     });
     releaseRead('old-refresh');
 
-    await expect(oldToken).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    await expect(oldToken).rejects.toBeInstanceOf(StaleInstanceError);
     expect(client.oauthToken).toBeNull();
     expect(client.oauthRefreshToken).toBeNull();
     expect(oldStore.setRefreshToken).not.toHaveBeenCalled();
@@ -425,7 +513,7 @@ describe('ServiceNowClient authorization_code grant', () => {
     });
     releaseWrite();
 
-    await expect(oldToken).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    await expect(oldToken).rejects.toBeInstanceOf(StaleInstanceError);
     expect(client.oauthToken).toBeNull();
     expect(client.oauthRefreshToken).toBeNull();
     expect(newStore.setRefreshToken).not.toHaveBeenCalled();
@@ -494,7 +582,7 @@ describe('ServiceNowClient authorization_code grant', () => {
     } catch (error) {
       thrown = error;
     }
-    expect(thrown).toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(thrown).toBeInstanceOf(StaleInstanceError);
     const serialized = serializedError(thrown);
     for (const secret of [
       'old-access-secret',
@@ -577,7 +665,7 @@ describe('ServiceNowClient authorization_code grant', () => {
     } catch (error) {
       thrown = error;
     }
-    expect(thrown).toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(thrown).toBeInstanceOf(StaleInstanceError);
     const serialized = serializedError(thrown);
     for (const secret of [
       'old-access-secret',
@@ -756,7 +844,7 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     };
     release401(unauthorized);
 
-    await expect(request).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    await expect(request).rejects.toMatchObject({ code: 'INSTANCE_STALE_DURING_REQUEST' });
     expect(adapter).toHaveBeenCalledTimes(1);
     expect(client.oauthToken).toBeNull();
     expect(oldConfig.headers.Authorization).toBe('Bearer old-access-token');
@@ -793,7 +881,7 @@ describe('ServiceNowClient OAuth registered credentials', () => {
       });
       releaseResponse();
 
-      await expect(request).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+      await expect(request).rejects.toMatchObject({ code: 'INSTANCE_STALE_DURING_REQUEST' });
     }
   );
 
@@ -829,7 +917,7 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     }));
     client.client.defaults.adapter = adapter;
 
-    await expect(client.client.get(url)).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    await expect(client.client.get(url)).rejects.toMatchObject({ code: 'INSTANCE_STALE_DURING_REQUEST' });
     expect(adapter).not.toHaveBeenCalled();
   });
 });

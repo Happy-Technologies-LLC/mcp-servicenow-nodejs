@@ -70,10 +70,6 @@ export class KeychainTokenStore {
   }
 
   async clearRefreshToken(account) {
-    try {
-      (await this._entry(account)).deletePassword();
-    } catch {
-      // Nothing to delete.
-    }
+    await (await this._entry(account)).deletePassword();
   }
 }

@@ -72,11 +72,30 @@ function safeCredentialError(error) {
   return safe;
 }
 
+export class StaleInstanceError extends Error {
+  static code = 'INSTANCE_STALE_DURING_REQUEST';
+
+  constructor() {
+    super('Instance changed during credential resolution');
+    this.name = 'StaleInstanceError';
+    this.code = StaleInstanceError.code;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code
+    };
+  }
+}
+
 function staleInstanceError() {
-  const error = new Error('Instance changed during credential resolution');
-  error.code = 'INSTANCE_CHANGED';
-  error.name = 'StaleInstanceError';
-  return error;
+  return new StaleInstanceError();
+}
+
+function isStaleInstanceError(error) {
+  return error instanceof StaleInstanceError || error?.code === StaleInstanceError.code;
 }
 
 function collectCredentialValues(client) {
@@ -193,6 +212,7 @@ function sanitizeCopy(value, values, seen = new Set()) {
 function isExplicitInvalidGrant(error) {
   const data = error?.response?.data;
   const candidates = [
+    data,
     data?.error,
     data?.error?.code,
     data?.error_code,
@@ -568,7 +588,7 @@ export class ServiceNowClient {
       }
       return value;
     } catch (error) {
-      if (error?.code === 'INSTANCE_CHANGED') {
+      if (isStaleInstanceError(error)) {
         throw error;
       }
       throw safeCredentialError(error);
@@ -632,11 +652,20 @@ export class ServiceNowClient {
         return this._handleTokenResponse(response.data, generation);
       } catch (refreshError) {
         this._assertCurrentGeneration(generation);
-        const status = refreshError?.response?.status;
-        if (status === 401 || status === 403) throw safeAuthError(refreshError, this);
-        // Refresh token expired or invalid — fall through to password grant.
-        console.error('OAuth refresh failed, requesting new token');
+        if (isStaleInstanceError(refreshError)) {
+          throw refreshError;
+        }
+        if (!isExplicitInvalidGrant(refreshError)) {
+          const safe = safeAuthError(refreshError, this);
+          if (!safe.code) safe.code = 'OAUTH_REFRESH_REQUEST_FAILED';
+          throw safe;
+        }
+        // An explicit invalid_grant means the refresh token is dead. Clear it
+        // in memory, then intentionally try the configured primary grant.
+        console.error('OAuth refresh token rejected; requesting the configured primary grant');
+        this._assertCurrentGeneration(generation);
         this.oauthRefreshToken = null;
+        this._assertCurrentGeneration(generation);
       }
     }
 
@@ -666,7 +695,7 @@ export class ServiceNowClient {
       this._assertCurrentGeneration(generation);
       return this._handleTokenResponse(response.data, generation);
     } catch (error) {
-      if (error?.code === 'INSTANCE_CHANGED') {
+      if (isStaleInstanceError(error)) {
         throw error;
       }
       const safe = safeAuthError(error, this);
@@ -724,7 +753,7 @@ export class ServiceNowClient {
       } catch (refreshError) {
         this._assertCurrentGeneration(generation);
 
-        if (refreshError?.code === 'INSTANCE_CHANGED') {
+        if (isStaleInstanceError(refreshError)) {
           throw refreshError;
         }
         // Only an explicit OAuth invalid_grant means the refresh token is dead.
@@ -764,7 +793,7 @@ export class ServiceNowClient {
     } catch (error) {
       this._assertCurrentGeneration(generation);
 
-      if (error?.code === 'INSTANCE_CHANGED') {
+      if (isStaleInstanceError(error)) {
         throw error;
       }
       throw safeAuthError(error, this);
