@@ -638,6 +638,8 @@ export class ServiceNowClient {
         this._assertCurrentGeneration(generation);
         return this._acceptAuthCodeTokens(data, account, generation, tokenStore);
       } catch (refreshError) {
+        this._assertCurrentGeneration(generation);
+
         if (refreshError?.code === 'INSTANCE_CHANGED') {
           throw refreshError;
         }
@@ -676,6 +678,8 @@ export class ServiceNowClient {
       });
       this._assertCurrentGeneration(generation);
     } catch (error) {
+      this._assertCurrentGeneration(generation);
+
       if (error?.code === 'INSTANCE_CHANGED') {
         throw error;
       }

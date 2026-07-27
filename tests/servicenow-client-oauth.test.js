@@ -428,6 +428,172 @@ describe('ServiceNowClient authorization_code grant', () => {
   });
 
 
+  it('rejects a stale refresh POST before inspecting invalid_grant or clearing the new instance', async () => {
+    let rejectRefresh;
+    let markPostStarted;
+    const postStarted = new Promise(resolve => { markPostStarted = resolve; });
+    const refreshPending = new Promise((resolve, reject) => { rejectRefresh = reject; });
+    const oldStore = {
+      getRefreshToken: jest.fn(async () => 'old-refresh-secret'),
+      setRefreshToken: jest.fn(),
+      clearRefreshToken: jest.fn()
+    };
+    const postToken = jest.fn(() => {
+      markPostStarted();
+      return refreshPending;
+    });
+    const client = makeClient({
+      store: oldStore,
+      clientSecret: 'old-client-secret',
+      flow: async () => ({ access_token: 'unexpected' }),
+      postToken
+    });
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const oldRequest = client._getOAuthToken();
+    await postStarted;
+
+    const newStore = {
+      getRefreshToken: jest.fn(async () => null),
+      setRefreshToken: jest.fn(),
+      clearRefreshToken: jest.fn()
+    };
+    client.setInstance('https://new.service-now.com', null, null, 'new', {
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'new-cid',
+      clientSecret: 'new-client-secret',
+      tokenStore: newStore,
+      performAuthCodeFlow: async () => ({ access_token: 'unexpected' })
+    });
+    client.oauthToken = 'new-access-secret';
+    client.oauthRefreshToken = 'new-refresh-secret';
+    client.oauthTokenExpiry = 1234567890;
+
+    const refreshError = new Error(
+      'old refresh failed old-refresh-secret old-client-secret new-refresh-secret new-client-secret'
+    );
+    refreshError.response = {
+      status: 400,
+      data: {
+        error: 'invalid_grant',
+        access_token: 'old-access-secret',
+        refresh_token: 'old-refresh-secret',
+        client_secret: 'new-client-secret'
+      }
+    };
+    rejectRefresh(refreshError);
+
+    let thrown;
+    try {
+      await oldRequest;
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'INSTANCE_CHANGED' });
+    const serialized = serializedError(thrown);
+    for (const secret of [
+      'old-access-secret',
+      'old-refresh-secret',
+      'old-client-secret',
+      'new-access-secret',
+      'new-refresh-secret',
+      'new-client-secret'
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(client.oauthToken).toBe('new-access-secret');
+    expect(client.oauthRefreshToken).toBe('new-refresh-secret');
+    expect(client.oauthTokenExpiry).toBe(1234567890);
+    expect(oldStore.clearRefreshToken).not.toHaveBeenCalled();
+    expect(oldStore.setRefreshToken).not.toHaveBeenCalled();
+    expect(newStore.clearRefreshToken).not.toHaveBeenCalled();
+    expect(newStore.setRefreshToken).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+
+  });
+
+  it('rejects a stale interactive flow before redacting or touching the switched instance', async () => {
+    let rejectFlow;
+    let markFlowStarted;
+    const flowStarted = new Promise(resolve => { markFlowStarted = resolve; });
+    const flowPending = new Promise((resolve, reject) => { rejectFlow = reject; });
+    const oldStore = {
+      getRefreshToken: jest.fn(async () => null),
+      setRefreshToken: jest.fn(),
+      clearRefreshToken: jest.fn()
+    };
+    const flow = jest.fn(() => {
+      markFlowStarted();
+      return flowPending;
+    });
+    const client = makeClient({
+      store: oldStore,
+      clientSecret: 'old-client-secret',
+      flow
+    });
+    const oldRequest = client._getOAuthToken();
+    await flowStarted;
+
+    const newStore = {
+      getRefreshToken: jest.fn(async () => null),
+      setRefreshToken: jest.fn(),
+      clearRefreshToken: jest.fn()
+    };
+    client.setInstance('https://new.service-now.com', null, null, 'new', {
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'new-cid',
+      clientSecret: 'new-client-secret',
+      tokenStore: newStore,
+      performAuthCodeFlow: async () => ({ access_token: 'unexpected' })
+    });
+    client.oauthToken = 'new-access-secret';
+    client.oauthRefreshToken = 'new-refresh-secret';
+    client.oauthTokenExpiry = 9876543210;
+
+    const flowError = new Error(
+      'old interactive failure old-access-secret old-refresh-secret old-client-secret '
+      + 'new-access-secret new-refresh-secret new-client-secret'
+    );
+    flowError.response = {
+      status: 500,
+      data: {
+        access_token: 'old-access-secret',
+        refresh_token: 'old-refresh-secret',
+        client_secret: 'new-client-secret'
+      }
+    };
+    rejectFlow(flowError);
+
+    let thrown;
+    try {
+      await oldRequest;
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'INSTANCE_CHANGED' });
+    const serialized = serializedError(thrown);
+    for (const secret of [
+      'old-access-secret',
+      'old-refresh-secret',
+      'old-client-secret',
+      'new-access-secret',
+      'new-refresh-secret',
+      'new-client-secret'
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(client.oauthToken).toBe('new-access-secret');
+    expect(client.oauthRefreshToken).toBe('new-refresh-secret');
+    expect(client.oauthTokenExpiry).toBe(9876543210);
+    expect(oldStore.clearRefreshToken).not.toHaveBeenCalled();
+    expect(oldStore.setRefreshToken).not.toHaveBeenCalled();
+    expect(newStore.clearRefreshToken).not.toHaveBeenCalled();
+    expect(newStore.setRefreshToken).not.toHaveBeenCalled();
+  });
+
 describe('ServiceNowClient OAuth registered credentials', () => {
   afterEach(() => {
     jest.restoreAllMocks();
