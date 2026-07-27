@@ -1,59 +1,106 @@
 # Multi-Instance Configuration Guide
 
-## Overview
-
-The ServiceNow MCP Server can load multiple named instances from JSON and route individual operations to dev, test, or production. Startup configuration and a session's current implicit target are separate concepts.
+The ServiceNow MCP Server loads named instance metadata from a version 1
+registry and routes operations to dev, test, or production. Credentials are
+never stored in the registry created by the new CLI: only canonical
+`credentialRef` values point to local OS-keychain entries.
 
 ## Configuration File
 
-Create `config/servicenow-instances.json` with your instance credentials:
+Global installs and `npx` use the user-owned registry
+`~/.config/happy-platform-mcp/instances.json` (or the platform's user config
+directory on Windows). Set one optional `HAPPY_CONFIG_PATH` setting to point
+to a different metadata registry; `~` expands to the home directory and a
+relative path is resolved from the process cwd. One setting/file holds all
+environments.
 
 ```json
 {
+  "version": 1,
+  "docs": {
+    "localIndexEnabled": false
+  },
   "instances": [
     {
       "name": "dev",
-      "url": "https://dev276360.service-now.com",
-      "username": "admin",
-      "password": "your_password",
+      "url": "https://your-dev-instance.service-now.com",
+      "authType": "basic",
+      "username": "your-username",
+      "credentialRef": "keychain:instance/dev/password",
       "default": true,
       "description": "Development instance"
     },
     {
       "name": "prod",
-      "url": "https://yourinstance.service-now.com",
+      "url": "https://your-prod-instance.service-now.com",
       "authType": "oauth",
       "grantType": "client_credentials",
-      "clientId": "your_oauth_client_id",
-      "clientSecret": "your_oauth_client_secret",
+      "clientId": "your-client-id",
+      "credentialRef": "keychain:instance/prod/client-secret",
       "default": false,
-      "description": "Production instance (OAuth)"
+      "description": "Production instance"
     }
   ]
 }
 ```
 
+Use the local CLI to create and test entries:
+
+```bash
+happy-platform-mcp instance add
+happy-platform-mcp instance list
+happy-platform-mcp instance update dev
+happy-platform-mcp instance test dev
+happy-platform-mcp instance remove dev
+happy-platform-mcp instance credential set dev --type password
+happy-platform-mcp instance migrate
+```
+
+Secret prompts are masked and handled locally by the OS keychain. `update`
+changes metadata only; authentication changes require remove/re-add. The CLI
+requires an interactive TTY for secret prompts and does not accept secrets
+from non-TTY stdin or fall back to plaintext. MCP tools never accept passwords
+or client secrets.
+
 ### Instance Configuration Fields
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `name` | Yes | — | Unique instance identifier |
-| `url` | Yes | — | ServiceNow instance URL |
-| `username` | Basic or OAuth password grant | — | Username for authentication |
-| `password` | Basic or OAuth password grant | — | Password for authentication |
-| `authType` | No | `"basic"` | `"basic"` or `"oauth"` |
-| `grantType` | No | auto | `"client_credentials"`, `"password"`, or `"authorization_code"` |
-| `clientId` | OAuth only | — | OAuth Client ID from Application Registry |
-| `clientSecret` | OAuth except public authorization-code clients | — | OAuth Client Secret |
-| `scope` | No | — | OAuth scope (optional) |
-| `authorizeUrl` | No | derived from instance URL | Authorization endpoint for `authorization_code` |
-| `tokenUrl` | No | derived from instance URL | Token endpoint for `authorization_code` |
-| `redirectPort` | No | ephemeral OS-assigned port (`0`) | Loopback port for `authorization_code`; set a fixed port when the registered redirect URL requires one |
-| `callbackPath` | No | `"/callback"` | Loopback callback path for `authorization_code` |
-| `default` | No | `false` | Mark the startup default when no named override is selected |
-| `description` | No | — | Human-readable description |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `version` | Yes | Registry document version; current value is `1` |
+| `docs` | No | Preserved top-level docs settings such as `localIndexEnabled` |
+| `name` | Yes | Unique instance identifier |
+| `url` | Yes | HTTPS ServiceNow URL; loopback HTTP is allowed for local fixtures |
+| `username` | Basic/password grant | Username for authentication |
+| `authType` | No | `"basic"` or `"oauth"` |
+| `grantType` | OAuth only | `"client_credentials"`, `"password"`, or `"authorization_code"` |
+| `clientId` | OAuth only | OAuth client identifier |
+| `credentialRef` | Basic/client credentials | Canonical local keychain reference |
+| `scope` | No | OAuth scope |
+| `authorizeUrl` | No | Authorization endpoint for `authorization_code` |
+| `tokenUrl` | No | Token endpoint for `authorization_code` |
+| `redirectPort` | No | Loopback callback port |
+| `callbackPath` | No | Loopback callback path |
+| `default` | No | Startup default marker |
+| `description` | No | Human-readable description |
 
-**Important:** The `config/servicenow-instances.json` file is gitignored to prevent committing credentials.
+The registry file is metadata only and should remain private. Do not add
+plaintext credential fields to new configuration.
+
+## Registry path precedence and environment timing
+
+At startup and for CLI reads/writes, resolution is exact:
+
+1. `HAPPY_CONFIG_PATH`, when set. It is the single explicit metadata registry path.
+2. The user registry (`~/.config/happy-platform-mcp/instances.json`, or the
+   platform user config path on Windows) when it exists.
+3. The legacy package-relative `config/servicenow-instances.json` when it exists.
+4. The singular `SERVICENOW_*` environment fallback only when no registry file
+   is available.
+
+`.env` is loaded when the server/CLI process starts, before configuration
+resolution. Set `HAPPY_CONFIG_PATH` in the MCP host environment before launch;
+do not expect changing it through a running MCP call to retarget the process.
+
 
 ## Instance Selection
 
@@ -99,17 +146,18 @@ The `default` flag only controls startup selection. After startup, calls that om
 
 ### 3. Environment Credential Fallback
 
-If `config/servicenow-instances.json` is missing, ServiceNow environment credentials provide one fallback instance named `default`:
+If no registry file is available, the legacy singular environment variables
+provide one fallback instance named `default`. They are backward-compatible
+only and should not be used for new multi-instance setup:
 
 ```env
-SERVICENOW_INSTANCE_URL=https://your-instance.service-now.com
-SERVICENOW_USERNAME=your_username
-SERVICENOW_PASSWORD=your_password
+# Set locally; never commit secret values.
+SERVICENOW_INSTANCE_URL=
+SERVICENOW_USERNAME=
+SERVICENOW_PASSWORD=
 ```
 
 ## API Endpoints
-
-### List Available Instances
 ```bash
 curl http://localhost:3000/instances
 ```
@@ -180,106 +228,79 @@ const selectedInstance = configManager.getInstanceOrDefault(process.env.SERVICEN
 const instances = configManager.listInstances();
 ```
 
-## Migration from .env
+## Migration from legacy `.env` or package config
 
-1. Create `config/servicenow-instances.json` using the example template
-2. Copy your credentials from `.env` to the JSON file
-3. Test with `npm start`; it should load the JSON configuration
-4. Optionally remove ServiceNow credentials from `.env` while keeping unrelated variables
+Run the migration locally:
+
+```bash
+happy-platform-mcp instance migrate
+```
+
+Migration reads the selected legacy source, preserves unrelated top-level
+properties such as `docs`, writes a version 1 user registry, and stores
+supported basic-auth passwords and OAuth client secrets in the OS keychain.
+It leaves the legacy file untouched; remove old files or variables only after
+verifying the new registry with `instance list` and `instance test`.
+Unsupported or incomplete entries abort without a partial migration.
+If the keychain is unavailable, migration aborts and never writes plaintext
+credentials as a fallback.
 
 ## OAuth Authentication
 
-Each instance can independently use basic auth or OAuth 2.0. Three OAuth grant types are supported:
+Each instance can independently use basic auth or OAuth 2.0:
 
-- **Client Credentials** (recommended for services) — service-to-service, no user credentials needed.
-- **Resource Owner Password Credentials** — requires username/password.
-- **Authorization Code with PKCE** — signs in an individual developer through a browser and uses a loopback callback. Public clients require no client secret.
+- **Client Credentials** (recommended for services): service-to-service.
+- **Resource Owner Password Credentials**: requires username and two local
+  keychain credentials, set through the CLI.
+- **Authorization Code with PKCE**: browser sign-in with a loopback callback;
+  public clients require no client secret.
 
-### ServiceNow Setup
+For OAuth setup, create the appropriate endpoint under **System OAuth >
+Application Registry**, then store only the client identifier and canonical
+credential references in the registry. Authorization Code instances use
+`authorizeUrl`, `tokenUrl`, `redirectPort`, and `callbackPath` metadata.
 
-1. Navigate to **System OAuth > Application Registry**.
-2. For Client Credentials or password grants, create an OAuth API endpoint for external clients and configure its client ID and secret.
-3. For Authorization Code with PKCE, create a public client and register `http://127.0.0.1:<redirectPort><callbackPath>` as its redirect URL.
-4. Add the matching values to your instance config with `"authType": "oauth"`.
+Client Credentials and password-grant tokens are cached in memory and refreshed
+before expiry. Authorization Code refresh tokens are stored in the OS keychain.
+After a rejected refresh token, browser sign-in starts again; there is no shared
+credential or plaintext fallback.
 
-### Token Lifecycle
+When `SN-Set-Instance` selects a configured instance, the current sequential
+session client uses that instance's authentication method. The configuration
+itself is unchanged.
 
-- Client Credentials and password-grant tokens are cached in memory and refreshed before expiry.
-- Authorization Code with PKCE opens a browser on the first use, then stores the refresh token in the operating system keychain under the current OS user and instance name.
-- On a 401 response, the token is refreshed and the request retried once.
-- A rejected authorization-code refresh token starts browser sign-in again; it never falls back to shared credentials.
+## Security and rollback behavior
 
-### Mixing Auth Types
-
-You can freely mix basic auth, client credentials, and password grant instances:
-
-```json
-{
-  "instances": [
-    {
-      "name": "dev",
-      "url": "https://dev123.service-now.com",
-      "username": "admin",
-      "password": "password",
-      "default": true
-    },
-    {
-      "name": "prod",
-      "url": "https://prod456.service-now.com",
-      "authType": "oauth",
-      "grantType": "client_credentials",
-      "clientId": "abc...",
-      "clientSecret": "xyz..."
-    },
-    {
-      "name": "staging",
-      "url": "https://staging789.service-now.com",
-      "authType": "oauth",
-      "grantType": "password",
-      "clientId": "abc...",
-      "clientSecret": "xyz...",
-      "username": "integration_user",
-      "password": "password"
-    },
-    {
-      "name": "developer",
-      "url": "https://dev.service-now.com",
-      "authType": "oauth",
-      "grantType": "authorization_code",
-      "clientId": "public-client-id",
-      "redirectPort": 8202
-    }
-  ]
-}
-```
-
-If `grantType` is omitted, it defaults to `client_credentials` when no username is provided, or `password` when username is present.
-
-When `SN-Set-Instance` selects a configured instance, the current session client uses that instance's authentication method. The configuration itself is unchanged.
-
-## Security Notes
-
-- **Never commit** `config/servicenow-instances.json` (already gitignored)
-- Keep the `.example` file without real credentials for documentation
-- Use environment-specific passwords
-- Consider using secrets management tools for production
+- Registry files contain metadata only; canonical `credentialRef` values point
+  to the OS keychain. There is no plaintext fallback.
+- Secret prompts are local and masked. MCP registration rejects
+  password/client-secret-shaped fields and never accepts secrets.
+- If a credential is missing, `SN-Register-Instance` returns
+  `CREDENTIAL_NOT_FOUND` plus the exact local credential-set command(s).
+- If the keychain is unavailable, registration and migration abort without a
+  registry write.
+- Registration uses atomic registry writes. A failed write reports
+  `REGISTRY_WRITE_FAILED`; an unsafe compensation reports
+  `REGISTRY_ROLLBACK_REQUIRED` and requires manual rollback review.
+- After docs-only registration, restart the MCP server. A failed reload also
+  returns `restartRequired`.
 
 ## Troubleshooting
 
-### "Instance not found" error
-```
-Instance 'staging' not found. Available instances: dev, prod, test
-```
-**Solution:** Check instance name spelling or add the instance to config file.
+### Instance not found
 
-### Falls back to .env
-```
-⚠️  servicenow-instances.json not found, falling back to .env
-```
-**Solution:** Create `config/servicenow-instances.json` from the example file.
+Check the name with `happy-platform-mcp instance list`, then use
+`happy-platform-mcp instance add` or the metadata-only `instance update`
+command. Authentication changes require remove/re-add.
 
-### Missing credentials
-```
-Missing ServiceNow credentials. Create config/servicenow-instances.json...
-```
-**Solution:** Either create JSON config or set env vars in `.env`.
+### Missing credential
+
+Run the exact `happy-platform-mcp instance credential set <name> --type
+password|client-secret` command returned by the MCP registration response, in
+an interactive local TTY, then retry.
+
+### Legacy migration required
+
+Run `happy-platform-mcp instance migrate`. The old package-relative file is
+left untouched, and unsupported or incomplete entries are not partially
+migrated.
