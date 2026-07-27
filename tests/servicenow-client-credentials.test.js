@@ -243,4 +243,37 @@ describe('ServiceNowClient registered credentials', () => {
     );
     expect(store.getSecret).not.toHaveBeenCalled();
   });
+  test('rejects a deferred old request when the instance switches before auth resolves', async () => {
+    let releaseOld;
+    const oldLookup = new Promise(resolve => { releaseOld = resolve; });
+    const store = makeStore({
+      getSecret: jest.fn(ref => ref === BASIC_REF ? oldLookup : Promise.resolve('new-secret'))
+    });
+    const client = new ServiceNowClient('https://dev.service-now.com', 'dev-user', null, {
+      credentialRef: BASIC_REF,
+      credentialStore: store
+    });
+    const oldClient = client.client;
+    const adapter = jest.fn(async () => ({
+      status: 200,
+      data: { result: [] },
+      headers: {},
+      config: {}
+    }));
+    oldClient.defaults.adapter = adapter;
+    const request = oldClient.get('/api/now/table/sys_user');
+
+    await new Promise(resolve => setImmediate(resolve));
+    client.setInstance('https://prod.service-now.com', 'prod-user', null, 'prod', {
+      credentialRef: NEXT_BASIC_REF,
+      credentialStore: store
+    });
+    releaseOld('old-secret');
+
+    await expect(request).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(adapter).not.toHaveBeenCalled();
+    await expect(client.getAuthHeader()).resolves.toBe(
+      `Basic ${Buffer.from('prod-user:new-secret').toString('base64')}`
+    );
+  });
 });

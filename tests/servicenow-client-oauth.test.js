@@ -538,4 +538,44 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
     expect(params.client_secret).toBe('legacy-client-secret');
   });
+  test('rejects an old 401 after instance switch without retrying with the new token', async () => {
+    const client = makeGrantClient({ clientSecret: 'old-client-secret' });
+    client.oauthToken = 'old-access-token';
+    client.oauthTokenExpiry = Date.now() + 300000;
+    const oldClient = client.client;
+    let release401;
+    const responsePending = new Promise((resolve, reject) => { release401 = reject; });
+    const adapter = jest.fn(config => responsePending.then(() => ({
+      status: 200,
+      data: { result: [] },
+      headers: {},
+      config
+    })));
+    oldClient.defaults.adapter = adapter;
+    const request = oldClient.get('/api/now/table/sys_user');
+    await new Promise(resolve => setImmediate(resolve));
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(adapter.mock.calls[0][0].headers.Authorization).toBe('Bearer old-access-token');
+
+    client.setInstance('https://prod.service-now.com', null, null, 'prod', {
+      authType: 'oauth',
+      grantType: 'client_credentials',
+      clientId: 'cid',
+      clientSecret: 'new-client-secret'
+    });
+    const oldConfig = adapter.mock.calls[0][0];
+    const unauthorized = new Error('old instance unauthorized');
+    unauthorized.config = oldConfig;
+    unauthorized.response = {
+      status: 401,
+      data: { error: { authorization: 'Bearer old-access-token' } },
+      config: oldConfig
+    };
+    release401(unauthorized);
+
+    await expect(request).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(client.oauthToken).toBeNull();
+    expect(oldConfig.headers.Authorization).toBe('Bearer old-access-token');
+  });
 });
