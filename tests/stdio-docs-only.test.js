@@ -40,6 +40,17 @@ describe('stdio docs-only startup', () => {
     expect(createServer).toHaveBeenCalledWith(null, { docsOnly: true });
   });
 
+  test('production docs-only server advertises registration without touching keychain', async () => {
+    const result = await createConfiguredMcpServer({
+      env: { HAPPY_MCP_DOCS_ONLY: 'true' }
+    });
+    const listTools = result.server._requestHandlers.get('tools/list');
+    const tools = await listTools({ method: 'tools/list', params: {} }, {});
+
+    expect(tools.tools.filter(tool => tool.name === 'SN-Register-Instance')).toHaveLength(1);
+    expect(result.docsOnly).toBe(true);
+  });
+
   test('falls back to docs-only mode when ServiceNow config and env credentials are missing', async () => {
     const manager = {
       getInstanceOrDefault: jest.fn(() => {
