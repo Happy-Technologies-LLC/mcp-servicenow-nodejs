@@ -57,21 +57,26 @@ happy-platform-mcp instance list
 happy-platform-mcp instance update dev
 happy-platform-mcp instance test dev
 happy-platform-mcp instance remove dev
-happy-platform-mcp instance credential set dev --type password
 happy-platform-mcp instance migrate
 ```
 
-Secret prompts are masked and handled locally by the OS keychain. `update`
-changes metadata only; authentication changes require remove/re-add. The CLI
-requires an interactive TTY for secret prompts and does not accept secrets
-from non-TTY stdin or fall back to plaintext. MCP tools never accept passwords
-or client secrets.
+For Basic, OAuth `client_credentials`, and OAuth `password` entries,
+interactive `instance add` prompts for and stores every required secret exactly
+once before registering the metadata. Secret prompts are masked and handled
+locally by the OS keychain. `instance credential set` is not part of initial
+setup: use it only to rotate or replace a credential for an already registered
+instance, or to recover a missing credential after metadata-only MCP
+registration. The command requires an interactive TTY and does not accept
+secrets from non-TTY stdin or fall back to plaintext. MCP tools never accept
+passwords or client secrets.
 
-For a password-grant instance, `credentialRef` is an object with both
-`password` and `clientSecret` canonical references. Basic and
-`client_credentials` instances use one string reference for the respective
-password or client secret. Authorization-code instances use metadata only
-until the interactive browser flow stores a refresh token locally.
+`update` changes metadata only; authentication changes require remove/re-add,
+which prompts for replacement credentials during `instance add`. For a
+password-grant instance, `credentialRef` is an object with both `password` and
+`clientSecret` canonical references. Basic and `client_credentials` instances
+use one string reference for the respective password or client secret.
+Authorization-code instances use metadata only until the interactive browser
+flow stores a refresh token locally.
 
 ### Instance Configuration Fields
 
@@ -131,13 +136,13 @@ the CLI refuses before any keychain write and leaves both source bytes and
 keychain entries unchanged. Choose a distinct `HAPPY_CONFIG_PATH` target, or
 unset it and use the automatic package-legacy -> user-registry workflow.
 Never copy credentials into command arguments; for a non-package legacy source,
-use a controlled distinct source/target migration workflow or manually register
-metadata with `instance add`, then enter credentials through the masked
-`instance credential set` prompt.
+use a controlled distinct source/target migration workflow or manually
+re-register metadata with `instance add`, which prompts for and stores required
+credentials before registration.
 
 Migration never reads `SERVICENOW_*` environment variables. Environment-only
-credentials must be manually re-registered with `instance add` and
-`instance credential set`.
+credentials must be manually re-registered with `instance add`, whose prompts
+collect the required secrets exactly once.
 
 Set `HAPPY_CONFIG_PATH` before launch; do not expect changing it through a
 running MCP call to retarget the process.
@@ -305,16 +310,16 @@ const instances = configManager.listInstances();
 
 ## OAuth Authentication
 
-Each instance can independently use basic auth or OAuth 2.0. The following
-sequences use the global interactive CLI, then local credential setup and
-`instance test`; do not put secrets in JSON or command arguments.
+Each instance can independently use basic auth or OAuth 2.0. Interactive
+`instance add` prompts for and stores required Basic, client-credentials, or
+password-grant secrets exactly once before registering metadata. Use
+`instance test` afterward; do not put secrets in JSON or command arguments.
 
 ### Global CLI: dev basic authentication
 
 ```bash
 happy-platform-mcp instance add
-# Select Basic authentication; set the name to dev and enter URL and username.
-happy-platform-mcp instance credential set dev --type password
+# Select Basic authentication; set the name to dev and enter URL, username, and password when prompted.
 happy-platform-mcp instance test dev
 ```
 
@@ -322,8 +327,7 @@ happy-platform-mcp instance test dev
 
 ```bash
 happy-platform-mcp instance add
-# Select OAuth -> Client credentials; set the name to prod and enter URL and client ID.
-happy-platform-mcp instance credential set prod --type client-secret
+# Select OAuth -> Client credentials; set the name to prod and enter URL, client ID, and client secret when prompted.
 happy-platform-mcp instance test prod
 ```
 
@@ -331,9 +335,7 @@ happy-platform-mcp instance test prod
 
 ```bash
 happy-platform-mcp instance add
-# Select OAuth -> Password grant and enter URL, client ID, and username.
-happy-platform-mcp instance credential set password-prod --type password
-happy-platform-mcp instance credential set password-prod --type client-secret
+# Select OAuth -> Password grant and enter URL, client ID, username, password, and client secret when prompted.
 happy-platform-mcp instance test password-prod
 ```
 
@@ -355,9 +357,9 @@ happy-platform-mcp instance add
 happy-platform-mcp instance test public-dev
 ```
 
-Authorization-code metadata does not require `credentialRef` or a client
-secret. The first test/API call opens the browser authorization flow; the
-resulting refresh token is stored in the OS keychain.
+Authorization-code metadata does not require `credentialRef`, a client secret,
+or any other static secret. The first test/API call opens the browser
+authorization flow; the resulting refresh token is stored in the OS keychain.
 
 For OAuth setup, create the appropriate endpoint under **System OAuth >
 Application Registry**, then store only the client identifier and canonical

@@ -140,13 +140,15 @@ happy-platform-mcp instance list
 happy-platform-mcp instance test dev
 happy-platform-mcp instance update dev
 happy-platform-mcp instance remove dev
-happy-platform-mcp instance credential set dev --type password
 happy-platform-mcp instance migrate
 ```
 
-`instance update` changes metadata only. Authentication changes require
-`instance remove` followed by `instance add`, then credential setup. Secret
-prompts never put values in command arguments, logs, or MCP messages. These
+`instance add` prompts once for the credentials required by the selected auth
+mode and stores them before registering metadata. `instance credential set` is
+only for rotating an existing credential or completing a metadata-only MCP
+registration. `instance update` changes metadata only. Authentication changes
+require `instance remove` followed by `instance add`. Secret prompts never put
+values in command arguments, logs, or MCP messages. These
 prompts require an interactive local TTY. In non-TTY automation, use a
 pre-provisioned OS keychain entry and run metadata-only commands; the CLI will
 not read secrets from stdin or silently fall back to plaintext.
@@ -413,16 +415,18 @@ be set before the server starts. For source installs, use
 
 ## Authentication
 
-Happy MCP Server supports three credential flows per instance. Use interactive
-`instance add`, then credential setup and `instance test`; never place secrets
-in JSON or command arguments.
+Happy MCP Server supports three credential flows per instance. Interactive
+`instance add` captures each required secret once, stores it in the OS
+keychain, and registers the metadata. Use `instance credential set` later only
+to rotate an existing credential or complete metadata-only MCP registration.
+Never place secrets in JSON or command arguments.
 
 ### Global CLI: dev basic authentication
 
 ```bash
 happy-platform-mcp instance add
-# Select Basic authentication; set the name to dev and enter URL and username.
-happy-platform-mcp instance credential set dev --type password
+# Select Basic authentication; set the name to dev, enter URL and username,
+# then enter the masked password when prompted. The command stores it once.
 happy-platform-mcp instance test dev
 ```
 
@@ -430,8 +434,8 @@ happy-platform-mcp instance test dev
 
 ```bash
 happy-platform-mcp instance add
-# Select OAuth -> Client credentials; set the name to prod and enter URL and client ID.
-happy-platform-mcp instance credential set prod --type client-secret
+# Select OAuth -> Client credentials; set the name to prod, enter URL and
+# client ID, then enter the masked client secret. The command stores it once.
 happy-platform-mcp instance test prod
 ```
 
@@ -439,9 +443,8 @@ happy-platform-mcp instance test prod
 
 ```bash
 happy-platform-mcp instance add
-# Select OAuth -> Password grant and enter URL, client ID, and username.
-happy-platform-mcp instance credential set password-prod --type password
-happy-platform-mcp instance credential set password-prod --type client-secret
+# Select OAuth -> Password grant; enter URL, client ID, and username, then
+# enter both masked prompts. The command stores both credentials once.
 happy-platform-mcp instance test password-prod
 ```
 
