@@ -31,7 +31,7 @@ export async function dispatch(argv = process.argv.slice(2), dependencies = {}) 
     write(stderr, SECRET_ARGUMENT_ERROR);
     return 2;
   }
-  if (args.length === 0) {
+  if (args.length === 0 || (args.length === 1 && args[0] === '--docs-only')) {
     const { main } = await import('./stdio-server.js');
     await main();
     return 0;

@@ -689,13 +689,16 @@ test('migrate rolls back only newly-created secrets when registry write fails', 
   expect(result.err.chunks.join('')).toContain('write failed');
 });
  
-test('CLI dispatch delegates no arguments to stdio main without starting it for help', async () => {
+test('CLI dispatch delegates server startup arguments to stdio main without starting it for help', async () => {
   const main = jest.fn(async () => {});
   jest.unstable_mockModule('../src/stdio-server.js', () => ({ main }));
   const { dispatch } = await import('../src/cli.js');
 
   const outputStreams = streams();
   expect(await dispatch([], { stdout: outputStreams.out, stderr: outputStreams.err })).toBe(0);
+  expect(main).toHaveBeenCalledTimes(1);
+  main.mockClear();
+  expect(await dispatch(['--docs-only'], { stdout: outputStreams.out, stderr: outputStreams.err })).toBe(0);
   expect(main).toHaveBeenCalledTimes(1);
   main.mockClear();
   expect(await dispatch(['--help'], { stdout: outputStreams.out, stderr: outputStreams.err })).toBe(0);
