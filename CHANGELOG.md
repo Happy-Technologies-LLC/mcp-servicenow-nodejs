@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 5.1.0 - 2026-07-27
+
+### Added
+
+- User-owned multi-instance registration with separate dev, test, and production profiles, `HAPPY_CONFIG_PATH` overrides, atomic registry writes, and migration from legacy package-local configuration.
+- Interactive `happy-platform-mcp instance` commands for adding, listing, updating, testing, removing, migrating, and securely provisioning credentials.
+- Basic, OAuth password, OAuth client-credentials, and public authorization-code registrations backed by operating-system keychain storage rather than registry JSON.
+- Metadata-only `SN-Register-Instance` MCP setup support and immediate per-call routing to newly registered instances.
+
+### Security
+
+- Redacted credentials, authorization headers, newly issued OAuth tokens, keychain failures, and registration rollback diagnostics from errors and logs.
+- Added strict authentication schemas, credential identity checks, serialized mutations, state-aware rollback, and fail-closed migration source validation.
+- Treat empty or whitespace-only keychain values as missing credentials and prevent incomplete instance metadata from being persisted.
+
+### Fixed
+
+- Await asynchronous keychain operations before continuing registration or OAuth flows.
+- Preserve canonical missing-path component order while retaining same-file and symlink-alias migration refusal.
+
 ## 5.0.0 - 2026-07-23
 
 ### Breaking changes
@@ -55,4 +75,3 @@
 - Added env-only OAuth `client_credentials` support through `SERVICENOW_OAUTH_GRANT_TYPE`.
 - Updated transitive dependencies: `hono` to `4.12.18` and `fast-uri` to `3.1.2`.
 - Thanks to [@davidkarlsen](https://github.com/davidkarlsen) for contributing the OAuth grant-type support in PR #32.
-
