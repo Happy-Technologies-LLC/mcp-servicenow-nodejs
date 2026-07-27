@@ -15,15 +15,24 @@ import { InMemoryTokenStore } from '../src/token-store.js';
 
 const DEFAULT_ACCOUNT = `${userInfo().username}@default`;
 
-function makeClient({ store, flow, postToken } = {}) {
+function makeClient({ store, flow, postToken, clientSecret } = {}) {
   return new ServiceNowClient('https://ex.service-now.com', null, null, {
     authType: 'oauth',
     grantType: 'authorization_code',
     clientId: 'cid',
+    clientSecret,
     scope: 'useraccount',
     tokenStore: store,
     performAuthCodeFlow: flow,
     postToken
+  });
+}
+
+function serializedError(error) {
+  return JSON.stringify({
+    ...error,
+    message: error.message,
+    stack: error.stack
   });
 }
 
@@ -105,6 +114,103 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-new');
   });
 
+  it('redacts OAuth and basic credential material from interactive auth errors', async () => {
+    const accessToken = 'access-token-secret';
+    const refreshToken = 'refresh-token-secret';
+    const password = 'basic-password-secret';
+    const clientSecret = 'client-secret-secret';
+    const basicAuth = Buffer.from(`user:${password}`).toString('base64');
+    const flow = async () => {
+      const error = new Error(
+        `token endpoint failed ${accessToken} ${refreshToken} ${password} ${clientSecret} `
+        + `Bearer ${accessToken} Basic ${basicAuth}`
+      );
+      error.response = {
+        data: {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          authorization: `Bearer ${accessToken}`,
+          basic: `Basic ${basicAuth}`,
+          client_secret: clientSecret,
+          password
+        }
+      };
+      throw error;
+    };
+    const client = makeClient({ flow, clientSecret });
+    client.oauthToken = accessToken;
+    client.oauthRefreshToken = refreshToken;
+    client.password = password;
+    client.auth = basicAuth;
+    client.username = 'user';
+
+    let thrown;
+    try {
+      await client._getOAuthToken();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const serialized = serializedError(thrown);
+    for (const secret of [accessToken, refreshToken, password, clientSecret, basicAuth]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(serialized).not.toContain(`Bearer ${accessToken}`);
+    expect(serialized).not.toContain(`Basic ${basicAuth}`);
+  });
+
+  it('redacts OAuth and basic credential material from refresh endpoint errors', async () => {
+    const accessToken = 'refresh-access-secret';
+    const refreshToken = 'refresh-token-secret';
+    const password = 'refresh-basic-password';
+    const basicAuth = Buffer.from(`user:${password}`).toString('base64');
+    const store = new InMemoryTokenStore();
+    await store.setRefreshToken(DEFAULT_ACCOUNT, refreshToken);
+    const postToken = async () => {
+      const error = new Error(
+        `refresh endpoint failed ${accessToken} ${refreshToken} ${password} `
+        + `Bearer ${accessToken} Basic ${basicAuth} `
+        + `authorization: bearer ${accessToken} Authorization: basic ${basicAuth}`
+      );
+      error.response = {
+        status: 500,
+        data: {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          authorization: `Bearer ${accessToken}`,
+          basic: `Basic ${basicAuth}`,
+          password
+        }
+      };
+      throw error;
+    };
+    const client = makeClient({ store, flow: async () => ({ access_token: 'unexpected' }), postToken });
+    client.oauthToken = accessToken;
+    client.oauthRefreshToken = refreshToken;
+    client.password = password;
+    client.auth = basicAuth;
+    client.username = 'user';
+
+    let thrown;
+    try {
+      await client._getOAuthToken();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const serialized = serializedError(thrown);
+    for (const secret of [accessToken, refreshToken, password, basicAuth]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(serialized).not.toContain(`Bearer ${accessToken}`);
+    expect(serialized).not.toContain(`Basic ${basicAuth}`);
+    expect(serialized).not.toContain(`authorization: bearer ${accessToken}`);
+    expect(serialized).not.toContain(`Authorization: basic ${basicAuth}`);
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe(refreshToken);
+  });
+
   it('re-runs the interactive flow (never password) when the server REJECTS the refresh token (400/invalid_grant)', async () => {
     const store = new InMemoryTokenStore();
     await store.setRefreshToken(DEFAULT_ACCOUNT, 'rt-expired');
@@ -112,7 +218,7 @@ describe('ServiceNowClient authorization_code grant', () => {
     const flow = async () => { flowCalls++; return { access_token: 'at-reauth', refresh_token: 'rt-fresh', expires_in: 1800 }; };
     const postToken = async () => {
       const err = new Error('invalid_grant');
-      err.response = { status: 400 };
+      err.response = { status: 400, data: { error: 'invalid_grant' } };
       throw err;
     };
     const client = makeClient({ store, flow, postToken });
@@ -122,6 +228,31 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(token).toBe('at-reauth');
     expect(flowCalls).toBe(1);
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-fresh');
+  });
+
+  it.each([
+    [400, 'invalid_client'],
+    [401, 'invalid_request']
+  ])('preserves the refresh token and does not re-authenticate for %s %s', async (status, oauthError) => {
+    const store = new InMemoryTokenStore();
+    const storedRefreshToken = `stored-${oauthError}`;
+    await store.setRefreshToken(DEFAULT_ACCOUNT, storedRefreshToken);
+    let flowCalls = 0;
+    const flow = async () => {
+      flowCalls++;
+      return { access_token: 'unexpected' };
+    };
+    const postToken = async () => {
+      const error = new Error(oauthError);
+      error.response = { status, data: { error: oauthError } };
+      throw error;
+    };
+    const client = makeClient({ store, flow, postToken });
+
+    await expect(client._getOAuthToken()).rejects.toThrow(oauthError);
+    expect(flowCalls).toBe(0);
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe(storedRefreshToken);
+    expect(client.oauthRefreshToken).toBe(storedRefreshToken);
   });
 
   it('does NOT discard the refresh token or re-auth on a transient error (network / 5xx)', async () => {

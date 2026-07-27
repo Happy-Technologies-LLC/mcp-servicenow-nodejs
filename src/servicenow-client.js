@@ -56,25 +56,62 @@ function staleInstanceError() {
 
 function collectCredentialValues(client) {
   const values = new Set();
-  for (const value of [
-    client?.password,
-    client?.oauthConfig?.clientSecret,
-    client?.auth ? `Basic ${client.auth}` : null,
-    client?.oauthToken ? `Bearer ${client.oauthToken}` : null
-  ]) {
-    if (typeof value === 'string' && value.length > 0) values.add(value);
+  const add = (value) => {
+    if (typeof value === 'string' && value.length > 0) {
+      values.add(value);
+    }
+  };
+  const addAuthorizationVariants = (scheme, value) => {
+    if (typeof value !== 'string' || value.length === 0) return;
+    for (const schemeVariant of [scheme, scheme.toLowerCase()]) {
+      add(`${schemeVariant} ${value}`);
+      add(`Authorization: ${schemeVariant} ${value}`);
+      add(`authorization: ${schemeVariant} ${value}`);
+    }
+  };
+
+  const password = client?.password;
+  const username = client?.username;
+  const clientSecret = client?.oauthConfig?.clientSecret;
+  const basicAuth = client?.auth;
+  const accessToken = client?.oauthToken;
+  const refreshToken = client?.oauthRefreshToken;
+
+  add(password);
+  add(clientSecret);
+  add(basicAuth);
+  add(accessToken);
+  add(refreshToken);
+  if (typeof username === 'string' && typeof password === 'string') {
+    const basicMaterial = `${username}:${password}`;
+    const encodedBasic = Buffer.from(basicMaterial).toString('base64');
+    add(basicMaterial);
+    add(encodedBasic);
+    addAuthorizationVariants('Basic', encodedBasic);
   }
-  for (const ref of [client?.credentialRef, ...(client?.credentialRef && typeof client.credentialRef === 'object'
-    ? Object.values(client.credentialRef)
-    : [])]) {
-    if (typeof ref === 'string' && ref.length > 0) values.add(ref);
-  }
+  addAuthorizationVariants('Basic', basicAuth);
+  addAuthorizationVariants('Bearer', accessToken);
+
   if (client?._resolvedCredentialSecrets) {
     for (const value of client._resolvedCredentialSecrets.values()) {
-      if (typeof value === 'string' && value.length > 0) values.add(value);
+      add(value);
     }
   }
   return values;
+}
+
+function isExplicitInvalidGrant(error) {
+  const data = error?.response?.data;
+  const candidates = [
+    data?.error,
+    data?.error?.code,
+    data?.error_code,
+    data?.code,
+    error?.response?.error,
+    error?.error,
+    error?.code
+  ];
+  return candidates.some(value => typeof value === 'string' && value.toLowerCase() === 'invalid_grant');
 }
 
 function safeAuthError(error, client) {
@@ -459,12 +496,14 @@ export class ServiceNowClient {
         if (refreshError?.code === 'INSTANCE_CHANGED') {
           throw refreshError;
         }
-        // Only a genuine token REJECTION (400/401 invalid_grant) means the
-        // refresh token is dead → discard it and re-prompt interactive sign-in.
-        // A transient failure (network, 5xx) must NOT nuke a valid token or
-        // trigger a browser prompt — surface it so the caller can retry.
+        // Only an explicit OAuth invalid_grant means the refresh token is dead.
+        // Other 400/401 responses (for example invalid_client or invalid_request)
+        // must preserve the token and surface the failure without re-auth.
         const status = refreshError.response?.status;
-        if (status !== 400 && status !== 401) {
+        if (
+          (status !== 400 && status !== 401)
+          || !isExplicitInvalidGrant(refreshError)
+        ) {
           throw safeAuthError(refreshError, this);
         }
         // FAIL LOUD, but never fall back to password: re-prompt sign-in.
