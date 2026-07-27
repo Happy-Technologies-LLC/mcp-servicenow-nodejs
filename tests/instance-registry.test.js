@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import { InstanceRegistry, InstanceRegistryError } from '../src/instance-registry.js';
+import { credentialRefFor } from '../src/instance-credential-store.js';
 
 const tempDirs = [];
 
@@ -143,14 +144,120 @@ describe('InstanceRegistry validation and defaults', () => {
     })).rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
 
     await expect(registry.register({
-      name: 'basic-ok', url: 'https://basic-ok.service-now.com', authType: 'basic', username: 'user', credentialRef: 'password/ref'
+      name: 'basic-ok', url: 'https://basic-ok.service-now.com', authType: 'basic', username: 'user', credentialRef: credentialRefFor('basic-ok', 'password')
     })).resolves.toEqual(expect.objectContaining({ name: 'basic-ok' }));
     await expect(registry.register({
-      name: 'cc-ok', url: 'https://cc-ok.service-now.com', authType: 'oauth', grantType: 'client_credentials', clientId: 'cid', credentialRef: 'secret/ref'
+      name: 'cc-ok', url: 'https://cc-ok.service-now.com', authType: 'oauth', grantType: 'client_credentials', clientId: 'cid', credentialRef: credentialRefFor('cc-ok', 'client-secret')
     })).resolves.toEqual(expect.objectContaining({ name: 'cc-ok' }));
     await expect(registry.register({
-      name: 'ropc-ok', url: 'https://ropc-ok.service-now.com', authType: 'oauth', grantType: 'password', username: 'user', clientId: 'cid', credentialRef: { password: 'password/ref', clientSecret: 'secret/ref' }
+      name: 'ropc-ok', url: 'https://ropc-ok.service-now.com', authType: 'oauth', grantType: 'password', username: 'user', clientId: 'cid', credentialRef: {
+        password: credentialRefFor('ropc-ok', 'password'),
+        clientSecret: credentialRefFor('ropc-ok', 'client-secret')
+      }
     })).resolves.toEqual(expect.objectContaining({ name: 'ropc-ok' }));
+  });
+
+  test('requires refs to be canonical, instance-bound, and type-bound before persistence', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const cases = [
+      {
+        name: 'basic-arbitrary',
+        url: 'https://basic-arbitrary.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        credentialRef: 'plaintext-password'
+      },
+      {
+        name: 'basic-cross-instance',
+        url: 'https://basic-cross-instance.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        credentialRef: credentialRefFor('other', 'password')
+      },
+      {
+        name: 'basic-wrong-type',
+        url: 'https://basic-wrong-type.service-now.com',
+        authType: 'basic',
+        username: 'user',
+        credentialRef: credentialRefFor('basic-wrong-type', 'client-secret')
+      },
+      {
+        name: 'oauth-cross-instance',
+        url: 'https://oauth-cross-instance.service-now.com',
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        clientId: 'cid',
+        credentialRef: credentialRefFor('other', 'client-secret')
+      },
+      {
+        name: 'oauth-percent-variant',
+        url: 'https://oauth-percent-variant.service-now.com',
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        clientId: 'cid',
+        credentialRef: 'keychain:instance/oauth-percent%2dvariant/client-secret'
+      },
+      {
+        name: 'oauth-traversal-variant',
+        url: 'https://oauth-traversal-variant.service-now.com',
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        clientId: 'cid',
+        credentialRef: 'keychain:instance/../client-secret'
+      },
+      {
+        name: 'oauth-case-variant',
+        url: 'https://oauth-case-variant.service-now.com',
+        authType: 'oauth',
+        grantType: 'client_credentials',
+        clientId: 'cid',
+        credentialRef: 'keychain:instance/OAuth-case-variant/client-secret'
+      },
+      {
+        name: 'oauth-password-invalid-shape',
+        url: 'https://oauth-password-invalid-shape.service-now.com',
+        authType: 'oauth',
+        grantType: 'password',
+        username: 'user',
+        clientId: 'cid',
+        credentialRef: credentialRefFor('oauth-password-invalid-shape', 'client-secret')
+      },
+      {
+        name: 'oauth-password-cross-instance',
+        url: 'https://oauth-password-cross-instance.service-now.com',
+        authType: 'oauth',
+        grantType: 'password',
+        username: 'user',
+        clientId: 'cid',
+        credentialRef: {
+          password: credentialRefFor('other', 'password'),
+          clientSecret: credentialRefFor('oauth-password-cross-instance', 'client-secret')
+        }
+      }
+    ];
+
+    for (const instance of cases) {
+      await expect(registry.register(instance))
+        .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+      expect(registry.list()).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: instance.name })
+      ]));
+    }
+  });
+
+  test('keeps canonical refs visible in redacted public metadata', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const ref = credentialRefFor('visible-ref', 'password');
+    await registry.register({
+      name: 'visible-ref',
+      url: 'https://visible-ref.service-now.com',
+      authType: 'basic',
+      username: 'user',
+      credentialRef: ref
+    });
+    expect(registry.get('visible-ref').credentialRef).toBe(ref);
   });
   test('infers OAuth grant type from username presence when omitted', async () => {
     const { file } = tempPaths();
@@ -161,7 +268,7 @@ describe('InstanceRegistry validation and defaults', () => {
       url: 'https://client-credentials-inferred.service-now.com',
       authType: 'oauth',
       clientId: 'cid',
-      credentialRef: 'secret/ref'
+      credentialRef: credentialRefFor('client-credentials-inferred', 'client-secret')
     })).resolves.toEqual(expect.objectContaining({
       name: 'client-credentials-inferred',
       authType: 'oauth'
@@ -173,7 +280,10 @@ describe('InstanceRegistry validation and defaults', () => {
       authType: 'oauth',
       username: 'user',
       clientId: 'cid',
-      credentialRef: { password: 'password/ref', clientSecret: 'secret/ref' }
+      credentialRef: {
+        password: credentialRefFor('password-inferred', 'password'),
+        clientSecret: credentialRefFor('password-inferred', 'client-secret')
+      }
     })).resolves.toEqual(expect.objectContaining({
       name: 'password-inferred',
       authType: 'oauth'
@@ -186,7 +296,7 @@ describe('InstanceRegistry validation and defaults', () => {
       url: 'https://client-credentials-validation.service-now.com',
       authType: 'oauth',
       clientId: 'cid',
-      credentialRef: 'secret/ref'
+      credentialRef: credentialRefFor('client-credentials-validation', 'client-secret')
     })).toBe(true);
   });
 
@@ -528,7 +638,7 @@ describe('InstanceRegistry persistence', () => {
           grantType: 'client_credentials',
           token: secrets.token,
           tokenUrl: 'https://tokenized.service-now.com/oauth_token.do',
-          credentialRef: 'token/ref'
+          credentialRef: credentialRefFor('tokenized', 'client-secret')
         })
       }]
     });
@@ -538,7 +648,7 @@ describe('InstanceRegistry persistence', () => {
     expect(publicView.docs.tokenUrl).toBe('https://docs.example.com/token');
     expect(publicView.metadata.nested.tokenUrl).toBe('https://metadata.example.com/token');
     expect(publicView.instances[0].tokenUrl).toBe('https://tokenized.service-now.com/oauth_token.do');
-    expect(publicView.instances[0].credentialRef).toBe('token/ref');
+    expect(publicView.instances[0].credentialRef).toBe(credentialRefFor('tokenized', 'client-secret'));
     await expect(registry.register(publicInstance('new')))
       .rejects.toMatchObject({ code: 'LEGACY_MIGRATION_REQUIRED' });
   });

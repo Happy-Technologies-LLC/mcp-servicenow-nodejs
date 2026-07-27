@@ -77,6 +77,17 @@ describe('ConfigManager.validateInstance()', () => {
       clientId: 'public-client-id'
     })).toBe(true);
   });
+  it('uses registry credential validation for canonical refs', () => {
+    const cm = new ConfigManager();
+
+    expect(() => cm.validateInstance({
+      name: 'bad-ref',
+      url: 'https://bad-ref.service-now.com',
+      authType: 'basic',
+      username: 'user',
+      credentialRef: 'plaintext-password'
+    })).toThrow(expect.objectContaining({ code: 'INVALID_INSTANCE_CONFIG' }));
+  });
 });
 
 describe('ConfigManager.loadFromEnv()', () => {

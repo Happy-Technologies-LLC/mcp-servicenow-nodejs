@@ -4,7 +4,8 @@ import {
   KeychainOperationError,
   KeychainUnavailableError,
   InstanceCredentialStore,
-  credentialRefFor
+  credentialRefFor,
+  parseCredentialRef
 } from '../src/instance-credential-store.js';
 
 function createHarness({ entryOverrides = {}, createEntry = null } = {}) {
@@ -51,6 +52,16 @@ describe('credentialRefFor', () => {
       .toBe('keychain:instance/dev/password');
     expect(credentialRefFor('prod', 'client-secret'))
       .toBe('keychain:instance/prod/client-secret');
+  });
+  test('parses canonical references without normalizing them', () => {
+    const ref = credentialRefFor('dev', 'password');
+    expect(parseCredentialRef(ref)).toEqual({
+      ref,
+      instanceName: 'dev',
+      type: 'password'
+    });
+    expect(parseCredentialRef('keychain:instance/Dev/password').instanceName).toBe('Dev');
+    expect(() => parseCredentialRef('keychain:instance/dev%2Fother/password')).toThrow();
   });
 
   test.each([

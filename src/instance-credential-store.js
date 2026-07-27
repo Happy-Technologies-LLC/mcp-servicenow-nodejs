@@ -55,7 +55,7 @@ function assertCredentialType(type) {
   }
 }
 
-function validateCredentialRef(ref) {
+export function parseCredentialRef(ref) {
   if (typeof ref !== 'string' || ref.includes('?') || ref.includes('#') || !ref.startsWith(CREDENTIAL_PREFIX)) {
     throw new InvalidCredentialReferenceError();
   }
@@ -65,7 +65,11 @@ function validateCredentialRef(ref) {
   const [instanceName, type] = segments;
   assertInstanceName(instanceName);
   assertCredentialType(type);
-  return ref;
+  return { ref, instanceName, type };
+}
+
+function validateCredentialRef(ref) {
+  return parseCredentialRef(ref).ref;
 }
 
 export function credentialRefFor(instanceName, type) {

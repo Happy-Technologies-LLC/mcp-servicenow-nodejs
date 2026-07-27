@@ -242,6 +242,42 @@ describe('ServiceNowClient registered credentials', () => {
     );
     expect(store.getSecret).not.toHaveBeenCalled();
   });
+  test('rejects malformed direct credential refs without consulting the keychain', async () => {
+    const store = makeStore();
+    const client = new ServiceNowClient('https://dev.service-now.com', 'dev-user', null, {
+      credentialRef: 'plaintext-password',
+      credentialStore: store
+    });
+
+    await expect(client.getAuthHeader()).rejects.toMatchObject({ code: 'CREDENTIAL_NOT_FOUND' });
+    expect(store.getSecret).not.toHaveBeenCalled();
+  });
+  test('rejects a malformed credential object for basic auth without consulting the keychain', async () => {
+    const store = makeStore();
+    const client = new ServiceNowClient('https://dev.service-now.com', 'dev-user', null, {
+      credentialRef: { password: BASIC_REF },
+      credentialStore: store
+    });
+
+    await expect(client.getAuthHeader()).rejects.toMatchObject({ code: 'CREDENTIAL_NOT_FOUND' });
+    expect(store.getSecret).not.toHaveBeenCalled();
+  });
+  test('rejects a malformed password-grant ref object before looking up either account', async () => {
+    const store = makeStore();
+    const client = new ServiceNowClient('https://dev.service-now.com', 'dev-user', null, {
+      authType: 'oauth',
+      grantType: 'password',
+      clientId: 'cid',
+      credentialRef: {
+        password: 'plaintext-password',
+        clientSecret: 'keychain:instance/dev/client-secret'
+      },
+      credentialStore: store
+    });
+
+    await expect(client.getAuthHeader()).rejects.toMatchObject({ code: 'CREDENTIAL_NOT_FOUND' });
+    expect(store.getSecret).not.toHaveBeenCalled();
+  });
   test('rejects a deferred old request when the instance switches before auth resolves', async () => {
     let releaseOld;
     const oldLookup = new Promise(resolve => { releaseOld = resolve; });

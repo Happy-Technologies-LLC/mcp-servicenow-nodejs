@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { credentialRefFor, parseCredentialRef } from './instance-credential-store.js';
 import { resolveConfigPaths } from './config-path.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -136,14 +137,24 @@ function validateCallbackPath(value, name) {
   }
 }
 
-function credentialRefString(value, field = 'credentialRef') {
+function canonicalCredentialRef(value, name, type, field = 'credentialRef') {
   if (typeof value !== 'string' || !value.trim()) {
-    invalid(`Instance credential reference '${field}' must be a non-empty string`, { field });
+    invalid(`Instance credential reference '${field}' must be a non-empty canonical reference`, { field });
   }
-  return value;
+  let parsed;
+  try {
+    parsed = parseCredentialRef(value);
+  } catch {
+    invalid(`Instance credential reference '${field}' is invalid`, { field });
+  }
+  const expected = credentialRefFor(name, type);
+  if (parsed.ref !== expected || parsed.instanceName !== name || parsed.type !== type) {
+    invalid(`Instance credential reference '${field}' does not match the instance`, { field });
+  }
+  return parsed.ref;
 }
 
-function passwordGrantRefs(value) {
+function passwordGrantRefs(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     invalid("OAuth password grant requires credentialRef.password and credentialRef.clientSecret", { field: 'credentialRef' });
   }
@@ -155,11 +166,9 @@ function passwordGrantRefs(value) {
   }
   const password = value.password ?? value.passwordRef;
   const clientSecret = value.clientSecret ?? value.clientSecretRef;
-  credentialRefString(password, 'credentialRef.password');
-  credentialRefString(clientSecret, 'credentialRef.clientSecret');
   return {
-    password: password,
-    clientSecret: clientSecret
+    password: canonicalCredentialRef(password, name, 'password', 'credentialRef.password'),
+    clientSecret: canonicalCredentialRef(clientSecret, name, 'client-secret', 'credentialRef.clientSecret')
   };
 }
 
@@ -208,7 +217,7 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
       invalid(`Basic instance '${name}' requires username as a non-empty string`, { field: 'username' });
     }
     if (allowSecrets && instance.password) return true;
-    credentialRefString(instance.credentialRef);
+    canonicalCredentialRef(instance.credentialRef, name, 'password');
     return true;
   }
 
@@ -231,7 +240,7 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
 
   if (grantType === 'client_credentials') {
     if (allowSecrets && instance.clientSecret) return true;
-    credentialRefString(instance.credentialRef);
+    canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
     return true;
   }
 
@@ -239,7 +248,7 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     invalid(`OAuth password instance '${name}' requires username as a non-empty string`, { field: 'username' });
   }
   if (allowSecrets && instance.password && instance.clientSecret) return true;
-  passwordGrantRefs(instance.credentialRef);
+  passwordGrantRefs(instance.credentialRef, name);
   return true;
 }
 

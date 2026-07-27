@@ -9,7 +9,7 @@ import axios from 'axios';
 import { userInfo } from 'node:os';
 import { performAuthorizationCodeFlow } from './oauth-authorization-code.js';
 import { KeychainTokenStore } from './token-store.js';
-import { InstanceCredentialStore } from './instance-credential-store.js';
+import { InstanceCredentialStore, parseCredentialRef } from './instance-credential-store.js';
 
 const CREDENTIAL_ERROR_CODES = new Set([
   'CREDENTIAL_NOT_FOUND',
@@ -22,12 +22,37 @@ function hasLegacySecret(value) {
   return value !== undefined && value !== null;
 }
 
-function credentialRefForType(ref, type) {
-  if (typeof ref === 'string') return ref;
-  if (!ref || typeof ref !== 'object') return undefined;
-  return type === 'password'
-    ? (ref.password ?? ref.passwordRef)
-    : (ref.clientSecret ?? ref.clientSecretRef);
+function credentialRefForType(ref, type, expectsObject = false) {
+  const expectedType = type === 'password' ? 'password' : 'client-secret';
+  if (expectsObject !== (ref && typeof ref === 'object' && !Array.isArray(ref))) {
+    return undefined;
+  }
+  let candidate = ref;
+  if (expectsObject) {
+    const keys = Object.keys(ref);
+    if (keys.some(key => !['password', 'clientSecret', 'passwordRef', 'clientSecretRef'].includes(key))) {
+      return undefined;
+    }
+    candidate = type === 'password'
+      ? (ref.password ?? ref.passwordRef)
+      : (ref.clientSecret ?? ref.clientSecretRef);
+  }
+  if (typeof candidate !== 'string') return undefined;
+  try {
+    const parsed = parseCredentialRef(candidate);
+    return parsed.type === expectedType ? parsed.ref : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function hasValidCredentialRefShape(ref, authType, grantType) {
+  if (authType === 'oauth' && grantType === 'password') {
+    return Boolean(
+      credentialRefForType(ref, 'password', true)
+      && credentialRefForType(ref, 'clientSecret', true)
+    );
+  }
+  return Boolean(credentialRefForType(ref, authType === 'basic' ? 'password' : 'clientSecret', false));
 }
 
 function safeCredentialError(error) {
@@ -500,10 +525,12 @@ export class ServiceNowClient {
       return legacy;
     }
 
-    const ref = credentialRefForType(this.credentialRef, type);
-    if (!ref) {
+    const grantType = this.oauthConfig?.grantType || (this.username ? 'password' : 'client_credentials');
+    const expectsObject = this.authType === 'oauth' && grantType === 'password';
+    if (!hasValidCredentialRefShape(this.credentialRef, this.authType, grantType)) {
       throw safeCredentialError({ code: 'CREDENTIAL_NOT_FOUND' });
     }
+    const ref = credentialRefForType(this.credentialRef, type, expectsObject);
     const key = `${type}:${ref}`;
     if (this._resolvedCredentialSecrets.has(key)) {
       return this._resolvedCredentialSecrets.get(key);
