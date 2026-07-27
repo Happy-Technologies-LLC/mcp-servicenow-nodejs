@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { credentialRefFor } from './instance-credential-store.js';
 
 const TOOL_NAME = 'SN-Register-Instance';
@@ -19,6 +20,41 @@ const ALLOWED_FIELDS = new Set([
 const OUTPUT_FIELDS = ALLOWED_FIELDS;
 const SECRET_KEY_PATTERN = /(?:password|secret|token|credential|api[_-]?key|private[_-]?key)/i;
 
+const INSTANCE_SCHEMA_PROPERTIES = {
+  name: { type: 'string', description: 'Unique local instance name (for example, dev or prod).' },
+  url: { type: 'string', description: 'HTTPS ServiceNow instance URL.' },
+  authType: { type: 'string', enum: ['basic', 'oauth'], description: 'Authentication type. Defaults to basic.' },
+  grantType: { type: 'string', enum: ['client_credentials', 'password', 'authorization_code'], description: 'OAuth grant type.' },
+  username: { type: 'string', description: 'Basic-auth or OAuth password-grant username.' },
+  clientId: { type: 'string', description: 'OAuth client identifier.' },
+  scope: { type: 'string', description: 'Optional OAuth scope.' },
+  authorizeUrl: { type: 'string', description: 'Optional OAuth authorization endpoint.' },
+  tokenUrl: { type: 'string', description: 'Optional OAuth token endpoint.' },
+  redirectPort: { type: 'integer', minimum: 0, maximum: 65535, description: 'Optional local authorization callback port.' },
+  callbackPath: { type: 'string', description: 'Optional local authorization callback path.' },
+  description: { type: 'string', description: 'Optional human-readable description.' },
+  makeDefault: { type: 'boolean', description: 'Make this instance the default after registration.' }
+};
+
+const schemaBranch = (fields, required, authType, grantType) => ({
+  type: 'object',
+  additionalProperties: false,
+  properties: Object.fromEntries(fields.map(field => [
+    field,
+    field === 'authType' && authType ? { ...INSTANCE_SCHEMA_PROPERTIES.authType, const: authType } :
+      field === 'grantType' && grantType ? { ...INSTANCE_SCHEMA_PROPERTIES.grantType, const: grantType } :
+        INSTANCE_SCHEMA_PROPERTIES[field]
+  ])),
+  required
+});
+
+const INSTANCE_SCHEMA_BRANCHES = [
+  schemaBranch(['name', 'url', 'authType', 'username', 'description', 'makeDefault'], ['name', 'url', 'username'], 'basic'),
+  schemaBranch(['name', 'url', 'authType', 'grantType', 'clientId', 'scope', 'tokenUrl', 'description', 'makeDefault'], ['name', 'url', 'authType', 'grantType', 'clientId'], 'oauth', 'client_credentials'),
+  schemaBranch(['name', 'url', 'authType', 'grantType', 'username', 'clientId', 'scope', 'tokenUrl', 'description', 'makeDefault'], ['name', 'url', 'authType', 'grantType', 'username', 'clientId'], 'oauth', 'password'),
+  schemaBranch(['name', 'url', 'authType', 'grantType', 'clientId', 'scope', 'authorizeUrl', 'tokenUrl', 'redirectPort', 'callbackPath', 'description', 'makeDefault'], ['name', 'url', 'authType', 'grantType', 'clientId'], 'oauth', 'authorization_code')
+];
+
 export const instanceToolDefinitions = [
   {
     name: TOOL_NAME,
@@ -26,65 +62,8 @@ export const instanceToolDefinitions = [
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Unique local instance name (for example, dev or prod).'
-        },
-        url: {
-          type: 'string',
-          description: 'HTTPS ServiceNow instance URL.'
-        },
-        authType: {
-          type: 'string',
-          enum: ['basic', 'oauth'],
-          description: 'Authentication type. Defaults to basic.'
-        },
-        grantType: {
-          type: 'string',
-          enum: ['client_credentials', 'password', 'authorization_code'],
-          description: 'OAuth grant type.'
-        },
-        username: {
-          type: 'string',
-          description: 'Basic-auth or OAuth password-grant username.'
-        },
-        clientId: {
-          type: 'string',
-          description: 'OAuth client identifier.'
-        },
-        scope: {
-          type: 'string',
-          description: 'Optional OAuth scope.'
-        },
-        authorizeUrl: {
-          type: 'string',
-          description: 'Optional OAuth authorization endpoint.'
-        },
-        tokenUrl: {
-          type: 'string',
-          description: 'Optional OAuth token endpoint.'
-        },
-        redirectPort: {
-          type: 'integer',
-          minimum: 0,
-          maximum: 65535,
-          description: 'Optional local authorization callback port.'
-        },
-        callbackPath: {
-          type: 'string',
-          description: 'Optional local authorization callback path.'
-        },
-        description: {
-          type: 'string',
-          description: 'Optional human-readable description.'
-        },
-        makeDefault: {
-          type: 'boolean',
-          description: 'Make this instance the default after registration.'
-        }
-      },
-      required: ['name', 'url']
+      properties: INSTANCE_SCHEMA_PROPERTIES,
+      oneOf: INSTANCE_SCHEMA_BRANCHES
     }
   }
 ];
@@ -229,6 +208,20 @@ async function existingInstance(registry, name) {
   return null;
 }
 
+function safeRegistryDetails(error) {
+  const source = error?.details && typeof error.details === 'object' ? error.details : {};
+  const details = {};
+  if (typeof source.field === 'string' && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(source.field)
+      && !/(?:password|secret|token|private|api[_-]?key)/i.test(source.field)) {
+    details.field = source.field;
+  }
+  if (typeof source.path === 'string' && source.path) {
+    const resolved = path.resolve(source.path);
+    if (!/(?:password|secret|token|private|api[_-]?key)/i.test(resolved)) details.path = resolved;
+  }
+  return details;
+}
+
 function registryError(error) {
   if (error?.code === 'INSTANCE_ALREADY_EXISTS') {
     return errorResponse('INSTANCE_ALREADY_EXISTS', 'An instance with this name already exists; use the local CLI update command.', {
@@ -236,7 +229,9 @@ function registryError(error) {
     });
   }
   if (error?.code === 'INVALID_INSTANCE_CONFIG') {
-    return invalid('Instance metadata failed canonical validation');
+    return errorResponse('INVALID_INSTANCE_CONFIG', 'Instance metadata failed canonical validation', {
+      details: safeRegistryDetails(error)
+    });
   }
   if (error?.code === 'CREDENTIAL_NOT_FOUND' || typeof error?.code === 'string' && error.code.startsWith('KEYCHAIN_')) {
     return errorResponse(error.code, error.message || 'The local credential store could not be checked; no registration was committed.', error.details || {});
@@ -249,7 +244,9 @@ function registryError(error) {
     );
   }
   if (error?.code === 'REGISTRY_WRITE_FAILED') {
-    return errorResponse('REGISTRY_WRITE_FAILED', 'The instance registry could not be updated. No registration was committed.');
+    return errorResponse('REGISTRY_WRITE_FAILED', 'The instance registry could not be updated. No registration was committed.', {
+      details: safeRegistryDetails(error)
+    });
   }
   if (error?.code === 'LEGACY_MIGRATION_REQUIRED') {
     return errorResponse('LEGACY_MIGRATION_REQUIRED', 'Migrate the legacy instance registry with the local CLI before registering another instance.');

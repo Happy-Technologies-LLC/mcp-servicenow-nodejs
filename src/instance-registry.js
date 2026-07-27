@@ -15,10 +15,39 @@ const ALLOWED_FIELDS = new Set([
   'callbackPath', 'default', 'description'
 ]);
 const LEGACY_INSTANCE_SECRET_FIELDS = new Set(['password', 'clientSecret']);
-const SECRET_FIELDS = new Set(['password', 'clientSecret', 'githubToken', 'accessToken', 'refreshToken', 'apiKey', 'token']);
+const SECRET_KEY_PATTERN = /(?:privatekey|clientsecret|secret|password|accesstoken|refreshtoken|apikey|token)/i;
+const CANONICAL_CREDENTIAL_FIELDS = new Set(['password', 'clientSecret']);
 const GRANT_TYPES = new Set(['client_credentials', 'password', 'authorization_code']);
 const AUTH_TYPES = new Set(['basic', 'oauth']);
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+export function isSecretShapedKey(key) {
+  if (typeof key !== 'string') return false;
+  const normalized = key.replace(/[-_]/g, '').toLowerCase();
+  if (normalized === 'tokenurl' || normalized === 'credentialref') return false;
+  return SECRET_KEY_PATTERN.test(normalized);
+}
+
+function isCanonicalCredentialReference(value) {
+  try {
+    parseCredentialRef(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function redactCredentialReference(value) {
+  if (isCanonicalCredentialReference(value)) return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const result = {};
+  for (const key of CANONICAL_CREDENTIAL_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    if (!isCanonicalCredentialReference(value[key])) return undefined;
+    result[key] = value[key];
+  }
+  return Object.keys(result).length ? result : undefined;
+}
 
 const mutationQueues = new Map();
 
@@ -66,27 +95,29 @@ function isValidCredentialRef(instance) {
 }
 
 function redactInstanceSecrets(instance) {
+  if (!instance || typeof instance !== 'object') return instance;
   const redacted = redactSecrets(instance);
-  if (!isValidCredentialRef(instance) && redacted && typeof redacted === 'object') {
-    delete redacted.credentialRef;
-  }
+  if (!isValidCredentialRef(instance)) delete redacted.credentialRef;
   return redacted;
 }
 
-function redactSecrets(value, insideCredentialRef = false) {
-  if (Array.isArray(value)) {
-    return value.map(nested => redactSecrets(nested, insideCredentialRef));
-  }
+function redactSecrets(value) {
+  if (Array.isArray(value)) return value.map(nested => redactSecrets(nested));
   if (!value || typeof value !== 'object') return value;
 
   const redacted = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (!insideCredentialRef && SECRET_FIELDS.has(key)) continue;
-    if (!insideCredentialRef && key === 'instances' && Array.isArray(nested)) {
+    if (isSecretShapedKey(key)) continue;
+    if (key === 'credentialRef') {
+      const credentialRef = redactCredentialReference(nested);
+      if (credentialRef !== undefined) redacted[key] = credentialRef;
+      continue;
+    }
+    if (key === 'instances' && Array.isArray(nested)) {
       redacted[key] = nested.map(instance => redactInstanceSecrets(instance));
       continue;
     }
-    redacted[key] = redactSecrets(nested, insideCredentialRef || key === 'credentialRef');
+    redacted[key] = redactSecrets(nested);
   }
   return redacted;
 }
@@ -97,8 +128,38 @@ function hasLegacyInstanceSecrets(document) {
       instance
       && typeof instance === 'object'
       && (Object.prototype.hasOwnProperty.call(instance, 'password')
-        || Object.prototype.hasOwnProperty.call(instance, 'clientSecret'))
+        || Object.prototype.hasOwnProperty.call(instance, 'clientSecret')
+        || Object.prototype.hasOwnProperty.call(instance?.credentialRef || {}, 'passwordRef')
+        || Object.prototype.hasOwnProperty.call(instance?.credentialRef || {}, 'clientSecretRef'))
     ));
+}
+
+function normalizeCredentialRefAliases(value, { allowAliases = false } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const normalized = { ...value };
+  for (const [canonical, alias] of [['password', 'passwordRef'], ['clientSecret', 'clientSecretRef']]) {
+    if (!Object.prototype.hasOwnProperty.call(normalized, alias)) continue;
+    if (Object.prototype.hasOwnProperty.call(normalized, canonical)) {
+      if (normalized[canonical] !== normalized[alias]) {
+        invalid(`Conflicting credential references '${canonical}' and '${alias}'`, { field: `credentialRef.${canonical}` });
+      }
+    } else if (!allowAliases) {
+      invalid(`Credential reference alias '${alias}' is not accepted`, { field: `credentialRef.${alias}` });
+    } else {
+      normalized[canonical] = normalized[alias];
+    }
+    delete normalized[alias];
+  }
+  return normalized;
+}
+
+function normalizeInstanceCredentialRefs(instance, options) {
+  if (!instance || typeof instance !== 'object' || Array.isArray(instance)) return instance;
+  if (!Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) return { ...instance };
+  return {
+    ...instance,
+    credentialRef: normalizeCredentialRefAliases(instance.credentialRef, options)
+  };
 }
 
 function invalid(message, details = {}) {
@@ -192,21 +253,19 @@ function canonicalCredentialRef(value, name, type, field = 'credentialRef') {
   return parsed.ref;
 }
 
-function passwordGrantRefs(value, name) {
+function passwordGrantRefs(value, name, { allowAliases = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     invalid("OAuth password grant requires credentialRef.password and credentialRef.clientSecret", { field: 'credentialRef' });
   }
-  const keys = new Set(Object.keys(value));
-  for (const key of keys) {
-    if (!['password', 'clientSecret', 'passwordRef', 'clientSecretRef'].includes(key)) {
+  const normalized = normalizeCredentialRefAliases(value, { allowAliases });
+  for (const key of Object.keys(normalized)) {
+    if (!CANONICAL_CREDENTIAL_FIELDS.has(key)) {
       invalid(`Unknown credential reference field '${key}'`, { field: 'credentialRef' });
     }
   }
-  const password = value.password ?? value.passwordRef;
-  const clientSecret = value.clientSecret ?? value.clientSecretRef;
   return {
-    password: canonicalCredentialRef(password, name, 'password', 'credentialRef.password'),
-    clientSecret: canonicalCredentialRef(clientSecret, name, 'client-secret', 'credentialRef.clientSecret')
+    password: canonicalCredentialRef(normalized.password, name, 'password', 'credentialRef.password'),
+    clientSecret: canonicalCredentialRef(normalized.clientSecret, name, 'client-secret', 'credentialRef.clientSecret')
   };
 }
 
@@ -214,7 +273,7 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
   if (!instance || typeof instance !== 'object' || Array.isArray(instance)) {
     invalid('Instance configuration must be an object');
   }
-
+  const strictBranches = !allowSecrets;
   for (const field of Object.keys(instance)) {
     if (!ALLOWED_FIELDS.has(field) && !(allowSecrets && LEGACY_INSTANCE_SECRET_FIELDS.has(field))) {
       invalid(`Unknown instance field '${field}'`, { field });
@@ -226,14 +285,9 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
     invalid('Instance name must be a trimmed identifier containing only letters, numbers, underscores, and hyphens', { field: 'name' });
   }
   validateUrl(instance.url, name);
-
   const authType = instance.authType === undefined ? 'basic' : instance.authType;
-  if (!AUTH_TYPES.has(authType)) {
-    invalid(`Instance '${name}' has an unsupported authType`, { field: 'authType' });
-  }
-  if (instance.default !== undefined && typeof instance.default !== 'boolean') {
-    invalid(`Instance '${name}' default must be a boolean`, { field: 'default' });
-  }
+  if (!AUTH_TYPES.has(authType)) invalid(`Instance '${name}' has an unsupported authType`, { field: 'authType' });
+  if (instance.default !== undefined && typeof instance.default !== 'boolean') invalid(`Instance '${name}' default must be a boolean`, { field: 'default' });
   if (instance.scope !== undefined) validateOptionalString(instance.scope, name, 'scope');
   if (instance.description !== undefined) validateOptionalString(instance.description, name, 'description');
   if (instance.authorizeUrl !== undefined) validateOptionalUrl(instance.authorizeUrl, name, 'authorizeUrl');
@@ -248,53 +302,52 @@ function validateNewInstance(instance, { allowSecrets = false } = {}) {
   if (allowSecrets && instance.clientSecret !== undefined) validateNonEmptyString(instance.clientSecret, name, 'clientSecret');
 
   if (authType === 'basic') {
-    if (instance.grantType !== undefined) {
-      invalid(`Basic instance '${name}' cannot specify grantType`, { field: 'grantType' });
+    if (instance.grantType !== undefined) invalid(`Basic instance '${name}' cannot specify grantType`, { field: 'grantType' });
+    if (strictBranches) {
+      for (const field of ['clientId', 'scope', 'authorizeUrl', 'tokenUrl', 'redirectPort', 'callbackPath']) {
+        if (instance[field] !== undefined) invalid(`Basic instance '${name}' cannot specify ${field}`, { field });
+      }
     }
-    if (typeof instance.username !== 'string' || !instance.username.trim()) {
-      invalid(`Basic instance '${name}' requires username as a non-empty string`, { field: 'username' });
-    }
-    if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) {
-      canonicalCredentialRef(instance.credentialRef, name, 'password');
-    }
+    if (typeof instance.username !== 'string' || !instance.username.trim()) invalid(`Basic instance '${name}' requires username as a non-empty string`, { field: 'username' });
+    if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) canonicalCredentialRef(instance.credentialRef, name, 'password');
     if (allowSecrets && instance.password) return true;
     canonicalCredentialRef(instance.credentialRef, name, 'password');
     return true;
   }
+
   const grantType = instance.grantType === undefined
     ? (instance.username ? 'password' : 'client_credentials')
     : instance.grantType;
-  if (!GRANT_TYPES.has(grantType)) {
-    invalid(`OAuth instance '${name}' has an unsupported grantType`, { field: 'grantType' });
-  }
-  if (typeof instance.clientId !== 'string' || !instance.clientId.trim()) {
-    invalid(`OAuth instance '${name}' requires clientId as a non-empty string`, { field: 'clientId' });
-  }
+  if (!GRANT_TYPES.has(grantType)) invalid(`OAuth instance '${name}' has an unsupported grantType`, { field: 'grantType' });
+  if (typeof instance.clientId !== 'string' || !instance.clientId.trim()) invalid(`OAuth instance '${name}' requires clientId as a non-empty string`, { field: 'clientId' });
 
   if (grantType === 'authorization_code') {
-    if (instance.credentialRef !== undefined) {
-      invalid(`Public authorization-code instance '${name}' must not specify credentialRef`, { field: 'credentialRef' });
-    }
+    if (strictBranches && instance.username !== undefined) invalid(`Authorization-code instance '${name}' cannot specify username`, { field: 'username' });
+    if (instance.credentialRef !== undefined) invalid(`Public authorization-code instance '${name}' must not specify credentialRef`, { field: 'credentialRef' });
     return true;
   }
 
   if (grantType === 'client_credentials') {
-    if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) {
-      canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
+    if (strictBranches) {
+      for (const field of ['username', 'authorizeUrl', 'redirectPort', 'callbackPath']) {
+        if (instance[field] !== undefined) invalid(`Client-credentials instance '${name}' cannot specify ${field}`, { field });
+      }
     }
+    if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
     if (allowSecrets && instance.clientSecret) return true;
     canonicalCredentialRef(instance.credentialRef, name, 'client-secret');
     return true;
   }
 
-  if (typeof instance.username !== 'string' || !instance.username.trim()) {
-    invalid(`OAuth password instance '${name}' requires username as a non-empty string`, { field: 'username' });
+  if (strictBranches) {
+    for (const field of ['authorizeUrl', 'redirectPort', 'callbackPath']) {
+      if (instance[field] !== undefined) invalid(`Password-grant instance '${name}' cannot specify ${field}`, { field });
+    }
   }
-  if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) {
-    passwordGrantRefs(instance.credentialRef, name);
-  }
+  if (typeof instance.username !== 'string' || !instance.username.trim()) invalid(`OAuth password instance '${name}' requires username as a non-empty string`, { field: 'username' });
+  if (Object.prototype.hasOwnProperty.call(instance, 'credentialRef')) passwordGrantRefs(instance.credentialRef, name, { allowAliases: allowSecrets });
   if (allowSecrets && instance.password && instance.clientSecret) return true;
-  passwordGrantRefs(instance.credentialRef, name);
+  passwordGrantRefs(instance.credentialRef, name, { allowAliases: allowSecrets });
   return true;
 }
 
@@ -309,9 +362,13 @@ function validateDocument(document) {
     throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', 'Instance registry instances must be an array');
   }
   const legacyPlaintext = hasLegacyInstanceSecrets(document);
+  const normalizedDocument = {
+    ...document,
+    instances: document.instances.map(instance => normalizeInstanceCredentialRefs(instance, { allowAliases: legacyPlaintext }))
+  };
   const seen = new Set();
   let defaultCount = 0;
-  for (const instance of document.instances) {
+  for (const instance of normalizedDocument.instances) {
     const name = instance && instance.name;
     if (seen.has(name)) {
       throw new InstanceRegistryError('REGISTRY_RELOAD_FAILED', `Duplicate instance name '${name}' in registry`, { field: 'name' });
@@ -325,7 +382,7 @@ function validateDocument(document) {
     }
     validateNewInstance(instance, { allowSecrets: legacyPlaintext && hasLegacyInstanceSecrets({ instances: [instance] }) });
   }
-  return document;
+  return normalizedDocument;
 }
 
 export class InstanceRegistryError extends Error {
@@ -402,7 +459,7 @@ export class InstanceRegistry {
     }
 
     try {
-      validateDocument(document);
+      document = validateDocument(document);
     } catch (error) {
       const details = error instanceof InstanceRegistryError ? error.details : {};
       const message = error instanceof Error ? error.message : 'Invalid instance registry document';
@@ -511,16 +568,17 @@ export class InstanceRegistry {
       invalid('register options precommit must be a function', { field: 'precommit' });
     }
     return this._enqueueMutation(() => {
-      validateNewInstance(instance);
+      const canonicalInstance = normalizeInstanceCredentialRefs(instance);
+      validateNewInstance(canonicalInstance);
       const current = this._document.instances;
-      if (current.some(candidate => candidate.name === instance.name)) {
-        throw new InstanceRegistryError('INSTANCE_ALREADY_EXISTS', `Instance '${instance.name}' already exists`, { name: instance.name });
+      if (current.some(candidate => candidate.name === canonicalInstance.name)) {
+        throw new InstanceRegistryError('INSTANCE_ALREADY_EXISTS', `Instance '${canonicalInstance.name}' already exists`, { name: canonicalInstance.name });
       }
-      const shouldDefault = current.length === 0 || makeDefault || instance.default === true;
+      const shouldDefault = current.length === 0 || makeDefault || canonicalInstance.default === true;
       const candidate = {
-        ...clone(instance),
-        url: canonicalizeInstanceUrl(instance.url),
-        authType: instance.authType === undefined ? 'basic' : instance.authType,
+        ...clone(canonicalInstance),
+        url: canonicalizeInstanceUrl(canonicalInstance.url),
+        authType: canonicalInstance.authType === undefined ? 'basic' : canonicalInstance.authType,
         default: shouldDefault
       };
       const instances = current.map(existing => shouldDefault ? { ...existing, default: false } : existing);
@@ -533,8 +591,7 @@ export class InstanceRegistry {
     return this._enqueueMutation(() => {
       const current = this._document.instances.find(instance => instance.name === name);
       if (!current) throw new InstanceRegistryError('INSTANCE_NOT_FOUND', `Instance '${name}' not found`, { name });
-      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) invalid('Instance update must be an object');
-      const merged = { ...current, ...clone(patch), name };
+      const merged = normalizeInstanceCredentialRefs({ ...current, ...clone(patch), name });
       validateNewInstance(merged);
       merged.url = canonicalizeInstanceUrl(merged.url);
       const shouldDefault = merged.default === true;

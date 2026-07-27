@@ -716,6 +716,95 @@ describe('InstanceRegistry persistence', () => {
     await expect(registry.register(publicInstance('new')))
       .resolves.toEqual(expect.objectContaining({ name: 'new' }));
   });
+  test('redacts every unknown secret-shaped key while preserving safe token URLs and canonical refs', () => {
+    const { file } = tempPaths();
+    const ref = credentialRefFor('nested-redaction', 'client-secret');
+    writeJson(file, {
+      docs: {
+        privateKey: 'private-key-fixture',
+        private_key: 'private-key-fixture',
+        'private-key': 'private-key-fixture',
+        client_secret: 'client-secret-fixture',
+        'client-secret': 'client-secret-fixture',
+        access_token: 'access-fixture',
+        refreshToken: 'refresh-fixture',
+        api_keys: ['api-fixture'],
+        tokenUrl: 'https://safe.example/token'
+      },
+      instances: [publicInstance('nested-redaction', {
+        grantType: 'client_credentials',
+        credentialRef: ref,
+        tokenUrl: 'https://safe.example/token'
+      })]
+    });
+    const publicView = new InstanceRegistry({ readPath: file, writePath: file }).load();
+    const serialized = JSON.stringify(publicView);
+    expect(serialized).not.toContain('fixture');
+    expect(publicView.docs.tokenUrl).toBe('https://safe.example/token');
+    expect(publicView.instances[0].tokenUrl).toBe('https://safe.example/token');
+    expect(publicView.instances[0].credentialRef).toBe(ref);
+  });
+
+  test('normalizes equal credential aliases and rejects conflicting aliases before persistence', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const password = credentialRefFor('alias-equal', 'password');
+    const clientSecret = credentialRefFor('alias-equal', 'client-secret');
+    await registry.register({
+      name: 'alias-equal',
+      url: 'https://alias-equal.service-now.com',
+      authType: 'oauth',
+      grantType: 'password',
+      username: 'user',
+      clientId: 'cid',
+      credentialRef: {
+        password,
+        passwordRef: password,
+        clientSecret,
+        clientSecretRef: clientSecret
+      }
+    });
+    const persisted = JSON.parse(fs.readFileSync(file, 'utf8')).instances[0].credentialRef;
+    expect(persisted).toEqual({ password, clientSecret });
+    await expect(registry.register({
+      name: 'alias-conflict',
+      url: 'https://alias-conflict.service-now.com',
+      authType: 'oauth',
+      grantType: 'password',
+      username: 'user',
+      clientId: 'cid',
+      credentialRef: {
+        password,
+        passwordRef: credentialRefFor('alias-conflict', 'password'),
+        clientSecret: credentialRefFor('alias-conflict', 'client-secret')
+      }
+    })).rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+    expect(registry.list().map(instance => instance.name)).toEqual(['alias-equal']);
+  });
+
+  test('enforces branch-exclusive metadata on new registry writes while allowing custom token URLs', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    const rejects = [
+      { ...publicInstance('basic-oauth-field'), authType: 'basic', grantType: undefined, username: 'user', clientId: 'cid' },
+      { ...publicInstance('cc-username'), grantType: 'client_credentials', username: 'user', credentialRef: credentialRefFor('cc-username', 'client-secret') },
+      { ...publicInstance('cc-auth-endpoint'), grantType: 'client_credentials', authorizeUrl: 'https://safe.example/auth', credentialRef: credentialRefFor('cc-auth-endpoint', 'client-secret') },
+      { ...publicInstance('password-auth-endpoint'), grantType: 'password', username: 'user', authorizeUrl: 'https://safe.example/auth', credentialRef: { password: credentialRefFor('password-auth-endpoint', 'password'), clientSecret: credentialRefFor('password-auth-endpoint', 'client-secret') } },
+      { ...publicInstance('code-username'), username: 'user' }
+    ];
+    for (const instance of rejects) {
+      await expect(registry.register(instance)).rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+    }
+    await expect(registry.register({
+      name: 'cc-token-url',
+      url: 'https://cc-token-url.service-now.com',
+      authType: 'oauth',
+      grantType: 'client_credentials',
+      clientId: 'cid',
+      tokenUrl: 'https://safe.example/custom-token',
+      credentialRef: credentialRefFor('cc-token-url', 'client-secret')
+    })).resolves.toEqual(expect.objectContaining({ name: 'cc-token-url' }));
+  });
 
   test('returns defensive redacted clones from load, document, and reload', () => {
     const { file } = tempPaths();

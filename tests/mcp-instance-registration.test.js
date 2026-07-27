@@ -102,6 +102,52 @@ describe('SN-Register-Instance', () => {
       expect(definitions[0].inputSchema.properties).not.toHaveProperty('clientSecret');
     }
   });
+  test('describes four branch-exclusive metadata schemas with no credential inputs', async () => {
+    const { tools } = await (await createHarness()).listTools();
+    const schema = tools.find(tool => tool.name === 'SN-Register-Instance').inputSchema;
+    expect(schema.oneOf).toHaveLength(4);
+    for (const branch of schema.oneOf) {
+      expect(branch.additionalProperties).toBe(false);
+      expect(Object.keys(branch.properties).join(',')).not.toMatch(/password|clientSecret|credentialRef|secret|tokenRef/i);
+    }
+    const branchFields = schema.oneOf.map(branch => Object.keys(branch.properties).sort());
+    expect(branchFields).toEqual(expect.arrayContaining([
+      expect.arrayContaining(['name', 'url', 'authType', 'username']),
+      expect.arrayContaining(['name', 'url', 'authType', 'grantType', 'clientId', 'tokenUrl']),
+      expect.arrayContaining(['name', 'url', 'authType', 'grantType', 'clientId', 'username', 'tokenUrl']),
+      expect.arrayContaining(['name', 'url', 'authType', 'grantType', 'clientId', 'authorizeUrl', 'redirectPort', 'callbackPath'])
+    ]));
+  });
+
+  test('returns only safe registry error details and resolves valid paths', async () => {
+    const harness = await createHarness();
+    jest.spyOn(harness.registry, 'validate').mockRejectedValue(Object.assign(new Error('fixture-secret message'), {
+      code: 'INVALID_INSTANCE_CONFIG',
+      details: { field: 'clientId', path: '/tmp/registry.json', leaked: 'fixture-secret' }
+    }));
+    const invalidResult = await harness.callTool('SN-Register-Instance', publicMetadata('safe-error'));
+    const invalidPayload = parseResponse(invalidResult);
+    expect(invalidPayload).toMatchObject({
+      code: 'INVALID_INSTANCE_CONFIG',
+      message: 'Instance metadata failed canonical validation',
+      details: { field: 'clientId', path: path.resolve('/tmp/registry.json') }
+    });
+    expect(JSON.stringify(invalidPayload)).not.toContain('fixture-secret');
+
+    harness.registry.validate.mockRestore();
+    jest.spyOn(harness.registry, 'register').mockRejectedValue(Object.assign(new Error('fixture-secret write'), {
+      code: 'REGISTRY_WRITE_FAILED',
+      details: { path: '/tmp/registry.json', leaked: 'fixture-secret' }
+    }));
+    const writeResult = await harness.callTool('SN-Register-Instance', publicMetadata('write-error'));
+    const writePayload = parseResponse(writeResult);
+    expect(writePayload).toMatchObject({
+      code: 'REGISTRY_WRITE_FAILED',
+      message: 'The instance registry could not be updated. No registration was committed.',
+      details: { path: path.resolve('/tmp/registry.json') }
+    });
+    expect(JSON.stringify(writePayload)).not.toContain('fixture-secret');
+  });
 
   test('registers public authorization-code metadata and reloads normal configuration once', async () => {
     const harness = await createHarness();

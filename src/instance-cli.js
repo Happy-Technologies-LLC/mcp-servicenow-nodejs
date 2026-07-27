@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { input as defaultInput, password as defaultPassword, select as defaultSelect, confirm as defaultConfirm } from '@inquirer/prompts';
-import { InstanceRegistry } from './instance-registry.js';
+import { InstanceRegistry, isSecretShapedKey } from './instance-registry.js';
 import { credentialRefFor, CredentialNotFoundError, InstanceCredentialStore } from './instance-credential-store.js';
 import { ServiceNowClient } from './servicenow-client.js';
 
@@ -71,7 +71,8 @@ function redact(value, insideCredentialRef = false) {
   if (!value || typeof value !== 'object') return value;
   const result = {};
   for (const [key, child] of Object.entries(value)) {
-    if (!insideCredentialRef && ['password', 'clientSecret', 'secret', 'token', 'refreshToken'].includes(key)) continue;
+    if (!insideCredentialRef && isSecretShapedKey(key)) continue;
+    if (insideCredentialRef && !['password', 'clientSecret'].includes(key)) continue;
     result[key] = redact(child, key === 'credentialRef');
   }
   return result;
