@@ -212,9 +212,11 @@ function safeAuthError(error, client) {
     message = message.split(value).join('[redacted]');
   }
   const safe = new Error(message);
-  if (typeof error?.code === 'string' && !CREDENTIAL_ERROR_CODES.has(error.code)) {
-    safe.code = error.code;
-  }
+  const status = error?.response?.status;
+  if (status !== undefined) safe.status = status;
+  if (status === 401) safe.code = 'AUTHENTICATION_FAILED';
+  else if (status === 403) safe.code = 'AUTHORIZATION_FAILED';
+  else if (typeof error?.code === 'string' && !CREDENTIAL_ERROR_CODES.has(error.code)) safe.code = error.code;
   return safe;
 }
 
@@ -626,11 +628,11 @@ export class ServiceNowClient {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
-        this._assertCurrentGeneration(generation);
-        return this._handleTokenResponse(response.data, generation);
       } catch (refreshError) {
         this._assertCurrentGeneration(generation);
-        // Refresh token expired or invalid — fall through to password grant
+        const status = refreshError?.response?.status;
+        if (status === 401 || status === 403) throw safeAuthError(refreshError, this);
+        // Refresh token expired or invalid — fall through to password grant.
         console.error('OAuth refresh failed, requesting new token');
         this.oauthRefreshToken = null;
       }
@@ -665,7 +667,9 @@ export class ServiceNowClient {
       if (error?.code === 'INSTANCE_CHANGED') {
         throw error;
       }
-      throw new Error(`OAuth ${grantType} token request failed`);
+      const safe = safeAuthError(error, this);
+      if (!safe.code) safe.code = 'OAUTH_TOKEN_REQUEST_FAILED';
+      throw safe;
     }
   }
 

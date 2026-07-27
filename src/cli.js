@@ -1,13 +1,45 @@
 #!/usr/bin/env node
-import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runInstanceCli, usage } from './instance-cli.js';
+
+const SECRET_ARG = /^(?:--?)(?:password|client[-_]secret)(?:=|$)/i;
+const SECRET_ASSIGNMENT = /^(?:password|clientSecret)=/i;
 
 function write(stream, value) {
   if (stream && typeof stream.write === 'function') stream.write(`${value}\n`);
 }
 
+function containsSecretArgument(args) {
+  return args.some((arg, index) => {
+    if (SECRET_ARG.test(arg) || SECRET_ASSIGNMENT.test(arg)) return true;
+    return index > 0 && SECRET_ARG.test(args[index - 1]);
+  });
+}
+
+function realPathOrResolved(value) {
+  if (!value) return null;
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+export function isDirectExecution(entryPath = process.argv[1]) {
+  const entry = realPathOrResolved(entryPath);
+  const source = realPathOrResolved(fileURLToPath(import.meta.url));
+  return Boolean(entry && source && entry === source);
+}
+
 export async function dispatch(argv = process.argv.slice(2), dependencies = {}) {
   const args = Array.isArray(argv) ? argv.map(String) : [];
+  const stderr = dependencies.stderr || process.stderr;
+  if (containsSecretArgument(args)) {
+    write(stderr, 'Secret flags and values are not accepted in command arguments; use a masked prompt.');
+    return 2;
+  }
   if (args.length === 0) {
     const { main } = await import('./stdio-server.js');
     await main();
@@ -18,12 +50,11 @@ export async function dispatch(argv = process.argv.slice(2), dependencies = {}) 
     write(dependencies.stdout || process.stdout, usage());
     return 0;
   }
-  write(dependencies.stderr || process.stderr, `Unknown command '${args[0]}'.\n${usage()}`);
+  write(stderr, 'Unknown command. Use --help for usage.');
   return 2;
 }
 
-const directPath = process.argv[1] && pathToFileURL(process.argv[1]).href;
-if (directPath && import.meta.url === directPath) {
+if (isDirectExecution()) {
   dispatch().then(code => {
     if (Number.isInteger(code) && code !== 0) process.exitCode = code;
   }).catch(error => {

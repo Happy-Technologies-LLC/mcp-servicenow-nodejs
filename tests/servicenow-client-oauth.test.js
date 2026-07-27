@@ -704,6 +704,19 @@ describe('ServiceNowClient OAuth registered credentials', () => {
     const params = Object.fromEntries(new URLSearchParams(tokenPost.mock.calls[0][1]));
     expect(params.client_secret).toBe('legacy-client-secret');
   });
+
+  test.each([
+    [401, 'AUTHENTICATION_FAILED'],
+    [403, 'AUTHORIZATION_FAILED']
+  ])('preserves token endpoint %s as a safe %s error', async (status, expectedCode) => {
+    const tokenPost = jest.spyOn(axios, 'post').mockRejectedValue(Object.assign(new Error('token endpoint rejected client-secret-fixture'), {
+      code: 'ERR_BAD_REQUEST',
+      response: { status, data: { error: 'invalid_client', client_secret: 'client-secret-fixture' } }
+    }));
+    const client = makeGrantClient({ clientSecret: 'client-secret-fixture' });
+    await expect(client._getOAuthToken()).rejects.toMatchObject({ status, code: expectedCode });
+    expect(tokenPost).toHaveBeenCalledTimes(1);
+  });
   test('rejects an old 401 after instance switch without retrying with the new token', async () => {
     const client = makeGrantClient({ clientSecret: 'old-client-secret' });
     client.oauthToken = 'old-access-token';

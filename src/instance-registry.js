@@ -453,6 +453,10 @@ export class InstanceRegistry {
     return validateNewInstance(instance, { allowSecrets: true });
   }
 
+  validateDocument(document) {
+    return validateDocument(document);
+  }
+
   register(instance, { makeDefault = false } = {}) {
     if (typeof makeDefault !== 'boolean') {
       invalid('register options makeDefault must be a boolean', { field: 'makeDefault' });

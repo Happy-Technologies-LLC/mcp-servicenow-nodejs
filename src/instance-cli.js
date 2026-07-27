@@ -52,6 +52,43 @@ function getPrompts(dependencies) {
   };
 }
 
+function hasInjectedPrompt(dependencies) {
+  const source = dependencies.prompts || dependencies.prompt || dependencies;
+  return ['input', 'password', 'select', 'confirm'].some(kind => typeof source?.[kind] === 'function');
+}
+
+function promptWouldBeRequired(args) {
+  const command = args[0];
+  if (command === 'add') {
+    try {
+      const { flags } = parseFlags(args.slice(1), new Map([...METADATA_FLAGS, ['make-default', true]]));
+      if (flags['auth-type'] === 'oauth' && flags['grant-type'] === 'authorization_code') {
+        return !['name', 'url', 'auth-type', 'grant-type', 'client-id', 'scope', 'authorize-url', 'token-url', 'callback-path', 'description']
+          .every(flag => flags[flag] !== undefined);
+      }
+    } catch {
+      return true;
+    }
+    return true;
+  }
+  if (command === 'remove' || command === 'migrate') return true;
+  if (command === 'credential' && args[1] === 'set') return true;
+  if (command === 'update') return args.length <= 2;
+  return false;
+}
+
+function ensureInteractive(context, args) {
+  if (
+    !context.promptInjected
+    && promptWouldBeRequired(args)
+    && (context.stdin?.isTTY !== true || context.stdout?.isTTY !== true)
+  ) {
+    output(context.stderr, 'Non-interactive use requires an interactive TTY for masked prompts; rerun in a terminal or inject prompts for testing.');
+    return false;
+  }
+  return true;
+}
+
 function clone(value) {
   return value === undefined ? value : JSON.parse(JSON.stringify(value));
 }
@@ -170,35 +207,53 @@ function credentialRefPatch(instance, type, ref) {
 }
 
 async function hasSecret(store, ref) {
-  if (typeof store.hasSecret !== 'function') return false;
   try {
-    return await store.hasSecret(ref);
+    if (typeof store.hasSecret === 'function') return await store.hasSecret(ref);
+    if (typeof store.getSecret === 'function') {
+      await store.getSecret(ref);
+      return true;
+    }
+    return false;
   } catch (error) {
     if (error?.code === 'CREDENTIAL_NOT_FOUND' || error instanceof CredentialNotFoundError) return false;
     throw error;
   }
 }
 
-async function setAndTrack(store, ref, value, createdRefs) {
+async function snapshotSecret(store, ref) {
   const existed = await hasSecret(store, ref);
-  await store.setSecret(ref, value);
-  if (!existed) createdRefs.push(ref);
+  if (!existed) return { ref, existed: false, value: undefined };
+  if (typeof store.getSecret !== 'function') {
+    throw new Error('Credential store cannot snapshot an existing deterministic credential.');
+  }
+  return { ref, existed: true, value: await store.getSecret(ref) };
 }
 
-async function cleanupCreated(store, refs, stderr, context = 'credential cleanup') {
+async function setWithSnapshot(store, ref, value, snapshots) {
+  if (!snapshots.some(snapshot => snapshot.ref === ref)) {
+    snapshots.push(await snapshotSecret(store, ref));
+  }
+  await store.setSecret(ref, value);
+}
+
+async function restoreSnapshots(store, snapshots, stderr, context = 'credential rollback') {
   const failures = [];
-  for (const ref of [...new Set(refs)].reverse()) {
+  for (const snapshot of [...snapshots].reverse()) {
     try {
-      const result = await store.deleteSecret(ref);
-      if (result?.deleted === false) failures.push(ref);
+      if (snapshot.existed) {
+        await store.setSecret(snapshot.ref, snapshot.value);
+      } else {
+        const result = await store.deleteSecret(snapshot.ref);
+        if (result?.deleted === false) failures.push(snapshot.ref);
+      }
     } catch {
-      failures.push(ref);
+      failures.push(snapshot.ref);
     }
   }
   if (failures.length) {
-    output(stderr, `${context} failed for ${failures.join(', ')}. Remove those entries with the credential command after verifying the registry state.`);
+    output(stderr, `${context} failed for ${[...new Set(failures)].join(', ')}. Verify registry metadata and keychain entries before retrying.`);
   }
-  return failures.length === 0;
+  return failures;
 }
 
 async function promptMetadata(prompts, initial = {}, { includeName = true } = {}) {
@@ -247,36 +302,59 @@ async function addCommand(args, context) {
   for (const [flag, field] of METADATA_FLAGS) {
     if (flags[flag] !== undefined && field !== 'noDefault') initial[field] = flags[flag];
   }
-  if (flags['default'] !== undefined) initial.default = parseBoolean(flags['default'], 'default');
+  if (flags.default !== undefined) initial.default = parseBoolean(flags.default, 'default');
   if (flags['no-default']) initial.default = false;
   const instance = await promptMetadata(prompts, initial);
-  const createdRefs = [];
+  const refs = {};
+  if (instance.authType === 'basic') refs.password = credentialRefFor(instance.name, 'password');
+  else if (instance.grantType === 'client_credentials') refs.clientSecret = credentialRefFor(instance.name, 'client-secret');
+  else if (instance.grantType === 'password') {
+    refs.password = credentialRefFor(instance.name, 'password');
+    refs.clientSecret = credentialRefFor(instance.name, 'client-secret');
+  }
+  const candidate = {
+    ...instance,
+    ...(instance.authType === 'oauth' && instance.grantType === 'password'
+      ? { credentialRef: { password: refs.password, clientSecret: refs.clientSecret } }
+      : refs.password ? { credentialRef: refs.password } : refs.clientSecret ? { credentialRef: refs.clientSecret } : {})
+  };
+  if (typeof registry.list === 'function') {
+    const existing = await registry.list();
+    if (existing.some(item => item?.name === instance.name)) {
+      throw Object.assign(new Error(`Instance '${instance.name}' already exists`), { code: 'INSTANCE_ALREADY_EXISTS' });
+    }
+  } else if (typeof registry.get === 'function') {
+    try {
+      await registry.get(instance.name);
+      throw Object.assign(new Error(`Instance '${instance.name}' already exists`), { code: 'INSTANCE_ALREADY_EXISTS' });
+    } catch (error) {
+      if (error?.code !== 'INSTANCE_NOT_FOUND') throw error;
+    }
+  }
+  if (typeof registry.validate === 'function') await registry.validate(candidate);
+  const snapshots = [];
   try {
     if (instance.authType === 'basic') {
       const secret = await promptSecret(prompts, 'password', 'Password:');
-      const ref = credentialRefFor(instance.name, 'password');
-      await setAndTrack(store, ref, secret, createdRefs);
-      instance.credentialRef = ref;
+      await setWithSnapshot(store, refs.password, secret, snapshots);
+      instance.credentialRef = refs.password;
     } else if (instance.grantType === 'client_credentials') {
       const secret = await promptSecret(prompts, 'clientSecret', 'Client secret:');
-      const ref = credentialRefFor(instance.name, 'client-secret');
-      await setAndTrack(store, ref, secret, createdRefs);
-      instance.credentialRef = ref;
+      await setWithSnapshot(store, refs.clientSecret, secret, snapshots);
+      instance.credentialRef = refs.clientSecret;
     } else if (instance.grantType === 'password') {
       const passwordValue = await promptSecret(prompts, 'password', 'Password:');
       const clientSecretValue = await promptSecret(prompts, 'clientSecret', 'Client secret:');
-      const passwordRef = credentialRefFor(instance.name, 'password');
-      const clientSecretRef = credentialRefFor(instance.name, 'client-secret');
-      await setAndTrack(store, passwordRef, passwordValue, createdRefs);
-      await setAndTrack(store, clientSecretRef, clientSecretValue, createdRefs);
-      instance.credentialRef = { password: passwordRef, clientSecret: clientSecretRef };
+      await setWithSnapshot(store, refs.password, passwordValue, snapshots);
+      await setWithSnapshot(store, refs.clientSecret, clientSecretValue, snapshots);
+      instance.credentialRef = { password: refs.password, clientSecret: refs.clientSecret };
     }
     const registered = await registry.register(instance, { makeDefault: flags['make-default'] === true || instance.default === true });
     output(stdout, `Added instance '${instance.name}'.`);
     output(stdout, JSON.stringify(stable(redact(registered)), null, 2));
     return 0;
   } catch (error) {
-    await cleanupCreated(store, createdRefs, stderr, 'Credential rollback');
+    await restoreSnapshots(store, snapshots, stderr, 'Credential rollback');
     throw error;
   }
 }
@@ -339,20 +417,13 @@ async function credentialSetCommand(name, args, context) {
   const patch = credentialRefPatch(instance, type, ref);
   const candidate = { ...instance, ...patch };
   if (typeof context.registry.validate === 'function') context.registry.validate(candidate);
-  const hadPrevious = await hasSecret(context.credentialStore, ref);
-  let previousValue;
-  if (hadPrevious && typeof context.credentialStore.getSecret === 'function') previousValue = await context.credentialStore.getSecret(ref);
+  const snapshots = [await snapshotSecret(context.credentialStore, ref)];
   const secret = await promptSecret(context.prompts, 'secret', `${type === 'password' ? 'Password' : 'Client secret'}:`);
   try {
     await context.credentialStore.setSecret(ref, secret);
     await context.registry.update(name, patch);
   } catch (error) {
-    try {
-      if (hadPrevious && previousValue !== undefined) await context.credentialStore.setSecret(ref, previousValue);
-      else await context.credentialStore.deleteSecret(ref);
-    } catch {
-      output(context.stderr, `Credential rollback failed for ${ref}; verify the instance metadata and keychain entry before retrying.`);
-    }
+    await restoreSnapshots(context.credentialStore, snapshots, context.stderr, 'Credential rollback');
     throw error;
   }
   output(context.stdout, `Credential '${type}' updated for instance '${name}'.`);
@@ -367,19 +438,26 @@ async function removeCommand(name, context) {
     output(context.stdout, 'Cancelled.');
     return 0;
   }
-  await context.registry.remove(name);
-  const failures = [];
+  const snapshots = [];
   for (const ref of [...new Set(instanceCredentialRefs(instance))]) {
-    try {
-      const result = await context.credentialStore.deleteSecret(ref);
-      if (result?.deleted === false) continue;
-    } catch {
-      failures.push(ref);
-    }
+    snapshots.push(await snapshotSecret(context.credentialStore, ref));
   }
-  if (failures.length) {
-    output(context.stderr, `Instance '${name}' was removed, but credential deletion failed for ${failures.join(', ')}. Re-run credential cleanup after checking the keychain.`);
-    return 1;
+  const deleted = [];
+  try {
+    for (const snapshot of snapshots) {
+      if (snapshot.existed) deleted.push(snapshot);
+      const result = await context.credentialStore.deleteSecret(snapshot.ref);
+      if (result?.deleted === false && snapshot.existed) {
+        throw new Error(`Credential deletion failed for ${snapshot.ref}`);
+      }
+    }
+    await context.registry.remove(name);
+  } catch (error) {
+    const rollbackFailures = await restoreSnapshots(context.credentialStore, deleted.length ? deleted : snapshots, context.stderr, 'Credential rollback');
+    if (!rollbackFailures.length) {
+      output(context.stderr, `Removal rollback completed; instance metadata remains registered. Original cause: ${messageForError(error)}`);
+    }
+    throw error;
   }
   output(context.stdout, `Removed instance '${name}'.`);
   return 0;
@@ -427,8 +505,118 @@ function rawLegacyDocument(registry) {
   return registry.load?.();
 }
 
-function containsLegacySecrets(document) {
-  return document?.instances?.some(instance => instance && (typeof instance.password === 'string' || typeof instance.clientSecret === 'string'));
+function legacySecretEntries(document) {
+  if (!document || typeof document !== 'object' || Array.isArray(document) || !Array.isArray(document.instances)) {
+    throw new Error('Legacy instance registry is malformed; no changes were made.');
+  }
+  if (document.version !== undefined && document.version !== 1) {
+    throw new Error('Legacy instance registry version is unsupported; no changes were made.');
+  }
+  const entries = [];
+  const walk = (value, path, instanceIndex = -1) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => walk(item, `${path}[${index}]`, path === 'instances' ? index : instanceIndex));
+      return;
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if (key === 'credentialRef') continue;
+      if (['password', 'clientSecret', 'token', 'refreshToken', 'accessToken', 'apiKey', 'secret'].includes(key)) {
+        const allowed = instanceIndex >= 0 && (key === 'password' || key === 'clientSecret') && path === `instances[${instanceIndex}]`;
+        if (!allowed) throw new Error(`Legacy secret placement '${path}.${key}' is unsupported; no changes were made.`);
+        if (typeof nested !== 'string' || !nested) throw new Error(`Legacy credential '${path}.${key}' is incomplete; no changes were made.`);
+        entries.push({ index: instanceIndex, type: key, value: nested });
+        continue;
+      }
+      const childPath = path ? `${path}.${key}` : key;
+      walk(nested, childPath, instanceIndex);
+    }
+  };
+  walk(document, '', -1);
+  return entries;
+}
+
+function buildMigratedDocument(document, registry) {
+  const entries = legacySecretEntries(document);
+  const transformed = [];
+  for (let index = 0; index < document.instances.length; index += 1) {
+    const instance = document.instances[index];
+    if (!instance || typeof instance !== 'object' || Array.isArray(instance)) {
+      throw new Error(`Legacy instance ${index + 1} is malformed; no changes were made.`);
+    }
+    const authType = instance.authType || 'basic';
+    const grantType = instance.grantType || (instance.username ? 'password' : 'client_credentials');
+    const password = entries.find(entry => entry.index === index && entry.type === 'password');
+    if (!['basic', 'oauth'].includes(authType)) {
+      throw new Error(`Legacy instance '${instance.name || index + 1}' has an unsupported authType; no changes were made.`);
+    }
+    if (authType === 'basic' && instance.grantType !== undefined) {
+      throw new Error(`Basic instance '${instance.name || index + 1}' has an unsupported grantType; no changes were made.`);
+    }
+    if (authType === 'oauth' && !['client_credentials', 'password', 'authorization_code'].includes(grantType)) {
+      throw new Error(`OAuth instance '${instance.name || index + 1}' has an unsupported grantType; no changes were made.`);
+    }
+    if (typeof instance.name !== 'string' || typeof instance.url !== 'string') {
+      throw new Error(`Legacy instance ${index + 1} is malformed; no changes were made.`);
+    }
+    if (authType === 'basic' && (typeof instance.username !== 'string' || !instance.username.trim())) {
+      throw new Error(`Basic instance '${instance.name}' is malformed; no changes were made.`);
+    }
+    if (authType === 'oauth' && (typeof instance.clientId !== 'string' || !instance.clientId.trim())) {
+      throw new Error(`OAuth instance '${instance.name}' is malformed; no changes were made.`);
+    }
+    if (authType === 'oauth' && grantType === 'password' && (typeof instance.username !== 'string' || !instance.username.trim())) {
+      throw new Error(`OAuth password instance '${instance.name}' is malformed; no changes were made.`);
+    }
+    const clientSecret = entries.find(entry => entry.index === index && entry.type === 'clientSecret');
+    if (authType === 'basic' && clientSecret) {
+      throw new Error(`Basic instance '${instance.name}' has an unsupported clientSecret; no changes were made.`);
+    }
+    if (authType === 'oauth' && grantType === 'authorization_code' && (password || clientSecret)) {
+      throw new Error(`Confidential authorization-code instance '${instance.name}' cannot be migrated safely; no changes were made.`);
+    }
+    if (authType === 'oauth' && grantType === 'client_credentials' && password) {
+      throw new Error(`OAuth client-credentials instance '${instance.name}' has an unsupported password; no changes were made.`);
+    }
+    if (authType === 'oauth' && grantType === 'password' && Boolean(password) !== Boolean(clientSecret)) {
+      throw new Error(`OAuth password instance '${instance.name}' has incomplete plaintext credentials; no changes were made.`);
+    }
+    const candidate = { ...clone(instance) };
+    delete candidate.password;
+    delete candidate.clientSecret;
+    if (authType === 'oauth' && grantType === 'password' && !password && !clientSecret && candidate.credentialRef && typeof candidate.credentialRef === 'object') {
+      const prior = candidate.credentialRef;
+      candidate.credentialRef = {
+        password: prior.password ?? prior.passwordRef,
+        clientSecret: prior.clientSecret ?? prior.clientSecretRef
+      };
+    }
+    const writes = [];
+    if (authType === 'basic' && password) {
+      candidate.credentialRef = credentialRefFor(instance.name, 'password');
+      writes.push({ ref: candidate.credentialRef, value: password.value });
+    } else if (authType === 'oauth' && grantType === 'client_credentials' && clientSecret) {
+      candidate.credentialRef = credentialRefFor(instance.name, 'client-secret');
+      writes.push({ ref: candidate.credentialRef, value: clientSecret.value });
+    } else if (authType === 'oauth' && grantType === 'password' && password && clientSecret) {
+      candidate.credentialRef = {
+        password: credentialRefFor(instance.name, 'password'),
+        clientSecret: credentialRefFor(instance.name, 'client-secret')
+      };
+      writes.push(
+        { ref: candidate.credentialRef.password, value: password.value },
+        { ref: candidate.credentialRef.clientSecret, value: clientSecret.value }
+      );
+    }
+    if (typeof registry.validate === 'function') registry.validate(candidate);
+    transformed.push({ candidate, writes });
+  }
+  const migrated = { ...clone(document), version: 1, instances: transformed.map(item => item.candidate) };
+  if (typeof registry.validateDocument === 'function') registry.validateDocument(migrated);
+  return {
+    migrated,
+    writes: transformed.flatMap(item => item.writes)
+  };
 }
 
 async function writeMigratedDocument(registry, document) {
@@ -448,7 +636,8 @@ async function writeMigratedDocument(registry, document) {
 async function migrateCommand(context) {
   const registry = context.registry;
   const document = await rawLegacyDocument(registry);
-  if (!document || !Array.isArray(document.instances) || !containsLegacySecrets(document)) {
+  const { migrated, writes } = buildMigratedDocument(document, registry);
+  if (!writes.length) {
     output(context.stdout, 'No legacy plaintext credentials require migration.');
     return 0;
   }
@@ -457,45 +646,12 @@ async function migrateCommand(context) {
     output(context.stdout, 'Cancelled.');
     return 0;
   }
-  const createdRefs = [];
-  const migrated = { ...clone(document), version: 1, instances: [] };
+  const snapshots = [];
   try {
-    for (const original of document.instances) {
-      const instance = { ...original };
-      const authType = instance.authType || 'basic';
-      const grantType = instance.grantType || (instance.username ? 'password' : 'client_credentials');
-      if (authType === 'basic' && typeof original.password === 'string') {
-        const ref = credentialRefFor(instance.name, 'password');
-        await setAndTrack(context.credentialStore, ref, original.password, createdRefs);
-        instance.credentialRef = ref;
-      } else if (authType === 'oauth' && grantType === 'client_credentials' && typeof original.clientSecret === 'string') {
-        const ref = credentialRefFor(instance.name, 'client-secret');
-        await setAndTrack(context.credentialStore, ref, original.clientSecret, createdRefs);
-        instance.credentialRef = ref;
-      } else if (authType === 'oauth' && grantType === 'password') {
-        const prior = instance.credentialRef && typeof instance.credentialRef === 'object' ? instance.credentialRef : {};
-        const refs = {};
-        const priorPassword = prior.password || prior.passwordRef;
-        const priorClientSecret = prior.clientSecret || prior.clientSecretRef;
-        if (typeof priorPassword === 'string') refs.password = priorPassword;
-        if (typeof priorClientSecret === 'string') refs.clientSecret = priorClientSecret;
-        if (typeof original.password === 'string') {
-          refs.password = credentialRefFor(instance.name, 'password');
-          await setAndTrack(context.credentialStore, refs.password, original.password, createdRefs);
-        }
-        if (typeof original.clientSecret === 'string') {
-          refs.clientSecret = credentialRefFor(instance.name, 'client-secret');
-          await setAndTrack(context.credentialStore, refs.clientSecret, original.clientSecret, createdRefs);
-        }
-        instance.credentialRef = refs;
-      }
-      delete instance.password;
-      delete instance.clientSecret;
-      migrated.instances.push(instance);
-    }
+    for (const write of writes) await setWithSnapshot(context.credentialStore, write.ref, write.value, snapshots);
     await writeMigratedDocument(registry, migrated);
   } catch (error) {
-    await cleanupCreated(context.credentialStore, createdRefs, context.stderr, 'Migration rollback');
+    await restoreSnapshots(context.credentialStore, snapshots, context.stderr, 'Migration rollback');
     throw error;
   }
   output(context.stdout, `Migrated ${migrated.instances.length} instance${migrated.instances.length === 1 ? '' : 's'}; the legacy file was left untouched.`);
@@ -529,6 +685,8 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
     registry,
     credentialStore,
     prompts: getPrompts(dependencies),
+    promptInjected: hasInjectedPrompt(dependencies),
+    stdin: dependencies.stdin || process.stdin,
     clientFactory: dependencies.clientFactory || dependencies.createClient || createDefaultClient,
     stdout,
     stderr
@@ -543,6 +701,7 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
     output(stdout, USAGE);
     return 0;
   }
+  if (!ensureInteractive(context, args)) return 2;
   try {
     switch (args[0]) {
       case 'list':
@@ -550,10 +709,8 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
         return await listCommand(context);
       case 'add':
         return await addCommand(args.slice(1), context);
-      case 'update': {
-        const name = args[1];
-        return await updateCommand(name, args.slice(2), context);
-      }
+      case 'update':
+        return await updateCommand(args[1], args.slice(2), context);
       case 'test':
         if (args.length !== 2) throw usageError('instance test requires exactly one instance name.');
         return await testCommand(args[1], context);

@@ -107,6 +107,65 @@ describe('runInstanceCli', () => {
     expect(err.chunks.join('')).toContain('registry unavailable');
   });
 
+  test('preflights duplicate and validation before writing deterministic secrets', async () => {
+    const { out, err } = streams();
+    const registry = registryWith([]);
+    registry.validate.mockImplementationOnce(() => true);
+    const store = credentialStore();
+    const prompt = prompts({ name: 'new-instance', url: 'https://new.service-now.com', authType: 'basic', username: 'developer' });
+    expect(await runInstanceCli(['instance', 'add'], {
+      registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
+    })).toBe(0);
+    expect(registry.validate).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'new-instance',
+      credentialRef: 'keychain:instance/new-instance/password'
+    }));
+    expect(registry.validate.mock.invocationCallOrder[0]).toBeLessThan(store.setSecret.mock.invocationCallOrder[0]);
+  });
+
+  test('restores an overwritten deterministic secret when registration fails', async () => {
+    const { out, err } = streams();
+    const registry = registryWith([]);
+    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+    const store = credentialStore();
+    store.values.set('keychain:instance/dev/password', 'previous-secret');
+    const prompt = prompts({ name: 'dev', url: 'https://dev.service-now.com', authType: 'basic', username: 'developer' });
+    expect(await runInstanceCli(['instance', 'add'], {
+      registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
+    })).toBe(1);
+    expect(store.values.get('keychain:instance/dev/password')).toBe('previous-secret');
+    expect(store.setSecret).toHaveBeenLastCalledWith('keychain:instance/dev/password', 'previous-secret');
+    expect(err.chunks.join('')).toContain('registry unavailable');
+  });
+
+  test('reports credential rollback failure without replacing the registration cause', async () => {
+    const { out, err } = streams();
+    const registry = registryWith([]);
+    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+    const store = credentialStore();
+    store.deleteSecret.mockRejectedValueOnce(new Error('keychain unavailable'));
+    const prompt = prompts({ name: 'new-instance', url: 'https://new.service-now.com', authType: 'basic', username: 'developer' });
+    expect(await runInstanceCli(['instance', 'add'], {
+      registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
+    })).toBe(1);
+    expect(err.chunks.join('')).toContain('registry unavailable');
+    expect(err.chunks.join('')).toContain('rollback failed');
+    expect(err.chunks.join('')).not.toContain('fixture-secret-value');
+  });
+
+  test('rejects duplicate names before prompting for or writing a secret', async () => {
+    const { out, err } = streams();
+    const registry = registryWith([basic]);
+    const store = credentialStore();
+    const prompt = prompts({ name: 'dev', url: 'https://dev.service-now.com', authType: 'basic', username: 'developer' });
+    expect(await runInstanceCli(['instance', 'add'], {
+      registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
+    })).toBe(1);
+    expect(store.setSecret).not.toHaveBeenCalled();
+    expect(prompt.password).not.toHaveBeenCalled();
+    expect(err.chunks.join('')).toContain('already exists');
+  });
+
   test('rejects secret flags before prompts or output', async () => {
     const { out, err } = streams();
     const prompt = prompts();
@@ -145,10 +204,52 @@ describe('runInstanceCli', () => {
       const clientFactory = jest.fn(() => ({ getRecords: jest.fn(async () => { throw Object.assign(new Error('request failed'), { response: { status } }); }) }));
       expect(await runInstanceCli(['instance', 'test', 'dev'], {
         registry, credentialStore: store, clientFactory, stdout: result.out, stderr: result.err
+
       })).toBe(1);
       expect(result.err.chunks.join('')).toContain(label);
     }
   });
+
+test('remove restores deleted secrets and leaves metadata when a later deletion fails', async () => {
+  const { out, err } = streams();
+  const instance = {
+    ...basic,
+    credentialRef: { password: 'keychain:instance/dev/password', clientSecret: 'keychain:instance/dev/client-secret' },
+    authType: 'oauth',
+    grantType: 'password',
+    clientId: 'client',
+    username: 'developer'
+  };
+  const registry = registryWith([instance]);
+  const store = credentialStore();
+  store.values.set('keychain:instance/dev/password', 'old-password');
+  store.values.set('keychain:instance/dev/client-secret', 'old-client-secret');
+  store.deleteSecret.mockImplementationOnce(async ref => {
+    store.values.delete(ref);
+    return { deleted: true };
+  }).mockRejectedValueOnce(new Error('keychain unavailable'));
+  const code = await runInstanceCli(['instance', 'remove', 'dev'], {
+    registry, credentialStore: store, prompts: prompts({ confirm: true }), stdout: out, stderr: err
+  });
+  expect(code).toBe(1);
+  expect(registry.remove).not.toHaveBeenCalled();
+  expect(store.values.get('keychain:instance/dev/password')).toBe('old-password');
+  expect(err.chunks.join('')).toContain('rollback');
+});
+
+test('remove restores all secrets when metadata removal fails', async () => {
+  const { out, err } = streams();
+  const registry = registryWith([basic]);
+  registry.remove.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+  const store = credentialStore();
+  store.values.set(basic.credentialRef, 'old-password');
+  const code = await runInstanceCli(['instance', 'remove', 'dev'], {
+    registry, credentialStore: store, prompts: prompts({ confirm: true }), stdout: out, stderr: err
+  });
+  expect(code).toBe(1);
+  expect(store.values.get(basic.credentialRef)).toBe('old-password');
+  expect(err.chunks.join('')).toContain('registry unavailable');
+});
 
   test('updates only allowed metadata flags without prompting for secrets', async () => {
     const { out, err } = streams();
@@ -220,10 +321,61 @@ test('CLI dispatch delegates no arguments to stdio main without starting it for 
   const main = jest.fn(async () => {});
   jest.unstable_mockModule('../src/stdio-server.js', () => ({ main }));
   const { dispatch } = await import('../src/cli.js');
+
   const outputStreams = streams();
   expect(await dispatch([], { stdout: outputStreams.out, stderr: outputStreams.err })).toBe(0);
   expect(main).toHaveBeenCalledTimes(1);
   main.mockClear();
   expect(await dispatch(['--help'], { stdout: outputStreams.out, stderr: outputStreams.err })).toBe(0);
   expect(main).not.toHaveBeenCalled();
+});
+
+test.each([
+  ['oauth', 'authorization_code', { clientId: 'client', clientSecret: 'legacy-secret' }, 'confidential authorization-code'],
+  ['oauth', 'password', { clientId: 'client', username: 'developer', password: 'legacy-password' }, 'incomplete password grant'],
+  ['basic', undefined, { username: 'developer', password: 'legacy-password', token: 'unexpected-secret' }, 'unknown secret placement']
+])('migration rejects %s before keychain writes (%s)', async (authType, grantType, fields) => {
+  const legacy = { docs: { keep: true }, instances: [{ name: 'dev', url: 'https://dev.service-now.com', authType, ...(grantType ? { grantType } : {}), ...fields }] };
+  const registry = {
+    _rawDocument: () => legacy,
+    _writeAtomic: jest.fn(async () => {})
+  };
+  const store = credentialStore();
+  const result = streams();
+  expect(await runInstanceCli(['instance', 'migrate'], {
+    registry, credentialStore: store, prompts: prompts({ confirm: true }), stdout: result.out, stderr: result.err
+  })).toBe(1);
+  expect(store.setSecret).not.toHaveBeenCalled();
+  expect(registry._writeAtomic).not.toHaveBeenCalled();
+  expect(result.err.chunks.join('')).not.toContain('legacy-password');
+  expect(result.err.chunks.join('')).not.toContain('legacy-secret');
+});
+
+test('non-TTY real prompts return guidance without invoking Inquirer', async () => {
+  const out = { chunks: [], isTTY: false, write(value) { this.chunks.push(String(value)); } };
+  const err = { chunks: [], isTTY: false, write(value) { this.chunks.push(String(value)); } };
+  const stdin = { isTTY: false };
+  expect(await runInstanceCli(['instance', 'add', '--name', 'dev', '--url', 'https://dev.service-now.com', '--username', 'developer'], {
+    registry: registryWith([]), credentialStore: credentialStore(), stdin, stdout: out, stderr: err
+  })).toBe(2);
+  expect(err.chunks.join('').toLowerCase()).toContain('non-interactive');
+  expect(err.chunks.join('')).toContain('masked prompt');
+});
+
+
+test('fully specified public authorization-code add runs without a TTY', async () => {
+  const out = { chunks: [], isTTY: false, write(value) { this.chunks.push(String(value)); } };
+  const err = { chunks: [], isTTY: false, write(value) { this.chunks.push(String(value)); } };
+  const registry = registryWith([]);
+  const store = credentialStore();
+  const args = [
+    'instance', 'add', '--name', 'public', '--url', 'https://public.service-now.com',
+    '--auth-type', 'oauth', '--grant-type', 'authorization_code', '--client-id', 'public-client',
+    '--scope', 'openid', '--authorize-url', 'https://public.service-now.com/authorize',
+    '--token-url', 'https://public.service-now.com/token', '--callback-path', '/oauth/callback',
+    '--description', 'public client'
+  ];
+  expect(await runInstanceCli(args, { registry, credentialStore: store, stdin: { isTTY: false }, stdout: out, stderr: err })).toBe(0);
+  expect(registry.register).toHaveBeenCalled();
+  expect(store.setSecret).not.toHaveBeenCalled();
 });
