@@ -728,8 +728,10 @@ function migrationSourceEqualsTarget(registry) {
   const readPath = path.resolve(registry.readPath);
   const writePath = path.resolve(registry.writePath);
   if (readPath === writePath) return true;
-  const registryFs = registry.fs || fs;
-  if (typeof registryFs.realpathSync !== 'function') return false;
+  const registryFs = registry.fs === undefined ? fs : registry.fs;
+  if (typeof registryFs?.realpathSync !== 'function') {
+    throw migrationSourceIdentityError(registry);
+  }
   const canonicalReadPath = canonicalMigrationPath(readPath, registryFs, registry);
   const canonicalWritePath = canonicalMigrationPath(writePath, registryFs, registry);
   return canonicalReadPath === canonicalWritePath;

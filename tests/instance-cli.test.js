@@ -565,6 +565,51 @@ test('migrate allows a genuinely nonexistent destination after canonicalizing it
 });
 
 
+test('migrate fails closed when an injected fs adapter cannot prove source identity', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-migration-missing-realpath-'));
+  const sourcePath = path.join(directory, 'legacy.json');
+  const targetPath = path.join(directory, 'registry.json');
+  const source = JSON.stringify({
+    version: 1,
+    instances: [{
+      name: 'dev',
+      url: 'https://dev.service-now.com',
+      username: 'developer',
+      password: 'fixture-secret-value'
+    }]
+  }, null, 2);
+  fs.writeFileSync(sourcePath, source, 'utf8');
+  const registry = {
+    readPath: sourcePath,
+    writePath: targetPath,
+    fs: {},
+    _rawDocument: () => JSON.parse(source),
+    migrateLegacy: jest.fn(async () => {})
+  };
+  const store = credentialStore();
+  const result = streams();
+
+  try {
+    expect(await runInstanceCli(['instance', 'migrate'], {
+      registry,
+      credentialStore: store,
+      prompts: prompts({ confirm: true }),
+      stdout: result.out,
+      stderr: result.err
+    })).toBe(2);
+    expect(store.setSecret).not.toHaveBeenCalled();
+    expect(registry.migrateLegacy).not.toHaveBeenCalled();
+    expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+    const errorOutput = result.err.chunks.join('');
+    expect(errorOutput).toContain('MIGRATION_SOURCE_IDENTITY_FAILED');
+    expect(errorOutput).toContain(path.resolve(sourcePath));
+    expect(errorOutput).toContain(path.resolve(targetPath));
+    expect(errorOutput).not.toContain('fixture-secret-value');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('migrate refuses permission errors while resolving source or target identity', async () => {
   const registry = {
     readPath: '/tmp/plaintext-source.json',
