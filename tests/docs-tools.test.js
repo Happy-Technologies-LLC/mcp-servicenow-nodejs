@@ -42,6 +42,7 @@ describe('docs MCP tools', () => {
     const result = await handler({ method: 'tools/list', params: {} }, {});
 
     expect(result.tools.map((tool) => tool.name)).toEqual([
+      'SN-Register-Instance',
       'SN-Docs-Families',
       'SN-Docs-Status',
       'SN-Docs-Sync',

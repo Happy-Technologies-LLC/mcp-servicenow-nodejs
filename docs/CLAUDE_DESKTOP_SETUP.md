@@ -299,12 +299,17 @@ If issues occur, check the server logs:
 **Cause:** Wrong credentials or instance URL
 
 **Fix:**
-1. Test credentials manually:
+1. Run the safe local CLI check:
    ```bash
-   curl -u username:password https://your-instance.service-now.com/api/now/table/incident?sysparm_limit=1
+   happy-platform-mcp instance test <instance-name>
    ```
-2. If works, update Claude Desktop config with same credentials
-3. Make sure password special characters are not breaking JSON (escape if needed)
+   For a source checkout, use `node src/cli.js instance test <instance-name>`
+   (or `npm link` and then the global command).
+2. If testing the ServiceNow API directly, use an approved secret manager or
+   an interactive API client; do not put credentials in shell history,
+   command arguments, or documentation.
+3. Verify the instance URL, username, OAuth metadata, and keychain credential
+   reference.
 
 ---
 

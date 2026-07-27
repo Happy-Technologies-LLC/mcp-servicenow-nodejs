@@ -15,6 +15,12 @@ import { syncScript, syncAllScripts, SCRIPT_TYPES } from './script-sync.js';
 import { parseNaturalLanguage, getSupportedPatterns } from './natural-language.js';
 import { docsToolDefinitions } from './docs/tool-definitions.js';
 import { handleDocsTool } from './docs/tool-handlers.js';
+import { InstanceCredentialStore } from './instance-credential-store.js';
+import {
+  instanceToolDefinitions,
+  isInstanceSetupTool,
+  handleInstanceSetupTool
+} from './instance-tools.js';
 
 const INSTANCE_MANAGEMENT_TOOLS = new Set([
   'SN-Set-Instance',
@@ -28,7 +34,7 @@ const INSTANCE_PARAMETER_SCHEMA = Object.freeze({
 
 function addInstanceParameter(tools) {
   for (const tool of tools) {
-    if (tool.name.startsWith('SN-Docs-') || INSTANCE_MANAGEMENT_TOOLS.has(tool.name)) {
+    if (tool.name.startsWith('SN-Docs-') || INSTANCE_MANAGEMENT_TOOLS.has(tool.name) || isInstanceSetupTool(tool.name)) {
       continue;
     }
 
@@ -39,14 +45,16 @@ function addInstanceParameter(tools) {
 }
 
 export async function createMcpServer(serviceNowClient, options = {}) {
+  const instanceConfigManager = options.configManager || configManager;
+  const instanceRegistry = options.instanceRegistry || options.registry || instanceConfigManager?.registry;
+  const instanceCredentialStore = options.credentialStore || new InstanceCredentialStore();
   const docsOnly = options.docsOnly === true;
-  const instanceManager = options.configManager || configManager;
   const createServiceNowClient = options.createServiceNowClient || ((instance) => {
     const client = new ServiceNowClient(
       instance.url,
       instance.username,
       instance.password,
-      instanceToClientOptions(instance)
+      instanceToClientOptions(instance, { credentialStore: instanceCredentialStore })
     );
     client.currentInstanceName = instance.name;
     return client;
@@ -93,7 +101,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     }
 
     if (!instanceClients.has(instanceName)) {
-      const instance = instanceManager.getInstance(instanceName);
+      const instance = instanceConfigManager.getInstance(instanceName);
       const client = createServiceNowClient(instance);
       client.currentInstanceName = instance.name;
       configureProgressNotifications(client);
@@ -127,8 +135,8 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     console.error(`📋 Tool list requested by Claude Code`);
 
     if (docsOnly) {
-      console.error(`✅ Returning ${docsToolDefinitions.length} docs-only tools to Claude Code`);
-      return { tools: docsToolDefinitions };
+      console.error(`✅ Returning ${instanceToolDefinitions.length + docsToolDefinitions.length} docs-only tools to Claude Code`);
+      return { tools: [...instanceToolDefinitions, ...docsToolDefinitions] };
     }
 
     const tools = [
@@ -1421,6 +1429,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
           }
         }
       },
+      ...instanceToolDefinitions,
       ...docsToolDefinitions
     ];
 
@@ -1432,6 +1441,19 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     const { name, arguments: args } = request.params;
 
     try {
+      if (isInstanceSetupTool(name)) {
+        return await handleInstanceSetupTool(name, args, {
+          docsOnly,
+          configManager: instanceConfigManager,
+          instanceRegistry,
+          credentialStore: instanceCredentialStore,
+          diagnosticLogger: options.instanceDiagnosticLogger,
+          onConfigReload: options.onConfigReload || (() => {
+            instanceClients.clear();
+          })
+        });
+      }
+
       if (name.startsWith('SN-Docs-')) {
         return await handleDocsTool(name, args);
       }
@@ -1448,7 +1470,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
 
           // If no instance name provided, list available instances
           if (!instance_name) {
-            const instances = instanceManager.listInstances();
+            const instances = instanceConfigManager.listInstances();
             return {
               content: [{
                 type: 'text',
@@ -1462,10 +1484,16 @@ export async function createMcpServer(serviceNowClient, options = {}) {
           }
 
           // Get instance configuration
-          const instance = instanceManager.getInstance(instance_name);
+          const instance = instanceConfigManager.getInstance(instance_name);
 
           // Switch the client to the new instance
-          serviceNowClient.setInstance(instance.url, instance.username, instance.password, instance.name, instanceToClientOptions(instance));
+          serviceNowClient.setInstance(
+            instance.url,
+            instance.username,
+            instance.password,
+            instance.name,
+            instanceToClientOptions(instance, { credentialStore: instanceCredentialStore })
+          );
 
           console.error(`🔄 Switched to instance: ${instance.name} (${instance.url})`);
 

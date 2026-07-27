@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import { createMcpServer } from '../src/mcp-server-consolidated.js';
+import { isInstanceSetupTool } from '../src/instance-tools.js';
 
 const INSTANCE_MANAGEMENT_TOOLS = new Set([
   'SN-Set-Instance',
@@ -87,7 +88,7 @@ describe('per-call instance schemas', () => {
     const result = await listTools({ method: 'tools/list', params: {} }, {});
 
     for (const tool of result.tools) {
-      if (tool.name.startsWith('SN-Docs-') || INSTANCE_MANAGEMENT_TOOLS.has(tool.name)) {
+      if (tool.name.startsWith('SN-Docs-') || INSTANCE_MANAGEMENT_TOOLS.has(tool.name) || isInstanceSetupTool(tool.name)) {
         expect(tool.inputSchema.properties.instance).toBeUndefined();
         continue;
       }

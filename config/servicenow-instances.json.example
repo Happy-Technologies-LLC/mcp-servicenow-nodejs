@@ -1,4 +1,5 @@
 {
+  "version": 1,
   "docs": {
     "localIndexEnabled": false,
     "cacheDir": "~/.happy-platform-mcp/docs/servicenow",
@@ -9,36 +10,21 @@
     {
       "name": "dev",
       "url": "https://your-dev-instance.service-now.com",
+      "authType": "basic",
       "username": "your_dev_username",
-      "password": "your_dev_password",
+      "credentialRef": "keychain:instance/dev/password",
       "default": true,
       "description": "Development instance"
     },
     {
       "name": "prod",
-      "url": "https://yourinstance.service-now.com",
-      "username": "api_user",
-      "password": "your_password",
-      "default": false,
-      "description": "Production instance"
-    },
-    {
-      "name": "test",
-      "url": "https://your-test-instance.service-now.com",
-      "username": "test_user",
-      "password": "test_password",
-      "default": false,
-      "description": "Test instance"
-    },
-    {
-      "name": "staging-oauth",
-      "url": "https://your-staging-instance.service-now.com",
+      "url": "https://your-prod-instance.service-now.com",
       "authType": "oauth",
       "grantType": "client_credentials",
       "clientId": "your_oauth_client_id",
-      "clientSecret": "your_oauth_client_secret",
+      "credentialRef": "keychain:instance/prod/client-secret",
       "default": false,
-      "description": "Staging instance with OAuth client credentials"
+      "description": "Production instance with OAuth client credentials"
     }
   ]
 }

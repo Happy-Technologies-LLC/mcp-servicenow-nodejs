@@ -72,6 +72,75 @@ test('creates an authorization_code client with every OAuth option', () => {
   });
 });
 
+test('passes one injected credential store through default clients and MCP sessions', async () => {
+  const credentialStore = {};
+  const instance = {
+    name: 'credentialed',
+    url: 'https://example.service-now.com',
+    authType: 'basic',
+    username: 'user',
+    credentialRef: 'keychain:instance/credentialed/password'
+  };
+  const client = createDefaultClient(instance, { credentialStore });
+  expect(client._credentialStore).toBe(credentialStore);
+
+  const createServiceNowClient = jest.fn(() => client);
+  const createMcpServer = jest.fn(async () => ({
+    connect: async transport => transport.response.write('data: connected\n\n')
+  }));
+  const app = createHttpApp({
+    defaultInstance: instance,
+    credentialStore,
+    createServiceNowClient,
+    createMcpServer,
+    SSEServerTransport: FakeSseTransport
+  });
+  const server = await startApp(app);
+  try {
+    const response = await fetch(`${server.url}/mcp`);
+    await response.body.cancel();
+  } finally {
+    await server.close();
+  }
+
+  expect(createServiceNowClient).toHaveBeenCalledWith(instance, { credentialStore });
+  expect(createMcpServer).toHaveBeenCalledWith(client, { credentialStore });
+});
+test('passes canonical config manager and registry to every HTTP MCP session', async () => {
+  const configManager = { listInstances: jest.fn() };
+  const instanceRegistry = { list: jest.fn() };
+  const credentialStore = {};
+  const instance = { name: 'test', url: 'https://example.service-now.com' };
+  const client = {};
+  const createServiceNowClient = jest.fn(() => client);
+  const createMcpServer = jest.fn(async () => ({
+    connect: async transport => transport.response.write('data: connected\n\n')
+  }));
+  const app = createHttpApp({
+    defaultInstance: instance,
+    configManager,
+    instanceRegistry,
+    credentialStore,
+    createServiceNowClient,
+    createMcpServer,
+    SSEServerTransport: FakeSseTransport
+  });
+  const server = await startApp(app);
+
+  try {
+    const response = await fetch(`${server.url}/mcp`);
+    await response.body.cancel();
+  } finally {
+    await server.close();
+  }
+
+  expect(createMcpServer).toHaveBeenCalledWith(client, {
+    configManager,
+    instanceRegistry,
+    credentialStore
+  });
+});
+
 describe('HTTP authorization', () => {
   test('rejects unauthenticated requests when an API token is configured', async () => {
     const app = createHttpApp({

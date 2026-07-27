@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { resolveConfigPaths } from '../config-path.js';
 
 const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.happy-platform-mcp', 'docs', 'servicenow');
 const __filename = fileURLToPath(import.meta.url);
@@ -9,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const DEFAULT_CONFIG_PATH = path.resolve(__dirname, '../../config/servicenow-instances.json');
 
 function readSystemDocsProperties(env) {
-  const configPath = env.HAPPY_CONFIG_PATH || DEFAULT_CONFIG_PATH;
+  const configPath = resolveConfigPaths({ env, legacyPath: DEFAULT_CONFIG_PATH }).readPath;
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     return config.docs || {};

@@ -9,6 +9,421 @@ import axios from 'axios';
 import { userInfo } from 'node:os';
 import { performAuthorizationCodeFlow } from './oauth-authorization-code.js';
 import { KeychainTokenStore } from './token-store.js';
+import { InstanceCredentialStore, parseCredentialRef } from './instance-credential-store.js';
+
+const CREDENTIAL_ERROR_CODES = new Set([
+  'CREDENTIAL_NOT_FOUND',
+  'INVALID_CREDENTIAL_REF',
+  'KEYCHAIN_UNAVAILABLE',
+  'KEYCHAIN_OPERATION_FAILED'
+]);
+
+function hasLegacySecret(value) {
+  return value !== undefined && value !== null;
+}
+
+function credentialRefForType(ref, type, expectsObject = false) {
+  const expectedType = type === 'password' ? 'password' : 'client-secret';
+  if (expectsObject !== (ref && typeof ref === 'object' && !Array.isArray(ref))) {
+    return undefined;
+  }
+  let candidate = ref;
+  if (expectsObject) {
+    const keys = Object.keys(ref);
+    if (keys.some(key => !['password', 'clientSecret', 'passwordRef', 'clientSecretRef'].includes(key))) {
+      return undefined;
+    }
+    candidate = type === 'password'
+      ? (ref.password ?? ref.passwordRef)
+      : (ref.clientSecret ?? ref.clientSecretRef);
+  }
+  if (typeof candidate !== 'string') return undefined;
+  try {
+    const parsed = parseCredentialRef(candidate);
+    return parsed.type === expectedType ? parsed.ref : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function hasValidCredentialRefShape(ref, authType, grantType) {
+  if (authType === 'oauth' && grantType === 'password') {
+    return Boolean(
+      credentialRefForType(ref, 'password', true)
+      && credentialRefForType(ref, 'clientSecret', true)
+    );
+  }
+  return Boolean(credentialRefForType(ref, authType === 'basic' ? 'password' : 'clientSecret', false));
+}
+
+function safeCredentialError(error) {
+  const code = CREDENTIAL_ERROR_CODES.has(error?.code)
+    ? error.code
+    : 'KEYCHAIN_OPERATION_FAILED';
+  const message = code === 'CREDENTIAL_NOT_FOUND'
+    ? 'Credential not found'
+    : code === 'INVALID_CREDENTIAL_REF'
+      ? 'Invalid credential reference'
+      : code === 'KEYCHAIN_UNAVAILABLE'
+        ? 'Credential store unavailable'
+        : 'Credential store operation failed';
+  const safe = new Error(message);
+  safe.code = code;
+  safe.name = 'CredentialResolutionError';
+  return safe;
+}
+
+export class StaleInstanceError extends Error {
+  static code = 'INSTANCE_STALE_DURING_REQUEST';
+
+  constructor() {
+    super('Instance changed during credential resolution');
+    this.name = 'StaleInstanceError';
+    this.code = StaleInstanceError.code;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code
+    };
+  }
+}
+export class AuthenticationError extends Error {
+  constructor(message, code = 'AUTHENTICATION_FAILED') {
+    super(message);
+    this.name = 'AuthenticationError';
+    this.code = code;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code
+    };
+  }
+}
+
+function invalidTokenResponse(message) {
+  return new AuthenticationError(message, 'OAUTH_TOKEN_RESPONSE_INVALID');
+}
+
+function validateTokenResponse(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw invalidTokenResponse('OAuth token endpoint returned an invalid response');
+  }
+  if (typeof data.access_token !== 'string' || data.access_token.trim().length === 0) {
+    throw invalidTokenResponse('OAuth token endpoint response is missing a valid access token');
+  }
+  if (
+    data.refresh_token !== undefined
+    && (typeof data.refresh_token !== 'string' || data.refresh_token.trim().length === 0)
+  ) {
+    throw invalidTokenResponse('OAuth token endpoint response contains an invalid refresh token');
+  }
+  if (
+    data.expires_in !== undefined
+    && (
+      typeof data.expires_in !== 'number'
+      || !Number.isFinite(data.expires_in)
+      || data.expires_in <= 0
+      || data.expires_in > Number.MAX_SAFE_INTEGER / 1000
+    )
+  ) {
+    throw invalidTokenResponse('OAuth token endpoint response contains an invalid expiry');
+  }
+  return data;
+}
+
+function hasValidCachedToken(state) {
+  return (
+    state?.generation !== undefined
+    && typeof state.token === 'string'
+    && state.token.length > 0
+    && Number.isFinite(state.expiry)
+    && Date.now() < state.expiry - 30000
+  );
+}
+
+function staleInstanceError() {
+  return new StaleInstanceError();
+}
+
+function isStaleInstanceError(error) {
+  return error instanceof StaleInstanceError || error?.code === StaleInstanceError.code;
+}
+
+function collectCredentialValues(client) {
+  const values = new Set();
+  const add = (value) => {
+    if (typeof value === 'string' && value.length > 0) {
+      values.add(value);
+    }
+  };
+  const addAuthorizationVariants = (scheme, value) => {
+    if (typeof value !== 'string' || value.length === 0) return;
+    for (const schemeVariant of [scheme, scheme.toLowerCase()]) {
+      add(`${schemeVariant} ${value}`);
+      add(`Authorization: ${schemeVariant} ${value}`);
+      add(`authorization: ${schemeVariant} ${value}`);
+    }
+  };
+
+  const password = client?.password;
+  const username = client?.username;
+  const clientSecret = client?.oauthConfig?.clientSecret;
+  const basicAuth = client?.auth;
+  const accessToken = client?.oauthToken;
+  const refreshToken = client?.oauthRefreshToken;
+
+  add(password);
+  add(clientSecret);
+  add(basicAuth);
+  add(accessToken);
+  add(refreshToken);
+  if (typeof username === 'string' && typeof password === 'string') {
+    const basicMaterial = `${username}:${password}`;
+    const encodedBasic = Buffer.from(basicMaterial).toString('base64');
+    add(basicMaterial);
+    add(encodedBasic);
+    addAuthorizationVariants('Basic', encodedBasic);
+  }
+  addAuthorizationVariants('Basic', basicAuth);
+  addAuthorizationVariants('Bearer', accessToken);
+
+  if (client?._resolvedCredentialSecrets) {
+    for (const value of client._resolvedCredentialSecrets.values()) {
+      add(value);
+    }
+  }
+  if (client?._requestCredentialValues) {
+    for (const value of client._requestCredentialValues) {
+      add(value);
+    }
+  }
+  return values;
+}
+
+function addAuthorizationValue(values, value) {
+  if (typeof value !== 'string' || value.length === 0) return;
+  values.add(value);
+  const match = value.match(/^(?:authorization\s*:\s*)?(basic|bearer)\s+(.+)$/i);
+  if (match) {
+    values.add(match[2]);
+    values.add(`${match[1]} ${match[2]}`);
+    values.add(`${match[1].toLowerCase()} ${match[2]}`);
+  }
+}
+
+function collectAuthorizationValues(value, values, seen = new Set(), key = '') {
+  if (typeof value === 'string') {
+    if (/authorization|_header/i.test(key)) {
+      addAuthorizationValue(values, value);
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return;
+  seen.add(value);
+  for (const [childKey, childValue] of Object.entries(value)) {
+    collectAuthorizationValues(childValue, values, seen, childKey);
+  }
+}
+
+function collectErrorCredentialValues(value, values, seen = new Set(), key = '') {
+  if (typeof value === 'string') {
+    if (isCredentialField(key)) {
+      addAuthorizationValue(values, value);
+      values.add(value);
+    } else if (/^(?:data|body)$/i.test(key)) {
+      try {
+        collectErrorCredentialValues(JSON.parse(value), values, seen, key);
+      } catch {
+        for (const [field, fieldValue] of new URLSearchParams(value)) {
+          collectErrorCredentialValues(fieldValue, values, seen, field);
+        }
+      }
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return;
+  seen.add(value);
+  for (const [childKey, childValue] of Object.entries(value)) {
+    collectErrorCredentialValues(childValue, values, seen, childKey);
+  }
+}
+
+function isCredentialField(key) {
+  return /^(?:authorization|access_token|refresh_token|client_secret|password|token|id_token|basic)$/i.test(key)
+    || /authorization/i.test(key);
+}
+
+function redactCredentialStrings(value, values) {
+  if (typeof value !== 'string') return value;
+  return [...values]
+    .sort((a, b) => b.length - a.length)
+    .reduce((result, secret) => result.split(secret).join('[redacted]'), value);
+}
+
+function isRedactedField(key) {
+  return isCredentialField(key) || /^headers?$/i.test(key);
+}
+
+function sanitizeCopy(value, values, seen = new Set()) {
+  if (typeof value === 'string') return redactCredentialStrings(value, values);
+  if (!value || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  const copy = Array.isArray(value) ? [] : {};
+  for (const key of Object.keys(value)) {
+    if (isRedactedField(key)) continue;
+    let childValue;
+    try {
+      childValue = value[key];
+    } catch {
+      continue;
+    }
+    copy[key] = sanitizeCopy(childValue, values, seen);
+  }
+  return copy;
+}
+
+function isExplicitInvalidGrant(error) {
+  const data = error?.response?.data;
+  const candidates = [
+    data,
+    data?.error,
+    data?.error?.code,
+    data?.error_code,
+    data?.code,
+    error?.response?.error,
+    error?.error,
+    error?.code
+  ];
+  return candidates.some(value => typeof value === 'string' && value.toLowerCase() === 'invalid_grant');
+}
+
+function safeAuthError(error, client) {
+  const values = collectCredentialValues(client);
+  collectErrorCredentialValues(error, values);
+  collectAuthorizationValues(error, values);
+  const message = redactCredentialStrings(typeof error?.message === 'string' && error.message
+    ? error.message
+    : 'Authentication request failed', values);
+  const safe = error instanceof AuthenticationError
+    ? new AuthenticationError(message, error.code)
+    : new Error(message);
+  const status = error?.response?.status;
+  if (status !== undefined) safe.status = status;
+  if (status === 401) safe.code = 'AUTHENTICATION_FAILED';
+  else if (status === 403) safe.code = 'AUTHORIZATION_FAILED';
+  else if (typeof error?.code === 'string' && !CREDENTIAL_ERROR_CODES.has(error.code)) safe.code = error.code;
+  for (const field of ['details', 'logs', 'config', 'request', 'response', 'payload']) {
+    if (error?.[field] !== undefined) safe[field] = sanitizeCopy(error[field], values);
+  }
+  if (typeof error?.stack === 'string') {
+    safe.stack = redactCredentialStrings(error.stack, values);
+  }
+  return safe;
+}
+
+function sanitizeServiceNowError(error, credentialSource, messageOverride) {
+  const values = collectCredentialValues(credentialSource);
+  collectAuthorizationValues(error?.config, values);
+  collectAuthorizationValues(error?.response?.config, values);
+  collectAuthorizationValues(error?.request, values);
+
+  let originalSerialized;
+  if (typeof error?.toJSON === 'function') {
+    try {
+      originalSerialized = sanitizeCopy(error.toJSON(), values);
+    } catch {
+      originalSerialized = undefined;
+    }
+  }
+
+  const originalMessage = typeof error?.message === 'string' && error.message
+    ? error.message
+    : 'ServiceNow API request failed';
+  const safe = new Error(redactCredentialStrings(messageOverride || originalMessage, values));
+  if (typeof error?.name === 'string') safe.name = redactCredentialStrings(error.name, values);
+  if (typeof error?.code === 'string') safe.code = error.code;
+  if (error?.response?.status !== undefined) safe.status = error.response.status;
+
+  if (error?.config !== undefined) safe.config = sanitizeCopy(error.config, values);
+  if (error?.request !== undefined) safe.request = sanitizeCopy(error.request, values);
+  if (error?.response !== undefined) safe.response = sanitizeCopy(error.response, values);
+  if (error?.payload !== undefined) safe.payload = sanitizeCopy(error.payload, values);
+  if (typeof error?.stack === 'string') {
+    safe.stack = redactCredentialStrings(error.stack, values);
+  }
+
+  const toJSONSnapshot = () => {
+    const snapshot = originalSerialized && typeof originalSerialized === 'object'
+      ? { ...originalSerialized }
+      : {};
+    snapshot.name = safe.name;
+    snapshot.message = safe.message;
+    if (safe.code !== undefined) snapshot.code = safe.code;
+    if (safe.status !== undefined) snapshot.status = safe.status;
+    if (safe.stack !== undefined) snapshot.stack = safe.stack;
+    if (safe.config !== undefined) snapshot.config = safe.config;
+    if (safe.request !== undefined) snapshot.request = safe.request;
+    if (safe.response !== undefined) snapshot.response = safe.response;
+    if (safe.payload !== undefined) snapshot.payload = safe.payload;
+    return sanitizeCopy(snapshot, values);
+  };
+  safe.toJSON = toJSONSnapshot;
+  return safe;
+}
+
+function normalizeInstanceUrl(value) {
+  return typeof value === 'string' ? value.replace(/\/+$/, '') : value;
+}
+
+function normalizePathname(pathname) {
+  const normalized = pathname.replace(/\/+$/, '');
+  return normalized || '/';
+}
+
+function requestBelongsToInstance(config, instanceUrl) {
+  if (!config || typeof config !== 'object') return false;
+  const capturedUrl = normalizeInstanceUrl(instanceUrl);
+  if (normalizeInstanceUrl(config.baseURL) !== capturedUrl) return false;
+  if (typeof config.url !== 'string' || config.url.length === 0) return false;
+
+  let base;
+  try {
+    base = new URL(capturedUrl);
+  } catch {
+    return false;
+  }
+
+  const basePath = normalizePathname(base.pathname);
+  const requestUrl = config.url;
+  const absoluteRequest = /^[a-z][a-z\d+\-.]*:/i.test(requestUrl) || requestUrl.startsWith('//');
+  let resolved;
+  try {
+    if (absoluteRequest) {
+      resolved = new URL(requestUrl);
+      if (resolved.origin !== base.origin) return false;
+    } else {
+      const pathEnd = requestUrl.search(/[?#]/);
+      const rawPath = pathEnd === -1 ? requestUrl : requestUrl.slice(0, pathEnd);
+      const suffix = pathEnd === -1 ? '' : requestUrl.slice(pathEnd);
+      const relativePath = rawPath.replace(/^\/+/, '');
+      const joinedPath = basePath === '/' ? `/${relativePath}` : `${basePath}/${relativePath}`;
+      resolved = new URL(`${base.origin}${joinedPath}${suffix}`);
+    }
+  } catch {
+    return false;
+  }
+
+  const resolvedPath = normalizePathname(resolved.pathname);
+  return basePath === '/'
+    ? true
+    : resolvedPath === basePath || resolvedPath.startsWith(`${basePath}/`);
+}
 
 /** Default token-endpoint POST: form-encode params via axios, return the body. */
 async function defaultTokenPost(url, params) {
@@ -18,7 +433,7 @@ async function defaultTokenPost(url, params) {
   return response.data;
 }
 
-export function enrichServiceNowError(error) {
+export function enrichServiceNowError(error, credentialSource = null) {
   const status = error?.response?.status;
   const data = error?.response?.data;
   const serviceNowError = data?.error;
@@ -32,10 +447,7 @@ export function enrichServiceNowError(error) {
     message = [status, data.trim()].filter(Boolean).join(': ');
   }
 
-  if (message) {
-    error.message = message;
-  }
-  return error;
+  return sanitizeServiceNowError(error, credentialSource, message);
 }
 
 export class ServiceNowClient {
@@ -76,6 +488,13 @@ export class ServiceNowClient {
    * @param {object} options - Optional config (authType, clientId, clientSecret)
    */
   setInstance(instanceUrl, username, password, instanceName = null, options = {}) {
+    this._instanceGeneration = (this._instanceGeneration || 0) + 1;
+    this._oauthCacheGeneration = this._instanceGeneration;
+    this._resolvedCredentialSecrets = new Map();
+    this._credentialResolutionPromises = new Map();
+    this._oauthTokenPromise = null;
+    this._credentialStore = options.credentialStore || null;
+    this.credentialRef = options.credentialRef;
     this.instanceUrl = instanceUrl.replace(/\/$/, ''); // Remove trailing slash
     this.username = username;
     this.password = password;
@@ -106,8 +525,13 @@ export class ServiceNowClient {
       this.oauthRefreshToken = null;
       this.oauthTokenExpiry = null;
     } else {
-      this.auth = Buffer.from(`${username}:${password}`).toString('base64');
+      this.auth = hasLegacySecret(password)
+        ? Buffer.from(`${username}:${password}`).toString('base64')
+        : null;
       this.oauthConfig = null;
+      this.oauthToken = null;
+      this.oauthRefreshToken = null;
+      this.oauthTokenExpiry = null;
     }
 
     this._createClient();
@@ -118,46 +542,145 @@ export class ServiceNowClient {
    * For OAuth, attaches request/response interceptors for token lifecycle.
    */
   _createClient() {
-    this.client = axios.create({
-      baseURL: this.instanceUrl,
+    const captured = {
+      generation: this._instanceGeneration,
+      instanceUrl: this.instanceUrl,
+      instanceName: this.currentInstanceName,
+      authType: this.authType,
+      credentialContext: {
+        username: this.username,
+        password: this.password,
+        auth: this.auth,
+        oauthConfig: this.oauthConfig ? { ...this.oauthConfig } : null,
+        oauthToken: this.oauthToken,
+        oauthRefreshToken: this.oauthRefreshToken,
+        _resolvedCredentialSecrets: this._resolvedCredentialSecrets,
+        _requestCredentialValues: new Set()
+      }
+    };
+    const client = axios.create({
+      baseURL: captured.instanceUrl,
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       }
     });
+    captured.client = client;
+    this.client = client;
 
-    // Request interceptor — attach the right Authorization header
-    this.client.interceptors.request.use(async (config) => {
-      if (this.authType === 'oauth') {
-        const token = await this._getOAuthToken();
-        config.headers['Authorization'] = `Bearer ${token}`;
-      } else {
-        config.headers['Authorization'] = `Basic ${this.auth}`;
-      }
+    // Request interceptor — attach only the captured generation's credential.
+    client.interceptors.request.use(async (config) => {
+      this._assertCapturedRequest(captured, config);
+      const authHeader = await this.getAuthHeader(captured.generation);
+      this._assertCapturedRequest(captured, config);
+      addAuthorizationValue(captured.credentialContext._requestCredentialValues, authHeader);
+      config.headers = config.headers || {};
+      config.headers.Authorization = authHeader;
       return config;
     });
 
-    // Response interceptor — refresh on 401 and retry once
-    this.client.interceptors.response.use(
-      (response) => response,
+    // Response interceptor — refresh on 401 and retry once against this client only.
+    client.interceptors.response.use(
+      (response) => {
+        this._assertCapturedRequest(captured, response?.config);
+        return response;
+      },
       async (error) => {
-        const originalRequest = error.config;
-        if (
-          this.authType === 'oauth' &&
-          error.response?.status === 401 &&
-          !originalRequest._oauthRetry
-        ) {
-          originalRequest._oauthRetry = true;
-          // Force token refresh
-          this.oauthToken = null;
-          this.oauthTokenExpiry = null;
-          const token = await this._getOAuthToken();
-          originalRequest.headers['Authorization'] = `Bearer ${token}`;
-          return this.client.request(originalRequest);
+        const originalRequest = error?.config || error?.response?.config;
+        if (originalRequest) {
+          this._assertCapturedRequest(captured, originalRequest);
         }
-        throw enrichServiceNowError(error);
+        if (captured.authType === 'oauth' && error.response?.status === 401) {
+          if (!originalRequest._oauthRetry) {
+            originalRequest._oauthRetry = true;
+            this._assertCapturedRequest(captured, originalRequest);
+            this.oauthToken = null;
+            this.oauthTokenExpiry = null;
+            this._assertCapturedRequest(captured, originalRequest);
+            const token = await this._getOAuthToken(captured.generation);
+            this._assertCapturedRequest(captured, originalRequest);
+            addAuthorizationValue(captured.credentialContext._requestCredentialValues, `Bearer ${token}`);
+            originalRequest.headers = originalRequest.headers || {};
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            this._assertCapturedRequest(captured, originalRequest);
+            return client.request(originalRequest);
+          }
+        }
+        throw enrichServiceNowError(error, captured.credentialContext);
       }
     );
+  }
+
+  _assertCapturedRequest(captured, config) {
+    this._assertCurrentGeneration(captured.generation);
+    if (
+      this.client !== captured.client
+      || this.authType !== captured.authType
+      || !requestBelongsToInstance(config, captured.instanceUrl)
+    ) {
+      throw staleInstanceError();
+    }
+  }
+
+  _assertCurrentGeneration(generation) {
+    if (generation !== this._instanceGeneration) {
+      throw staleInstanceError();
+    }
+  }
+
+  async _resolveCredential(type, generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
+    const legacy = type === 'password' ? this.password : this.oauthConfig?.clientSecret;
+    if (hasLegacySecret(legacy)) {
+      return legacy;
+    }
+
+    const grantType = this.oauthConfig?.grantType || (this.username ? 'password' : 'client_credentials');
+    const expectsObject = this.authType === 'oauth' && grantType === 'password';
+    if (!hasValidCredentialRefShape(this.credentialRef, this.authType, grantType)) {
+      throw safeCredentialError({ code: 'CREDENTIAL_NOT_FOUND' });
+    }
+    const ref = credentialRefForType(this.credentialRef, type, expectsObject);
+    const key = `${type}:${ref}`;
+    if (this._resolvedCredentialSecrets.has(key)) {
+      return this._resolvedCredentialSecrets.get(key);
+    }
+    const promises = this._credentialResolutionPromises;
+    if (!promises.has(key)) {
+      let promise;
+      promise = this._loadCredential(ref, key, generation).finally(() => {
+        if (
+          this._instanceGeneration === generation
+          && this._credentialResolutionPromises === promises
+          && promises.get(key) === promise
+        ) {
+          promises.delete(key);
+        }
+      });
+      promises.set(key, promise);
+    }
+    return promises.get(key);
+  }
+
+  async _loadCredential(ref, key, generation) {
+    const store = this._credentialStore || new InstanceCredentialStore();
+    try {
+      const value = await store.getSecret(ref);
+      this._assertCurrentGeneration(generation);
+      if (typeof value !== 'string' || value.length === 0) {
+        throw { code: 'CREDENTIAL_NOT_FOUND' };
+      }
+      this._resolvedCredentialSecrets.set(key, value);
+      if (!this._credentialStore) {
+        this._credentialStore = store;
+      }
+      return value;
+    } catch (error) {
+      if (isStaleInstanceError(error)) {
+        throw error;
+      }
+      throw safeCredentialError(error);
+    }
   }
 
   /**
@@ -165,19 +688,41 @@ export class ServiceNowClient {
    * Uses ServiceNow's /oauth_token.do endpoint.
    * @returns {Promise<string>} Access token
    */
-  async _getOAuthToken() {
-    // Per-user authorization_code grant has its own token lifecycle (persisted
-    // refresh token + fail-loud re-auth), handled separately.
-    if (this.oauthConfig?.grantType === 'authorization_code') {
-      return this._getAuthorizationCodeToken();
-    }
-
-    // Return cached token if still valid (with 30s buffer)
+  async _getOAuthToken(generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
     if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
+      this._assertCurrentGeneration(generation);
       return this.oauthToken;
     }
+    if (this._oauthTokenPromise) {
+      const token = await this._oauthTokenPromise;
+      this._assertCurrentGeneration(generation);
+      return token;
+    }
 
-    const tokenUrl = `${this.instanceUrl}/oauth_token.do`;
+    const promise = this._requestOAuthToken(generation);
+    this._oauthTokenPromise = promise;
+    try {
+      this._assertCurrentGeneration(generation);
+      const token = await promise;
+      this._assertCurrentGeneration(generation);
+      return token;
+    } finally {
+      if (this._oauthTokenPromise === promise) {
+        this._oauthTokenPromise = null;
+      }
+    }
+  }
+
+  async _requestOAuthToken(generation) {
+    // Per-user authorization_code clients are public and never resolve a static secret.
+    if (this.oauthConfig?.grantType === 'authorization_code') {
+      return this._getAuthorizationCodeToken(generation);
+    }
+    this._assertCurrentGeneration(generation);
+    const clientSecret = await this._resolveCredential('clientSecret', generation);
+    this._assertCurrentGeneration(generation);
+    const tokenUrl = this.oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
 
     // Try refresh token first if we have one
     if (this.oauthRefreshToken) {
@@ -185,17 +730,30 @@ export class ServiceNowClient {
         const response = await axios.post(tokenUrl, new URLSearchParams({
           grant_type: 'refresh_token',
           client_id: this.oauthConfig.clientId,
-          client_secret: this.oauthConfig.clientSecret,
+          client_secret: clientSecret,
           refresh_token: this.oauthRefreshToken
         }).toString(), {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
-        return this._handleTokenResponse(response.data);
+        this._assertCurrentGeneration(generation);
+        return this._handleTokenResponse(response.data, generation);
       } catch (refreshError) {
-        // Refresh token expired or invalid — fall through to password grant
-        console.error('OAuth refresh failed, requesting new token:', refreshError.message);
+        this._assertCurrentGeneration(generation);
+        if (isStaleInstanceError(refreshError)) {
+          throw refreshError;
+        }
+        if (!isExplicitInvalidGrant(refreshError)) {
+          const safe = safeAuthError(refreshError, this);
+          if (!safe.code) safe.code = 'OAUTH_REFRESH_REQUEST_FAILED';
+          throw safe;
+        }
+        // An explicit invalid_grant means the refresh token is dead. Clear it
+        // in memory, then intentionally try the configured primary grant.
+        console.error('OAuth refresh token rejected; requesting the configured primary grant');
+        this._assertCurrentGeneration(generation);
         this.oauthRefreshToken = null;
+        this._assertCurrentGeneration(generation);
       }
     }
 
@@ -204,12 +762,12 @@ export class ServiceNowClient {
     const params = {
       grant_type: grantType,
       client_id: this.oauthConfig.clientId,
-      client_secret: this.oauthConfig.clientSecret
+      client_secret: clientSecret
     };
 
     if (grantType === 'password') {
       params.username = this.username;
-      params.password = this.password;
+      params.password = await this._resolveCredential('password', generation);
     }
 
     if (this.oauthConfig.scope) {
@@ -217,14 +775,20 @@ export class ServiceNowClient {
     }
 
     try {
+      this._assertCurrentGeneration(generation);
       const response = await axios.post(tokenUrl, new URLSearchParams(params).toString(), {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
 
-      return this._handleTokenResponse(response.data);
+      this._assertCurrentGeneration(generation);
+      return this._handleTokenResponse(response.data, generation);
     } catch (error) {
-      const detail = error.response?.data?.error_description || error.message;
-      throw new Error(`OAuth ${grantType} token request failed: ${detail}`);
+      if (isStaleInstanceError(error)) {
+        throw error;
+      }
+      const safe = safeAuthError(error, this);
+      if (!safe.code) safe.code = 'OAUTH_TOKEN_REQUEST_FAILED';
+      throw safe;
     }
   }
 
@@ -238,19 +802,32 @@ export class ServiceNowClient {
    * Refresh tokens are persisted per local OS user and instance in the injected token store.
    * @returns {Promise<string>} Access token
    */
-  async _getAuthorizationCodeToken() {
+  async _getAuthorizationCodeToken(generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
     // Return cached token if still valid (with 30s buffer)
     if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
       return this.oauthToken;
     }
 
+    const tokenStore = this._tokenStore;
+    const oauthConfig = { ...this.oauthConfig };
     const account = `${userInfo().username}@${this.currentInstanceName}`;
-    const tokenUrl = this.oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
-    const authorizeUrl = this.oauthConfig.authorizeUrl || `${this.instanceUrl}/oauth_auth.do`;
+    const tokenUrl = oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
+    const authorizeUrl = oauthConfig.authorizeUrl || `${this.instanceUrl}/oauth_auth.do`;
 
     // Load a persisted refresh token if we don't have one in memory yet.
     if (!this.oauthRefreshToken) {
-      this.oauthRefreshToken = await this._tokenStore.getRefreshToken(account);
+      try {
+        this._assertCurrentGeneration(generation);
+        const storedRefreshToken = await tokenStore.getRefreshToken(account);
+        this._assertCurrentGeneration(generation);
+        this.oauthRefreshToken = storedRefreshToken;
+      } catch (error) {
+        if (isStaleInstanceError(error)) {
+          throw error;
+        }
+        throw safeCredentialError(error);
+      }
     }
 
     // Try the refresh token first — avoids a browser round-trip.
@@ -258,41 +835,72 @@ export class ServiceNowClient {
       try {
         const params = {
           grant_type: 'refresh_token',
-          client_id: this.oauthConfig.clientId,
+          client_id: oauthConfig.clientId,
           refresh_token: this.oauthRefreshToken
         };
-        if (this.oauthConfig.clientSecret) {
-          params.client_secret = this.oauthConfig.clientSecret;
+        if (oauthConfig.clientSecret) {
+          params.client_secret = oauthConfig.clientSecret;
         }
+        this._assertCurrentGeneration(generation);
         const data = await this._postToken(tokenUrl, params);
-        return this._acceptAuthCodeTokens(data, account);
+        this._assertCurrentGeneration(generation);
+        return this._acceptAuthCodeTokens(data, account, generation, tokenStore);
       } catch (refreshError) {
-        // Only a genuine token REJECTION (400/401 invalid_grant) means the
-        // refresh token is dead → discard it and re-prompt interactive sign-in.
-        // A transient failure (network, 5xx) must NOT nuke a valid token or
-        // trigger a browser prompt — surface it so the caller can retry.
-        const status = refreshError.response?.status;
-        if (status !== 400 && status !== 401) {
+        this._assertCurrentGeneration(generation);
+
+        if (isStaleInstanceError(refreshError)) {
           throw refreshError;
         }
+        // Only an explicit OAuth invalid_grant means the refresh token is dead.
+        // Other 400/401 responses (for example invalid_client or invalid_request)
+        // must preserve the token and surface the failure without re-auth.
+        const status = refreshError.response?.status;
+        if (
+          (status !== 400 && status !== 401)
+          || !isExplicitInvalidGrant(refreshError)
+        ) {
+          throw safeAuthError(refreshError, this);
+        }
         // FAIL LOUD, but never fall back to password: re-prompt sign-in.
-        console.error('OAuth refresh token rejected; re-authenticating via browser sign-in:', refreshError.message);
+        console.error('OAuth refresh token rejected; re-authenticating via browser sign-in');
+        this._assertCurrentGeneration(generation);
         this.oauthRefreshToken = null;
-        await this._tokenStore.clearRefreshToken(account);
+        this._assertCurrentGeneration(generation);
+        try {
+          await tokenStore.clearRefreshToken(account);
+          this._assertCurrentGeneration(generation);
+        } catch (error) {
+          if (isStaleInstanceError(error)) {
+            throw error;
+          }
+          throw safeCredentialError(error);
+        }
       }
     }
 
     // Interactive authorization_code + PKCE + loopback sign-in.
-    const data = await this._performAuthCodeFlow({
-      authorizeUrl,
-      tokenUrl,
-      clientId: this.oauthConfig.clientId,
-      clientSecret: this.oauthConfig.clientSecret,
-      scope: this.oauthConfig.scope,
-      redirectPort: this.oauthConfig.redirectPort,
-      callbackPath: this.oauthConfig.callbackPath
-    });
-    return this._acceptAuthCodeTokens(data, account);
+    let data;
+    try {
+      this._assertCurrentGeneration(generation);
+      data = await this._performAuthCodeFlow({
+        authorizeUrl,
+        tokenUrl,
+        clientId: oauthConfig.clientId,
+        clientSecret: oauthConfig.clientSecret,
+        scope: oauthConfig.scope,
+        redirectPort: oauthConfig.redirectPort,
+        callbackPath: oauthConfig.callbackPath
+      });
+      this._assertCurrentGeneration(generation);
+    } catch (error) {
+      this._assertCurrentGeneration(generation);
+
+      if (isStaleInstanceError(error)) {
+        throw error;
+      }
+      throw safeAuthError(error, this);
+    }
+    return this._acceptAuthCodeTokens(data, account, generation, tokenStore);
   }
 
   /**
@@ -301,22 +909,56 @@ export class ServiceNowClient {
    * @param {string} account - Token-store account key
    * @returns {Promise<string>} Access token
    */
-  async _acceptAuthCodeTokens(data, account) {
-    this._handleTokenResponse(data);
-    // Persist only when the response carried a refresh token that DIFFERS from
-    // what is already stored. If the server rotated without returning one, or
-    // simply echoed the existing token (ServiceNow's usual behaviour), there is
-    // nothing new to save. Crucially, re-writing an identical value is not a
-    // harmless no-op: some OS keychain backends recreate the item on write
-    // (macOS resets the item's ACL to the writing process), so a redundant write
-    // on every refresh churns the credential's access control. Only write on a
-    // genuine change.
-    if (data.refresh_token) {
-      const stored = await this._tokenStore.getRefreshToken(account);
-      if (data.refresh_token !== stored) {
-        await this._tokenStore.setRefreshToken(account, data.refresh_token);
+  async _acceptAuthCodeTokens(data, account, generation, tokenStore) {
+    this._assertCurrentGeneration(generation);
+    const validated = validateTokenResponse(data);
+    const previous = {
+      generation: this._oauthCacheGeneration,
+      token: this.oauthToken,
+      refreshToken: this.oauthRefreshToken,
+      expiry: this.oauthTokenExpiry
+    };
+
+    // Persist only when the response carries a refresh token that differs from
+    // the stored value. Do not publish any response-derived cache state until
+    // this write succeeds, because an access token without its refresh token
+    // would be unrecoverable on the next refresh.
+    try {
+      if (validated.refresh_token !== undefined) {
+        this._assertCurrentGeneration(generation);
+        const stored = await tokenStore.getRefreshToken(account);
+        this._assertCurrentGeneration(generation);
+        if (validated.refresh_token !== stored) {
+          this._assertCurrentGeneration(generation);
+          await tokenStore.setRefreshToken(account, validated.refresh_token);
+          this._assertCurrentGeneration(generation);
+        }
       }
+    } catch (error) {
+      if (isStaleInstanceError(error)) {
+        throw error;
+      }
+      this._assertCurrentGeneration(generation);
+      if (previous.generation === generation && hasValidCachedToken(previous)) {
+        this.oauthToken = previous.token;
+        this.oauthRefreshToken = previous.refreshToken;
+        this.oauthTokenExpiry = previous.expiry;
+      } else {
+        this.oauthToken = null;
+        this.oauthRefreshToken = null;
+        this.oauthTokenExpiry = null;
+        this._oauthCacheGeneration = generation;
+      }
+      throw safeCredentialError(error);
     }
+
+    this._assertCurrentGeneration(generation);
+    this.oauthToken = validated.access_token;
+    this._assertCurrentGeneration(generation);
+    this.oauthRefreshToken = validated.refresh_token ?? this.oauthRefreshToken;
+    this._assertCurrentGeneration(generation);
+    this.oauthTokenExpiry = Date.now() + (validated.expires_in ?? 1800) * 1000;
+    this._oauthCacheGeneration = generation;
     return this.oauthToken;
   }
 
@@ -325,11 +967,17 @@ export class ServiceNowClient {
    * @param {object} data - Token endpoint response
    * @returns {string} Access token
    */
-  _handleTokenResponse(data) {
-    this.oauthToken = data.access_token;
-    this.oauthRefreshToken = data.refresh_token || this.oauthRefreshToken;
-    // expires_in is in seconds
-    this.oauthTokenExpiry = Date.now() + (data.expires_in || 1800) * 1000;
+  _handleTokenResponse(data, generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
+    const validated = validateTokenResponse(data);
+    const expiry = Date.now() + (validated.expires_in ?? 1800) * 1000;
+    this._assertCurrentGeneration(generation);
+    this.oauthToken = validated.access_token;
+    this._assertCurrentGeneration(generation);
+    this.oauthRefreshToken = validated.refresh_token ?? this.oauthRefreshToken;
+    this._assertCurrentGeneration(generation);
+    this.oauthTokenExpiry = expiry;
+    this._oauthCacheGeneration = generation;
     return this.oauthToken;
   }
 
@@ -339,12 +987,23 @@ export class ServiceNowClient {
    * Useful for one-off axios instances that need the current auth.
    * @returns {Promise<string>} Authorization header value
    */
-  async getAuthHeader() {
-    if (this.authType === 'oauth') {
-      const token = await this._getOAuthToken();
+  async getAuthHeader(generation = this._instanceGeneration, authType = this.authType) {
+    this._assertCurrentGeneration(generation);
+    if (authType !== this.authType) {
+      throw staleInstanceError();
+    }
+    if (authType === 'oauth') {
+      const token = await this._getOAuthToken(generation);
+      this._assertCurrentGeneration(generation);
       return `Bearer ${token}`;
     }
-    return `Basic ${this.auth}`;
+    if (hasLegacySecret(this.password)) {
+      this._assertCurrentGeneration(generation);
+      return `Basic ${this.auth}`;
+    }
+    const password = await this._resolveCredential('password', generation);
+    this._assertCurrentGeneration(generation);
+    return `Basic ${Buffer.from(`${this.username}:${password}`).toString('base64')}`;
   }
 
   /**

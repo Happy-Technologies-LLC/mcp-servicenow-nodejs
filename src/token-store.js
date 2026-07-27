@@ -58,22 +58,18 @@ export class KeychainTokenStore {
     // module, locked keychain, permission denied — must FAIL LOUD rather than
     // masquerade as "no token" and trigger a silent re-auth.
     try {
-      return (await this._entry(account)).getPassword() ?? null;
+      return await (await this._entry(account)).getPassword() ?? null;
     } catch (err) {
-      console.error(`Keychain read failed for "${account}": ${err.message}`);
+      console.error('Keychain read failed');
       throw err;
     }
   }
 
   async setRefreshToken(account, token) {
-    (await this._entry(account)).setPassword(token);
+    return await (await this._entry(account)).setPassword(token);
   }
 
   async clearRefreshToken(account) {
-    try {
-      (await this._entry(account)).deletePassword();
-    } catch {
-      // Nothing to delete.
-    }
+    await (await this._entry(account)).deletePassword();
   }
 }

@@ -4,6 +4,7 @@
  */
 
 import { jest } from '@jest/globals';
+import { createResourceHandlers } from '../src/resources.js';
 import { createMockMcpServer, mockTableMetadata } from './helpers/mocks.js';
 
 describe('MCP Resources', () => {
@@ -365,5 +366,49 @@ describe('MCP Resources', () => {
       const parsed = JSON.parse(result.contents[0].text);
       expect(parsed.instance).toBe('prod');
     });
+  it('uses the same injected credential store when switching and restoring instances', async () => {
+    const credentialStore = {};
+    let current = {
+      name: 'dev',
+      url: 'https://dev.service-now.com',
+      username: 'dev-user',
+      password: undefined
+    };
+    const instances = {
+      dev: { ...current, authType: 'basic' },
+      prod: { name: 'prod', url: 'https://prod.service-now.com', authType: 'basic' }
+    };
+    const client = {
+      getCurrentInstance: jest.fn(() => current),
+      setInstance: jest.fn((url, username, password, name) => {
+        current = { name, url, username, password };
+      }),
+      getRecords: jest.fn(async () => [])
+    };
+    const configManager = {
+      listInstances: jest.fn(() => Object.values(instances)),
+      getInstance: jest.fn(name => instances[name])
+    };
+    const handlers = createResourceHandlers(client, configManager, mockTableMetadata, { credentialStore });
+
+    await handlers.readResource('servicenow://prod/incidents');
+
+    expect(client.setInstance).toHaveBeenNthCalledWith(
+      1,
+      instances.prod.url,
+      instances.prod.username,
+      instances.prod.password,
+      'prod',
+      expect.objectContaining({ credentialStore })
+    );
+    expect(client.setInstance).toHaveBeenNthCalledWith(
+      2,
+      instances.dev.url,
+      instances.dev.username,
+      instances.dev.password,
+      'dev',
+      expect.objectContaining({ credentialStore })
+    );
+  });
   });
 });
