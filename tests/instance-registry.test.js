@@ -858,6 +858,26 @@ describe('InstanceRegistry persistence', () => {
     expect(registry.list()).toEqual(previous);
     expect(fs.readFileSync(file, 'utf8')).toBe(before);
   });
+ 
+  test('write failures expose a stable code and resolved recovery path without source details', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    await registry.register(publicInstance('dev'));
+    jest.spyOn(fs.promises, 'rename').mockRejectedValueOnce(new Error('fixture-secret-value'));
+
+    let thrown;
+    try {
+      await registry.register(publicInstance('prod'));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'REGISTRY_WRITE_FAILED',
+      details: { path: path.resolve(file) }
+    });
+    expect(thrown.message).not.toContain('fixture-secret-value');
+    expect(thrown.details).toEqual({ path: path.resolve(file) });
+  });
 
   test('serializes concurrent registrations without losing updates', async () => {
     const { file } = tempPaths();

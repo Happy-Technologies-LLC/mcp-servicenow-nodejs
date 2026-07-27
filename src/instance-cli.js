@@ -5,7 +5,9 @@ import { InstanceRegistry } from './instance-registry.js';
 import { credentialRefFor, CredentialNotFoundError, InstanceCredentialStore } from './instance-credential-store.js';
 import { ServiceNowClient } from './servicenow-client.js';
 
-const SECRET_FLAG = /^--(?:password|client[-_]secret)(?:=|$)/i;
+export const SECRET_ARGUMENT_ERROR = 'Secret flags and values are not accepted in command arguments; use a masked prompt.';
+const SECRET_NAMES = new Set(['password', 'clientsecret']);
+const SAFE_CREDENTIAL_TYPES = new Set(['password', 'client-secret']);
 const USAGE = `Usage:
   happy-platform-mcp instance add
   happy-platform-mcp instance list
@@ -88,8 +90,61 @@ function messageForError(error) {
   return 'Operation failed';
 }
 
+function safeRegistryError(error) {
+  const code = typeof error?.code === 'string' && /^REGISTRY_[A-Z0-9_]+$/.test(error.code)
+    ? error.code
+    : 'REGISTRY_OPERATION_FAILED';
+  const details = error?.details && typeof error.details === 'object' ? error.details : {};
+  const fields = [];
+  if (typeof details.path === 'string' && details.path) fields.push(`path=${path.resolve(details.path)}`);
+  if (code !== 'REGISTRY_WRITE_FAILED' && typeof details.field === 'string' && /^[A-Za-z][A-Za-z0-9_-]*$/.test(details.field)) {
+    fields.push(`field=${details.field}`);
+  }
+  return `${code}${fields.length ? ` (${fields.join(', ')})` : ''}`;
+}
+
+function cliErrorMessage(error) {
+  if (typeof error?.code === 'string' && error.code.startsWith('REGISTRY_')) return safeRegistryError(error);
+  return messageForError(error);
+}
+
 function errorStatus(error) {
   return error?.response?.status ?? error?.status ?? error?.statusCode;
+}
+function normalizedArgumentName(value) {
+  return String(value).replace(/^--?/, '').replace(/[-_]/g, '').toLowerCase();
+}
+
+function assignmentName(token) {
+  const value = String(token);
+  const equals = value.indexOf('=');
+  return equals > 0 ? normalizedArgumentName(value.slice(0, equals)) : null;
+}
+
+function isSecretFlag(token) {
+  const value = String(token);
+  if (!value.startsWith('-')) return false;
+  const equals = value.indexOf('=');
+  const name = normalizedArgumentName(equals >= 0 ? value.slice(0, equals) : value);
+  return SECRET_NAMES.has(name);
+}
+
+function typeValue(tokens, index) {
+  const token = String(tokens[index]);
+  const equals = token.indexOf('=');
+  if (equals >= 0 && normalizedArgumentName(token.slice(0, equals)) === 'type') return token.slice(equals + 1);
+  if (equals < 0 && normalizedArgumentName(token) === 'type') return tokens[index + 1];
+  return undefined;
+}
+
+export function containsSecretArgument(argv) {
+  const tokens = Array.isArray(argv) ? argv.map(String) : [];
+  return tokens.some((token, index) => {
+    if (isSecretFlag(token)) return true;
+    if (SECRET_NAMES.has(assignmentName(token))) return true;
+    const requestedType = typeValue(tokens, index);
+    return requestedType !== undefined && !SAFE_CREDENTIAL_TYPES.has(String(requestedType));
+  });
 }
 
 function parseFlags(tokens, allowed) {
@@ -104,8 +159,8 @@ function parseFlags(tokens, allowed) {
     const equals = token.indexOf('=');
     const rawName = equals >= 0 ? token.slice(2, equals) : token.slice(2);
     const name = rawName.toLowerCase();
-    if (SECRET_FLAG.test(token)) throw usageError('Secret flags are not accepted; enter secrets at the masked prompt.');
-    if (!allowed.has(name)) throw usageError(`Unknown option --${rawName}.`);
+    if (isSecretFlag(token) || SECRET_NAMES.has(assignmentName(token))) throw usageError(SECRET_ARGUMENT_ERROR);
+    if (!allowed.has(name)) throw usageError('Unknown option.');
     if (allowed.get(name) === true) {
       flags[name] = true;
       continue;
@@ -119,7 +174,7 @@ function parseFlags(tokens, allowed) {
       continue;
     }
     if (index + 1 >= tokens.length || tokens[index + 1].startsWith('--')) {
-      throw usageError(`Option --${rawName} requires a value.`);
+      throw usageError('Option requires a value.');
     }
     flags[name] = tokens[++index];
   }
@@ -133,7 +188,7 @@ function usageError(message) {
 }
 
 function rejectSecretArguments(argv) {
-  return argv.some(token => SECRET_FLAG.test(String(token)) || /^(?:password|clientSecret)=/i.test(String(token)));
+  return containsSecretArgument(argv);
 }
 
 async function ask(prompts, kind, options) {
@@ -420,7 +475,7 @@ async function credentialSetCommand(name, args, context) {
     ]
   });
   const type = expectedCredentialType(instance, requested);
-  if (!type) throw usageError(`Credential type '${requested}' is not compatible with instance '${name}'.`);
+  if (!type) throw usageError('Invalid credential type. Use --help for usage.');
   const ref = credentialRefFor(name, type);
   const patch = credentialRefPatch(instance, type, ref);
   const candidate = { ...instance, ...patch };
@@ -463,7 +518,7 @@ async function removeCommand(name, context) {
   } catch (error) {
     const rollbackFailures = await restoreSnapshots(context.credentialStore, deleted.length ? deleted : snapshots, context.stderr, 'Credential rollback');
     if (!rollbackFailures.length) {
-      output(context.stderr, `Removal rollback completed; instance metadata remains registered. Original cause: ${messageForError(error)}`);
+      output(context.stderr, `Removal rollback completed; instance metadata remains registered. Original cause: ${cliErrorMessage(error)}`);
     }
     throw error;
   }
@@ -728,7 +783,7 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
   };
   const rawArgs = Array.isArray(argv) ? argv.map(String) : [];
   if (rejectSecretArguments(rawArgs)) {
-    output(stderr, 'Secret flags and values are not accepted in command arguments; use a masked prompt.');
+    output(stderr, SECRET_ARGUMENT_ERROR);
     return 2;
   }
   const args = rawArgs[0] === 'instance' ? rawArgs.slice(1) : rawArgs;
@@ -758,7 +813,7 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
         if (args.length !== 1) throw usageError('instance migrate does not accept options.');
         return await migrateCommand(context);
       default:
-        throw usageError(`Unknown instance command '${args[0]}'.`);
+        throw usageError('Unknown instance command. Use --help for usage.');
     }
   } catch (error) {
     if (error?.code === 'NON_INTERACTIVE_PROMPT') {
@@ -773,7 +828,7 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
       output(stderr, `${error.message}\n${USAGE}`);
       return 2;
     }
-    output(stderr, messageForError(error));
+    output(stderr, cliErrorMessage(error));
     return 1;
   }
 }

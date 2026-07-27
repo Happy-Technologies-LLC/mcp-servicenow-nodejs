@@ -101,14 +101,15 @@ describe('runInstanceCli', () => {
   test('add stores credential before metadata and rolls back a newly-created secret on registry failure', async () => {
     const { out, err } = streams();
     const registry = registryWith([]);
-    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED', details: { path: '/tmp/registry.json' } }));
     const store = credentialStore();
     const prompt = prompts({ name: 'dev', url: 'https://dev.service-now.com', authType: 'basic', username: 'developer' });
     const code = await runInstanceCli(['instance', 'add'], { registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err });
     expect(code).toBe(1);
     expect(store.setSecret.mock.invocationCallOrder[0]).toBeLessThan(registry.register.mock.invocationCallOrder[0]);
     expect(store.deleteSecret).toHaveBeenCalledWith('keychain:instance/dev/password');
-    expect(err.chunks.join('')).toContain('registry unavailable');
+    expect(err.chunks.join('')).toContain('REGISTRY_WRITE_FAILED');
+    expect(err.chunks.join('')).toContain('path=/tmp/registry.json');
   });
 
   test('preflights duplicate and validation before writing deterministic secrets', async () => {
@@ -130,7 +131,7 @@ describe('runInstanceCli', () => {
   test('restores an overwritten deterministic secret when registration fails', async () => {
     const { out, err } = streams();
     const registry = registryWith([]);
-    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED', details: { path: '/tmp/registry.json' } }));
     const store = credentialStore();
     store.values.set('keychain:instance/dev/password', 'previous-secret');
     const prompt = prompts({ name: 'dev', url: 'https://dev.service-now.com', authType: 'basic', username: 'developer' });
@@ -139,20 +140,22 @@ describe('runInstanceCli', () => {
     })).toBe(1);
     expect(store.values.get('keychain:instance/dev/password')).toBe('previous-secret');
     expect(store.setSecret).toHaveBeenLastCalledWith('keychain:instance/dev/password', 'previous-secret');
-    expect(err.chunks.join('')).toContain('registry unavailable');
+    expect(err.chunks.join('')).toContain('REGISTRY_WRITE_FAILED');
+    expect(err.chunks.join('')).toContain('path=/tmp/registry.json');
   });
 
   test('reports credential rollback failure without replacing the registration cause', async () => {
     const { out, err } = streams();
     const registry = registryWith([]);
-    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+    registry.register.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED', details: { path: '/tmp/registry.json' } }));
     const store = credentialStore();
     store.deleteSecret.mockRejectedValueOnce(new Error('keychain unavailable'));
     const prompt = prompts({ name: 'new-instance', url: 'https://new.service-now.com', authType: 'basic', username: 'developer' });
     expect(await runInstanceCli(['instance', 'add'], {
       registry, credentialStore: store, prompts: prompt, stdout: out, stderr: err
     })).toBe(1);
-    expect(err.chunks.join('')).toContain('registry unavailable');
+    expect(err.chunks.join('')).toContain('REGISTRY_WRITE_FAILED');
+    expect(err.chunks.join('')).toContain('path=/tmp/registry.json');
     expect(err.chunks.join('')).toContain('rollback failed');
     expect(err.chunks.join('')).not.toContain('fixture-secret-value');
   });
@@ -182,6 +185,66 @@ describe('runInstanceCli', () => {
     expect(out.chunks.join('')).not.toContain('fixture-secret-value');
     expect(err.chunks.join('')).not.toContain('fixture-secret-value');
   });
+ 
+test.each([
+  ['--password=fixture-secret-value'],
+  ['password=fixture-secret-value'],
+  ['--clientSecret=fixture-secret-value'],
+  ['client-secret=fixture-secret-value'],
+  ['client_secret=fixture-secret-value'],
+  ['--CLIENT_SECRET=fixture-secret-value'],
+  ['--type=fixture-secret-value'],
+  ['--type', 'fixture-secret-value']
+])('rejects secret assignment %j before parsing', async (...tokens) => {
+  const { out, err } = streams();
+  const prompt = prompts();
+  const registry = registryWith([basic]);
+  expect(await runInstanceCli(['instance', 'credential', 'set', 'dev', ...tokens], {
+    registry, prompts: prompt, stdout: out, stderr: err
+  })).toBe(2);
+  expect(err.chunks.join('')).toBe('Secret flags and values are not accepted in command arguments; use a masked prompt.\n');
+  expect(err.chunks.join('')).not.toContain('fixture-secret-value');
+  expect(out.chunks.join('')).not.toContain('fixture-secret-value');
+  expect(registry.get).not.toHaveBeenCalled();
+});
+
+test('unknown credential type uses constant safe usage text', async () => {
+  const { out, err } = streams();
+  expect(await runInstanceCli(['instance', 'credential', 'set', 'dev', '--type', 'fixture-secret-value'], {
+    registry: registryWith([basic]), prompts: prompts(), stdout: out, stderr: err
+  })).toBe(2);
+  expect(err.chunks.join('')).not.toContain('fixture-secret-value');
+  expect(err.chunks.join('')).toBe('Secret flags and values are not accepted in command arguments; use a masked prompt.\n');
+});
+
+test('registry write failures include only stable code and resolved path', async () => {
+  const { out, err } = streams();
+  const registry = registryWith([]);
+  registry.register.mockRejectedValueOnce(Object.assign(new Error('fixture-secret-value'), {
+    code: 'REGISTRY_WRITE_FAILED',
+    details: { path: './fixture-registry.json', secret: 'fixture-secret-value', arbitrary: 'do-not-echo' }
+  }));
+  const code = await runInstanceCli(['instance', 'add'], {
+    registry,
+    credentialStore: credentialStore(),
+    prompts: prompts({ name: 'dev', url: 'https://dev.service-now.com', authType: 'basic', username: 'developer' }),
+    stdout: out,
+    stderr: err
+  });
+  const text = err.chunks.join('');
+  expect(code).toBe(1);
+  expect(text).toContain('REGISTRY_WRITE_FAILED');
+  expect(text).toContain('fixture-registry.json');
+  expect(text).not.toContain('fixture-secret-value');
+  expect(text).not.toContain('arbitrary');
+});
+
+test('unknown instance commands use constant safe usage text', async () => {
+  const { out, err } = streams();
+  expect(await runInstanceCli(['instance', 'fixture-secret-value'], { stdout: out, stderr: err })).toBe(2);
+  expect(err.chunks.join('')).not.toContain('fixture-secret-value');
+  expect(err.chunks.join('')).toContain('Usage:');
+});
 
   test('remove confirms before metadata and referenced secret deletion', async () => {
     const { out, err } = streams();
@@ -244,7 +307,7 @@ test('remove restores deleted secrets and leaves metadata when a later deletion 
 test('remove restores all secrets when metadata removal fails', async () => {
   const { out, err } = streams();
   const registry = registryWith([basic]);
-  registry.remove.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED' }));
+  registry.remove.mockRejectedValueOnce(Object.assign(new Error('registry unavailable'), { code: 'REGISTRY_WRITE_FAILED', details: { path: '/tmp/registry.json' } }));
   const store = credentialStore();
   store.values.set(basic.credentialRef, 'old-password');
   const code = await runInstanceCli(['instance', 'remove', 'dev'], {
@@ -252,7 +315,8 @@ test('remove restores all secrets when metadata removal fails', async () => {
   });
   expect(code).toBe(1);
   expect(store.values.get(basic.credentialRef)).toBe('old-password');
-  expect(err.chunks.join('')).toContain('registry unavailable');
+  expect(err.chunks.join('')).toContain('REGISTRY_WRITE_FAILED');
+  expect(err.chunks.join('')).toContain('path=/tmp/registry.json');
 });
 
   test('updates only allowed metadata flags without prompting for secrets', async () => {

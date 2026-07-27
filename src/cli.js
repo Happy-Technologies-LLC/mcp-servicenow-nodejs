@@ -2,21 +2,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runInstanceCli, usage } from './instance-cli.js';
-
-const SECRET_ARG = /^(?:--?)(?:password|client[-_]secret)(?:=|$)/i;
-const SECRET_ASSIGNMENT = /^(?:password|clientSecret)=/i;
+import { runInstanceCli, usage, containsSecretArgument, SECRET_ARGUMENT_ERROR } from './instance-cli.js';
 
 function write(stream, value) {
   if (stream && typeof stream.write === 'function') stream.write(`${value}\n`);
 }
 
-function containsSecretArgument(args) {
-  return args.some((arg, index) => {
-    if (SECRET_ARG.test(arg) || SECRET_ASSIGNMENT.test(arg)) return true;
-    return index > 0 && SECRET_ARG.test(args[index - 1]);
-  });
-}
 
 function realPathOrResolved(value) {
   if (!value) return null;
@@ -37,7 +28,7 @@ export async function dispatch(argv = process.argv.slice(2), dependencies = {}) 
   const args = Array.isArray(argv) ? argv.map(String) : [];
   const stderr = dependencies.stderr || process.stderr;
   if (containsSecretArgument(args)) {
-    write(stderr, 'Secret flags and values are not accepted in command arguments; use a masked prompt.');
+    write(stderr, SECRET_ARGUMENT_ERROR);
     return 2;
   }
   if (args.length === 0) {

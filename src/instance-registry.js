@@ -650,7 +650,7 @@ export class InstanceRegistry {
         try { await this.fs.promises.unlink(tempPath); } catch { /* cleanup best effort */ }
       }
       if (error instanceof InstanceRegistryError) throw error;
-      throw new InstanceRegistryError('REGISTRY_WRITE_FAILED', `Failed to write instance registry: ${error.message}`, { path: this.writePath });
+      throw new InstanceRegistryError('REGISTRY_WRITE_FAILED', 'Failed to write instance registry', { path: path.resolve(this.writePath) });
     }
   }
 }
