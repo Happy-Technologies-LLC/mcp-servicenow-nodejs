@@ -142,34 +142,27 @@ function redactCredentialStrings(value, values) {
     .reduce((result, secret) => result.split(secret).join('[redacted]'), value);
 }
 
-function sanitizeCopy(value, values, seen = new Map()) {
+function isRedactedField(key) {
+  return isCredentialField(key) || /^headers?$/i.test(key);
+}
+
+function sanitizeCopy(value, values, seen = new Set()) {
   if (typeof value === 'string') return redactCredentialStrings(value, values);
   if (!value || typeof value !== 'object') return value;
-  if (seen.has(value)) return seen.get(value);
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
   const copy = Array.isArray(value) ? [] : {};
-  seen.set(value, copy);
-  for (const [key, childValue] of Object.entries(value)) {
-    if (isCredentialField(key)) continue;
+  for (const key of Object.keys(value)) {
+    if (isRedactedField(key)) continue;
+    let childValue;
+    try {
+      childValue = value[key];
+    } catch {
+      continue;
+    }
     copy[key] = sanitizeCopy(childValue, values, seen);
   }
   return copy;
-}
-
-function sanitizeInPlace(value, values, seen = new Set()) {
-  if (!value || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const key of Object.keys(value)) {
-    if (isCredentialField(key)) {
-      delete value[key];
-      continue;
-    }
-    if (typeof value[key] === 'string') {
-      value[key] = redactCredentialStrings(value[key], values);
-    } else {
-      sanitizeInPlace(value[key], values, seen);
-    }
-  }
-  return value;
 }
 
 function isExplicitInvalidGrant(error) {
@@ -200,24 +193,54 @@ function safeAuthError(error, client) {
   return safe;
 }
 
-function sanitizeServiceNowError(error, credentialSource) {
+function sanitizeServiceNowError(error, credentialSource, messageOverride) {
   const values = collectCredentialValues(credentialSource);
   collectAuthorizationValues(error?.config, values);
   collectAuthorizationValues(error?.response?.config, values);
   collectAuthorizationValues(error?.request, values);
-  const originalToJSON = typeof error?.toJSON === 'function' ? error.toJSON : null;
 
-  sanitizeInPlace(error, values);
-  if (typeof error?.message === 'string') {
-    error.message = redactCredentialStrings(error.message, values);
+  let originalSerialized;
+  if (typeof error?.toJSON === 'function') {
+    try {
+      originalSerialized = sanitizeCopy(error.toJSON(), values);
+    } catch {
+      originalSerialized = undefined;
+    }
   }
+
+  const originalMessage = typeof error?.message === 'string' && error.message
+    ? error.message
+    : 'ServiceNow API request failed';
+  const safe = new Error(redactCredentialStrings(messageOverride || originalMessage, values));
+  if (typeof error?.name === 'string') safe.name = redactCredentialStrings(error.name, values);
+  if (typeof error?.code === 'string') safe.code = error.code;
+  if (error?.response?.status !== undefined) safe.status = error.response.status;
+
+  if (error?.config !== undefined) safe.config = sanitizeCopy(error.config, values);
+  if (error?.request !== undefined) safe.request = sanitizeCopy(error.request, values);
+  if (error?.response !== undefined) safe.response = sanitizeCopy(error.response, values);
+  if (error?.payload !== undefined) safe.payload = sanitizeCopy(error.payload, values);
   if (typeof error?.stack === 'string') {
-    error.stack = redactCredentialStrings(error.stack, values);
+    safe.stack = redactCredentialStrings(error.stack, values);
   }
-  if (originalToJSON) {
-    error.toJSON = () => sanitizeCopy(originalToJSON.call(error), values);
-  }
-  return error;
+
+  const toJSONSnapshot = () => {
+    const snapshot = originalSerialized && typeof originalSerialized === 'object'
+      ? { ...originalSerialized }
+      : {};
+    snapshot.name = safe.name;
+    snapshot.message = safe.message;
+    if (safe.code !== undefined) snapshot.code = safe.code;
+    if (safe.status !== undefined) snapshot.status = safe.status;
+    if (safe.stack !== undefined) snapshot.stack = safe.stack;
+    if (safe.config !== undefined) snapshot.config = safe.config;
+    if (safe.request !== undefined) snapshot.request = safe.request;
+    if (safe.response !== undefined) snapshot.response = safe.response;
+    if (safe.payload !== undefined) snapshot.payload = safe.payload;
+    return sanitizeCopy(snapshot, values);
+  };
+  safe.toJSON = toJSONSnapshot;
+  return safe;
 }
 
 function normalizeInstanceUrl(value) {
@@ -290,10 +313,7 @@ export function enrichServiceNowError(error, credentialSource = null) {
     message = [status, data.trim()].filter(Boolean).join(': ');
   }
 
-  if (message) {
-    error.message = message;
-  }
-  return credentialSource ? sanitizeServiceNowError(error, credentialSource) : error;
+  return sanitizeServiceNowError(error, credentialSource, message);
 }
 
 export class ServiceNowClient {

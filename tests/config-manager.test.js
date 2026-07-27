@@ -124,6 +124,16 @@ describe('ConfigManager.loadFromEnv()', () => {
       expect(instance.authType).toBeUndefined();
       expect(instance.grantType).toBeUndefined();
     });
+    it('delegates primary URL validation and canonicalization to the registry', () => {
+      process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com/foo///';
+      process.env.SERVICENOW_USERNAME = basicAuthFixture.user;
+      process.env.SERVICENOW_PASSWORD = basicAuthFixture.secret;
+      const cm = new ConfigManager();
+      expect(cm.loadFromEnv()[0].url).toBe('https://example.service-now.com/foo');
+
+      process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com/foo?tenant=secret';
+      expect(() => new ConfigManager().loadFromEnv()).toThrow(/query|fragment/i);
+    });
   });
 
   describe('OAuth password grant (ROPC)', () => {
@@ -256,6 +266,41 @@ describe('ConfigManager.loadFromEnv()', () => {
       expect(instance.redirectPort).toBe(8455);
       expect(instance.callbackPath).toBe('/callback');
     });
+    it.each(['12junk', '12.5', '1e2', '0x10', '+12', '-1', '   '])(
+      'rejects non-decimal redirect port value %j',
+      (value) => {
+        process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';
+        process.env.SERVICENOW_AUTH_TYPE = 'oauth';
+        process.env.SERVICENOW_OAUTH_GRANT_TYPE = 'authorization_code';
+        process.env.SERVICENOW_CLIENT_ID = 'cid';
+        process.env.SERVICENOW_OAUTH_REDIRECT_PORT = value;
+        const cm = new ConfigManager();
+        expect(() => cm.loadFromEnv()).toThrow(/redirect port/i);
+      }
+    );
+
+    it('trims a valid decimal redirect port before converting it', () => {
+      process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';
+      process.env.SERVICENOW_AUTH_TYPE = 'oauth';
+      process.env.SERVICENOW_OAUTH_GRANT_TYPE = 'authorization_code';
+      process.env.SERVICENOW_CLIENT_ID = 'cid';
+      process.env.SERVICENOW_OAUTH_REDIRECT_PORT = ' 8455 ';
+      const cm = new ConfigManager();
+      expect(cm.loadFromEnv()[0].redirectPort).toBe(8455);
+    });
+
+    it.each(['65536', '999999999999999999999999999999999999'])(
+      'rejects redirect port outside the valid range: %s',
+      (value) => {
+        process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';
+        process.env.SERVICENOW_AUTH_TYPE = 'oauth';
+        process.env.SERVICENOW_OAUTH_GRANT_TYPE = 'authorization_code';
+        process.env.SERVICENOW_CLIENT_ID = 'cid';
+        process.env.SERVICENOW_OAUTH_REDIRECT_PORT = value;
+        const cm = new ConfigManager();
+        expect(() => cm.loadFromEnv()).toThrow(/redirect port/i);
+      }
+    );
 
     it('throws a clear error when SERVICENOW_OAUTH_REDIRECT_PORT is not a number', () => {
       process.env.SERVICENOW_INSTANCE_URL = 'https://example.service-now.com';

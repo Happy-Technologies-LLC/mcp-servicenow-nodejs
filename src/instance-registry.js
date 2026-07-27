@@ -66,6 +66,12 @@ function invalid(message, details = {}) {
   throw new InstanceRegistryError('INVALID_INSTANCE_CONFIG', message, details);
 }
 
+export function canonicalizeInstanceUrl(url) {
+  const parsed = new URL(url);
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.origin}${pathname || ''}`;
+}
+
 function validateUrl(url, name) {
   if (typeof url !== 'string' || !url.trim()) {
     invalid(`Instance '${name || 'unknown'}' requires a URL`, { field: 'url' });
@@ -79,6 +85,9 @@ function validateUrl(url, name) {
   }
   if (parsed.username || parsed.password) {
     invalid(`Instance '${name || 'unknown'}' URL must not include username or password`, { field: 'url' });
+  }
+  if (url.includes('?') || url.includes('#')) {
+    invalid(`Instance '${name || 'unknown'}' URL must not include a query or fragment`, { field: 'url' });
   }
 
   if (parsed.protocol === 'https:') return;
@@ -347,6 +356,13 @@ export class InstanceRegistry {
         path: filePath
       });
     }
+    document = {
+      ...document,
+      instances: document.instances.map(instance => ({
+        ...instance,
+        url: canonicalizeInstanceUrl(instance.url)
+      }))
+    };
     if (document.version === undefined) document = { ...document, version: 1 };
     this._document = document;
     this._legacyPlaintext = hasSecretField(document);
@@ -441,6 +457,7 @@ export class InstanceRegistry {
       const shouldDefault = current.length === 0 || makeDefault || instance.default === true;
       const candidate = {
         ...clone(instance),
+        url: canonicalizeInstanceUrl(instance.url),
         authType: instance.authType === undefined ? 'basic' : instance.authType,
         default: shouldDefault
       };
@@ -455,9 +472,9 @@ export class InstanceRegistry {
       const current = this._document.instances.find(instance => instance.name === name);
       if (!current) throw new InstanceRegistryError('INSTANCE_NOT_FOUND', `Instance '${name}' not found`, { name });
       if (!patch || typeof patch !== 'object' || Array.isArray(patch)) invalid('Instance update must be an object');
-      if (patch.name !== undefined && patch.name !== name) invalid('Instance name cannot be changed', { field: 'name' });
       const merged = { ...current, ...clone(patch), name };
       validateNewInstance(merged);
+      merged.url = canonicalizeInstanceUrl(merged.url);
       const shouldDefault = merged.default === true;
       const instances = this._document.instances.map(instance => {
         if (instance.name === name) return { ...merged, default: shouldDefault };

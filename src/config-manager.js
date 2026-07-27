@@ -5,7 +5,7 @@
  * Licensed under the MIT License - see LICENSE file for details
  */
 
-import { InstanceRegistry, InstanceRegistryError } from './instance-registry.js';
+import { InstanceRegistry, InstanceRegistryError, canonicalizeInstanceUrl } from './instance-registry.js';
 
 const MISSING_INSTANCE_URL_ERROR = 'Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL (and SERVICENOW_USERNAME / SERVICENOW_PASSWORD unless SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code) in .env';
 const MISSING_INSTANCE_CREDENTIALS_ERROR = 'Missing ServiceNow credentials. Create config/servicenow-instances.json or set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, SERVICENOW_PASSWORD in .env (USERNAME and PASSWORD not required when SERVICENOW_AUTH_TYPE=oauth and SERVICENOW_OAUTH_GRANT_TYPE=client_credentials or authorization_code)';
@@ -116,10 +116,15 @@ export class ConfigManager {
       if (grantType === 'authorization_code') {
         instance.authorizeUrl = process.env.SERVICENOW_OAUTH_AUTHORIZE_URL;
         instance.tokenUrl = process.env.SERVICENOW_OAUTH_TOKEN_URL;
-        if (process.env.SERVICENOW_OAUTH_REDIRECT_PORT) {
-          const port = parseInt(process.env.SERVICENOW_OAUTH_REDIRECT_PORT, 10);
-          if (Number.isNaN(port) || port < 0 || port > 65535) {
-            throw new Error(`Invalid SERVICENOW_OAUTH_REDIRECT_PORT: "${process.env.SERVICENOW_OAUTH_REDIRECT_PORT}" is not a valid redirect port (0-65535).`);
+        const rawRedirectPort = process.env.SERVICENOW_OAUTH_REDIRECT_PORT;
+        if (rawRedirectPort !== undefined) {
+          const trimmedRedirectPort = rawRedirectPort.trim();
+          if (!/^\d+$/.test(trimmedRedirectPort)) {
+            throw new Error('Invalid SERVICENOW_OAUTH_REDIRECT_PORT: expected a decimal redirect port integer from 0 to 65535.');
+          }
+          const port = Number(trimmedRedirectPort);
+          if (!Number.isInteger(port) || port < 0 || port > 65535) {
+            throw new Error('Invalid SERVICENOW_OAUTH_REDIRECT_PORT: expected a decimal redirect port integer from 0 to 65535.');
           }
           instance.redirectPort = port;
         }
@@ -140,6 +145,7 @@ export class ConfigManager {
         throw error;
       }
     }
+    instance.url = canonicalizeInstanceUrl(instance.url);
     this.instances = [instance];
     return this.instances;
   }

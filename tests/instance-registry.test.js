@@ -296,6 +296,35 @@ describe('InstanceRegistry validation and defaults', () => {
         .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
     }
   });
+  test('rejects search and fragment components on the primary instance URL', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    for (const url of [
+      'https://query.service-now.com/instance?tenant=secret',
+      'https://fragment.service-now.com/instance#section'
+    ]) {
+      await expect(registry.register(publicInstance(`reject-${url.includes('?') ? 'query' : 'hash'}`, { url })))
+        .rejects.toMatchObject({ code: 'INVALID_INSTANCE_CONFIG' });
+    }
+  });
+
+  test('canonicalizes primary URL trailing slashes without dropping path prefixes', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    await registry.register(publicInstance('path-prefix', {
+      url: 'https://path-prefix.service-now.com/foo/bar///'
+    }));
+    expect(registry.get('path-prefix').url).toBe('https://path-prefix.service-now.com/foo/bar');
+  });
+
+  test('allows authorize and token URL queries while rejecting primary URL queries', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    await expect(registry.register(publicInstance('oauth-query', {
+      authorizeUrl: 'https://oauth.service-now.com/authorize?client=cid',
+      tokenUrl: 'https://oauth.service-now.com/token?audience=sn'
+    }))).resolves.toEqual(expect.objectContaining({ name: 'oauth-query' }));
+  });
 
   test('validates legacy plaintext password and clientSecret values when present', () => {
     const { file } = tempPaths();

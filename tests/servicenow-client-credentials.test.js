@@ -187,8 +187,7 @@ describe('ServiceNowClient registered credentials', () => {
       error = caught;
     }
 
-    expect(error.config.headers.Authorization).toBeUndefined();
-    expect(error.config.headers.authorization).toBeUndefined();
+    expect(error.config.headers).toBeUndefined();
   });
 
   test('redacts credential references and secret material from keychain errors', async () => {
