@@ -50,6 +50,7 @@ function safeCredentialError(error) {
 function staleInstanceError() {
   const error = new Error('Instance changed during credential resolution');
   error.code = 'INSTANCE_CHANGED';
+  error.name = 'StaleInstanceError';
   return error;
 }
 
@@ -277,11 +278,21 @@ export class ServiceNowClient {
     if (this._resolvedCredentialSecrets.has(key)) {
       return this._resolvedCredentialSecrets.get(key);
     }
-    if (!this._credentialResolutionPromises.has(key)) {
-      const promise = this._loadCredential(ref, key, generation);
-      this._credentialResolutionPromises.set(key, promise);
+    const promises = this._credentialResolutionPromises;
+    if (!promises.has(key)) {
+      let promise;
+      promise = this._loadCredential(ref, key, generation).finally(() => {
+        if (
+          this._instanceGeneration === generation
+          && this._credentialResolutionPromises === promises
+          && promises.get(key) === promise
+        ) {
+          promises.delete(key);
+        }
+      });
+      promises.set(key, promise);
     }
-    return this._credentialResolutionPromises.get(key);
+    return promises.get(key);
   }
 
   async _loadCredential(ref, key, generation) {
@@ -322,7 +333,10 @@ export class ServiceNowClient {
     const promise = this._requestOAuthToken(generation);
     this._oauthTokenPromise = promise;
     try {
-      return await promise;
+      this._assertCurrentGeneration(generation);
+      const token = await promise;
+      this._assertCurrentGeneration(generation);
+      return token;
     } finally {
       if (this._oauthTokenPromise === promise) {
         this._oauthTokenPromise = null;
@@ -333,11 +347,11 @@ export class ServiceNowClient {
   async _requestOAuthToken(generation) {
     // Per-user authorization_code clients are public and never resolve a static secret.
     if (this.oauthConfig?.grantType === 'authorization_code') {
-      return this._getAuthorizationCodeToken();
+      return this._getAuthorizationCodeToken(generation);
     }
-
     this._assertCurrentGeneration(generation);
     const clientSecret = await this._resolveCredential('clientSecret', generation);
+    this._assertCurrentGeneration(generation);
     const tokenUrl = `${this.instanceUrl}/oauth_token.do`;
 
     // Try refresh token first if we have one
@@ -405,19 +419,25 @@ export class ServiceNowClient {
    * Refresh tokens are persisted per local OS user and instance in the injected token store.
    * @returns {Promise<string>} Access token
    */
-  async _getAuthorizationCodeToken() {
+  async _getAuthorizationCodeToken(generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
     // Return cached token if still valid (with 30s buffer)
     if (this.oauthToken && this.oauthTokenExpiry && Date.now() < this.oauthTokenExpiry - 30000) {
       return this.oauthToken;
     }
 
+    const tokenStore = this._tokenStore;
+    const oauthConfig = { ...this.oauthConfig };
     const account = `${userInfo().username}@${this.currentInstanceName}`;
-    const tokenUrl = this.oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
-    const authorizeUrl = this.oauthConfig.authorizeUrl || `${this.instanceUrl}/oauth_auth.do`;
+    const tokenUrl = oauthConfig.tokenUrl || `${this.instanceUrl}/oauth_token.do`;
+    const authorizeUrl = oauthConfig.authorizeUrl || `${this.instanceUrl}/oauth_auth.do`;
 
     // Load a persisted refresh token if we don't have one in memory yet.
     if (!this.oauthRefreshToken) {
-      this.oauthRefreshToken = await this._tokenStore.getRefreshToken(account);
+      this._assertCurrentGeneration(generation);
+      const storedRefreshToken = await tokenStore.getRefreshToken(account);
+      this._assertCurrentGeneration(generation);
+      this.oauthRefreshToken = storedRefreshToken;
     }
 
     // Try the refresh token first — avoids a browser round-trip.
@@ -425,15 +445,20 @@ export class ServiceNowClient {
       try {
         const params = {
           grant_type: 'refresh_token',
-          client_id: this.oauthConfig.clientId,
+          client_id: oauthConfig.clientId,
           refresh_token: this.oauthRefreshToken
         };
-        if (this.oauthConfig.clientSecret) {
-          params.client_secret = this.oauthConfig.clientSecret;
+        if (oauthConfig.clientSecret) {
+          params.client_secret = oauthConfig.clientSecret;
         }
+        this._assertCurrentGeneration(generation);
         const data = await this._postToken(tokenUrl, params);
-        return this._acceptAuthCodeTokens(data, account);
+        this._assertCurrentGeneration(generation);
+        return this._acceptAuthCodeTokens(data, account, generation, tokenStore);
       } catch (refreshError) {
+        if (refreshError?.code === 'INSTANCE_CHANGED') {
+          throw refreshError;
+        }
         // Only a genuine token REJECTION (400/401 invalid_grant) means the
         // refresh token is dead → discard it and re-prompt interactive sign-in.
         // A transient failure (network, 5xx) must NOT nuke a valid token or
@@ -444,27 +469,35 @@ export class ServiceNowClient {
         }
         // FAIL LOUD, but never fall back to password: re-prompt sign-in.
         console.error('OAuth refresh token rejected; re-authenticating via browser sign-in');
+        this._assertCurrentGeneration(generation);
         this.oauthRefreshToken = null;
-        await this._tokenStore.clearRefreshToken(account);
+        this._assertCurrentGeneration(generation);
+        await tokenStore.clearRefreshToken(account);
+        this._assertCurrentGeneration(generation);
       }
     }
 
     // Interactive authorization_code + PKCE + loopback sign-in.
     let data;
     try {
+      this._assertCurrentGeneration(generation);
       data = await this._performAuthCodeFlow({
         authorizeUrl,
         tokenUrl,
-        clientId: this.oauthConfig.clientId,
-        clientSecret: this.oauthConfig.clientSecret,
-        scope: this.oauthConfig.scope,
-        redirectPort: this.oauthConfig.redirectPort,
-        callbackPath: this.oauthConfig.callbackPath
+        clientId: oauthConfig.clientId,
+        clientSecret: oauthConfig.clientSecret,
+        scope: oauthConfig.scope,
+        redirectPort: oauthConfig.redirectPort,
+        callbackPath: oauthConfig.callbackPath
       });
+      this._assertCurrentGeneration(generation);
     } catch (error) {
+      if (error?.code === 'INSTANCE_CHANGED') {
+        throw error;
+      }
       throw safeAuthError(error, this);
     }
-    return this._acceptAuthCodeTokens(data, account);
+    return this._acceptAuthCodeTokens(data, account, generation, tokenStore);
   }
 
   /**
@@ -473,8 +506,9 @@ export class ServiceNowClient {
    * @param {string} account - Token-store account key
    * @returns {Promise<string>} Access token
    */
-  async _acceptAuthCodeTokens(data, account) {
-    this._handleTokenResponse(data);
+  async _acceptAuthCodeTokens(data, account, generation, tokenStore) {
+    this._assertCurrentGeneration(generation);
+    this._handleTokenResponse(data, generation);
     // Persist only when the response carried a refresh token that DIFFERS from
     // what is already stored. If the server rotated without returning one, or
     // simply echoed the existing token (ServiceNow's usual behaviour), there is
@@ -484,11 +518,16 @@ export class ServiceNowClient {
     // on every refresh churns the credential's access control. Only write on a
     // genuine change.
     if (data.refresh_token) {
-      const stored = await this._tokenStore.getRefreshToken(account);
+      this._assertCurrentGeneration(generation);
+      const stored = await tokenStore.getRefreshToken(account);
+      this._assertCurrentGeneration(generation);
       if (data.refresh_token !== stored) {
-        await this._tokenStore.setRefreshToken(account, data.refresh_token);
+        this._assertCurrentGeneration(generation);
+        await tokenStore.setRefreshToken(account, data.refresh_token);
+        this._assertCurrentGeneration(generation);
       }
     }
+    this._assertCurrentGeneration(generation);
     return this.oauthToken;
   }
 
@@ -497,10 +536,13 @@ export class ServiceNowClient {
    * @param {object} data - Token endpoint response
    * @returns {string} Access token
    */
-  _handleTokenResponse(data) {
+  _handleTokenResponse(data, generation = this._instanceGeneration) {
+    this._assertCurrentGeneration(generation);
     this.oauthToken = data.access_token;
+    this._assertCurrentGeneration(generation);
     this.oauthRefreshToken = data.refresh_token || this.oauthRefreshToken;
     // expires_in is in seconds
+    this._assertCurrentGeneration(generation);
     this.oauthTokenExpiry = Date.now() + (data.expires_in || 1800) * 1000;
     return this.oauthToken;
   }

@@ -197,6 +197,104 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-rotated');
   });
 });
+  it('rejects a stale authorization flow without populating the switched instance', async () => {
+    let releaseFlow;
+    const flowPending = new Promise(resolve => { releaseFlow = resolve; });
+    const oldStore = new InMemoryTokenStore();
+    const client = makeClient({
+      store: oldStore,
+      flow: () => flowPending
+    });
+    const oldToken = client._getOAuthToken();
+    const newStore = new InMemoryTokenStore();
+
+    client.setInstance('https://new.service-now.com', null, null, 'new', {
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'new-cid',
+      tokenStore: newStore,
+      performAuthCodeFlow: async () => ({ access_token: 'new-token' })
+    });
+    releaseFlow({ access_token: 'old-token', refresh_token: 'old-refresh', expires_in: 1800 });
+
+    await expect(oldToken).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
+    expect(await oldStore.getRefreshToken(`${userInfo().username}@new`)).toBeNull();
+    expect(await newStore.getRefreshToken(`${userInfo().username}@new`)).toBeNull();
+  });
+
+  it('rejects when a stale refresh-token read resolves after instance switch', async () => {
+    let releaseRead;
+    const readPending = new Promise(resolve => { releaseRead = resolve; });
+    const oldStore = {
+      getRefreshToken: jest.fn(() => readPending),
+      setRefreshToken: jest.fn(),
+      clearRefreshToken: jest.fn()
+    };
+    const client = makeClient({
+      store: oldStore,
+      flow: async () => ({ access_token: 'old-token' })
+    });
+    const oldToken = client._getOAuthToken();
+    const newStore = new InMemoryTokenStore();
+
+    client.setInstance('https://new.service-now.com', null, null, 'new', {
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'new-cid',
+      tokenStore: newStore,
+      performAuthCodeFlow: async () => ({ access_token: 'new-token' })
+    });
+    releaseRead('old-refresh');
+
+    await expect(oldToken).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(oldStore.setRefreshToken).not.toHaveBeenCalled();
+    expect(await newStore.getRefreshToken(`${userInfo().username}@new`)).toBeNull();
+  });
+
+  it('rejects when a stale refresh-token write settles after instance switch', async () => {
+    let releaseWrite;
+    let writeStarted;
+    const writeStartedPromise = new Promise(resolve => { writeStarted = resolve; });
+    const writePending = new Promise(resolve => { releaseWrite = resolve; });
+    const oldStore = {
+      getRefreshToken: jest.fn(async () => null),
+      setRefreshToken: jest.fn(async () => {
+        writeStarted();
+        await writePending;
+      }),
+      clearRefreshToken: jest.fn()
+    };
+    const client = makeClient({
+      store: oldStore,
+      flow: async () => ({ access_token: 'old-token', refresh_token: 'old-refresh', expires_in: 1800 })
+    });
+    const oldToken = client._getOAuthToken();
+    await writeStartedPromise;
+    const newStore = {
+      getRefreshToken: jest.fn(async () => null),
+      setRefreshToken: jest.fn(),
+      clearRefreshToken: jest.fn()
+    };
+
+    client.setInstance('https://new.service-now.com', null, null, 'new', {
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'new-cid',
+      tokenStore: newStore,
+      performAuthCodeFlow: async () => ({ access_token: 'new-token' })
+    });
+    releaseWrite();
+
+    await expect(oldToken).rejects.toMatchObject({ code: 'INSTANCE_CHANGED' });
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(newStore.setRefreshToken).not.toHaveBeenCalled();
+  });
 
 
 describe('ServiceNowClient OAuth registered credentials', () => {

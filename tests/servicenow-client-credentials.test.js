@@ -81,6 +81,63 @@ describe('ServiceNowClient registered credentials', () => {
     );
     expect(store.getSecret).toHaveBeenCalledTimes(2);
   });
+  test('retries a failed credential lookup after transient keychain recovery', async () => {
+    let rejectLookup;
+    const firstLookup = new Promise((resolve, reject) => {
+      rejectLookup = reject;
+    });
+    const store = makeStore({
+      getSecret: jest.fn()
+        .mockReturnValueOnce(firstLookup)
+        .mockResolvedValueOnce('recovered-secret')
+    });
+    const client = new ServiceNowClient('https://dev.service-now.com', 'dev-user', null, {
+      credentialRef: BASIC_REF,
+      credentialStore: store
+    });
+
+    const first = client.getAuthHeader();
+    const second = client.getAuthHeader();
+    rejectLookup(new Error('keychain temporarily locked'));
+
+    await expect(Promise.all([first, second])).rejects.toMatchObject({ code: 'KEYCHAIN_OPERATION_FAILED' });
+    expect(store.getSecret).toHaveBeenCalledTimes(1);
+
+    await expect(client.getAuthHeader()).resolves.toBe(
+      `Basic ${Buffer.from('dev-user:recovered-secret').toString('base64')}`
+    );
+    expect(store.getSecret).toHaveBeenCalledTimes(2);
+  });
+
+  test('stale lookup cleanup cannot delete a newer generation lookup', async () => {
+    let rejectOldLookup;
+    const oldLookup = new Promise((resolve, reject) => {
+      rejectOldLookup = reject;
+    });
+    const store = makeStore({
+      getSecret: jest.fn(ref => ref === BASIC_REF
+        ? oldLookup
+        : Promise.resolve('new-secret'))
+    });
+    const client = new ServiceNowClient('https://dev.service-now.com', 'dev-user', null, {
+      credentialRef: BASIC_REF,
+      credentialStore: store
+    });
+
+    const oldHeader = client.getAuthHeader();
+    client.setInstance('https://prod.service-now.com', 'prod-user', null, 'prod', {
+      credentialRef: NEXT_BASIC_REF,
+      credentialStore: store
+    });
+    const newHeader = client.getAuthHeader();
+    rejectOldLookup(new Error('old keychain failure'));
+
+    await expect(oldHeader).rejects.toMatchObject({ code: 'KEYCHAIN_OPERATION_FAILED' });
+    await expect(newHeader).resolves.toBe(
+      `Basic ${Buffer.from('prod-user:new-secret').toString('base64')}`
+    );
+    expect(store.getSecret).toHaveBeenCalledTimes(2);
+  });
 
   test('fails with a redacted CREDENTIAL_NOT_FOUND before making an outbound request', async () => {
     const store = makeStore({
