@@ -546,6 +546,33 @@ export class InstanceRegistry {
     }, updated => updated.instances.find(candidate => candidate.name === name));
   }
 
+  compensateRegistration(name, { expected, priorDefault } = {}) {
+    return this._enqueueMutation(() => {
+      const current = this._document.instances.find(instance => instance.name === name);
+      if (!current || expected === undefined || JSON.stringify(current) !== JSON.stringify(expected)) {
+        throw new InstanceRegistryError(
+          'REGISTRY_ROLLBACK_REQUIRED',
+          `Instance '${name}' changed before registration compensation`,
+          { name, rollbackRequired: true }
+        );
+      }
+
+      const instances = this._document.instances
+        .filter(instance => instance.name !== name)
+        .map(instance => {
+          if (!priorDefault || instance.name !== priorDefault.name) return instance;
+          return { ...instance, default: priorDefault.default };
+        });
+      const nextDocument = {
+        ...this._document,
+        version: 1,
+        instances
+      };
+      validateDocument(nextDocument);
+      return nextDocument;
+    }, () => undefined);
+  }
+
   remove(name, { expected } = {}) {
     return this._enqueueMutation(() => {
       const current = this._document.instances.find(instance => instance.name === name);

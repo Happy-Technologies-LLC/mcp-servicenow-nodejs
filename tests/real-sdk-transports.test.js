@@ -354,8 +354,9 @@ describe('real SDK production transports', () => {
       name: 'smoke',
       url: 'https://smoke.invalid'
     };
+    const credentialStore = {};
     const createServiceNowClient = jest.fn(() => serviceNowClient);
-    const app = createHttpApp({ defaultInstance, createServiceNowClient });
+    const app = createHttpApp({ defaultInstance, credentialStore, createServiceNowClient });
     const deadline = createDeadline('HTTP/SSE smoke');
     let server;
     let transport;
@@ -386,8 +387,7 @@ describe('real SDK production transports', () => {
         version: '2.0.0'
       });
       expect(tools.tools.some((tool) => tool.name === 'SN-Query-Table')).toBe(true);
-      expect(createServiceNowClient).toHaveBeenCalledTimes(1);
-      expect(createServiceNowClient).toHaveBeenCalledWith(defaultInstance);
+      expect(createServiceNowClient).toHaveBeenCalledWith(defaultInstance, { credentialStore });
       expect(serviceNowClient.getRecords).toHaveBeenCalledWith('incident', {
         sysparm_limit: 1,
         sysparm_query: 'active=true',

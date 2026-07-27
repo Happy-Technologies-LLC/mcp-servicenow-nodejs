@@ -4,6 +4,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ServiceNowClient } from './servicenow-client.js';
 import { createMcpServer } from './mcp-server-consolidated.js';
 import { instanceToClientOptions } from './config-manager.js';
+import { InstanceCredentialStore } from './instance-credential-store.js';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
@@ -13,12 +14,12 @@ export function validateHttpTransportSecurity({ host = '127.0.0.1', apiToken } =
   }
 }
 
-export function createDefaultClient(instance) {
+export function createDefaultClient(instance, { credentialStore } = {}) {
   const client = new ServiceNowClient(
     instance.url,
     instance.username,
     instance.password,
-    instanceToClientOptions(instance)
+    instanceToClientOptions(instance, { credentialStore })
   );
   client.currentInstanceName = instance.name;
   return client;
@@ -27,6 +28,7 @@ export function createDefaultClient(instance) {
 export function createHttpApp({
   defaultInstance,
   apiToken,
+  credentialStore = new InstanceCredentialStore(),
   keepaliveIntervalMs = 15000,
   listInstances = () => [{
     name: defaultInstance.name,
@@ -65,8 +67,8 @@ export function createHttpApp({
       res.setTimeout(0);
 
       const transport = new Transport('/mcp', res);
-      const serviceNowClient = createServiceNowClient(defaultInstance);
-      const server = await createServer(serviceNowClient);
+      const serviceNowClient = createServiceNowClient(defaultInstance, { credentialStore });
+      const server = await createServer(serviceNowClient, { credentialStore });
       const cleanup = () => {
         clearInterval(keepaliveInterval);
         sessions.delete(transport.sessionId);

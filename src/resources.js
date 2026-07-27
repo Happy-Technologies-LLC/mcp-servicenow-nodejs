@@ -9,7 +9,12 @@
 
 import { instanceToClientOptions } from './config-manager.js';
 
-export function createResourceHandlers(serviceNowClient, configManager, tableMetadata) {
+export function createResourceHandlers(
+  serviceNowClient,
+  configManager,
+  tableMetadata,
+  { credentialStore = serviceNowClient?._credentialStore } = {}
+) {
   /**
    * List all available resources
    */
@@ -164,13 +169,18 @@ export function createResourceHandlers(serviceNowClient, configManager, tableMet
     const instanceName = instanceOrResource;
     const resource = resourcePath;
 
-    // Save current instance to restore later
     const originalInstance = serviceNowClient.getCurrentInstance();
 
     // Switch to requested instance if different
     if (instanceName !== originalInstance.name) {
       const instance = configManager.getInstance(instanceName);
-      serviceNowClient.setInstance(instance.url, instance.username, instance.password, instance.name, instanceToClientOptions(instance));
+      serviceNowClient.setInstance(
+        instance.url,
+        instance.username,
+        instance.password,
+        instance.name,
+        instanceToClientOptions(instance, { credentialStore })
+      );
     }
 
     try {
@@ -316,7 +326,13 @@ export function createResourceHandlers(serviceNowClient, configManager, tableMet
       // Restore original instance if we switched
       if (instanceName !== originalInstance.name) {
         const original = configManager.getInstance(originalInstance.name);
-        serviceNowClient.setInstance(original.url, original.username, original.password, original.name, instanceToClientOptions(original));
+        serviceNowClient.setInstance(
+          original.url,
+          original.username,
+          original.password,
+          original.name,
+          instanceToClientOptions(original, { credentialStore })
+        );
       }
     }
   };

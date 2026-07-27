@@ -8,12 +8,14 @@
 import dotenv from 'dotenv';
 import { configManager } from './config-manager.js';
 import { createHttpApp, validateHttpTransportSecurity } from './http-server.js';
+import { InstanceCredentialStore } from './instance-credential-store.js';
 
 dotenv.config();
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HAPPY_MCP_BIND_HOST || '127.0.0.1';
 const apiToken = process.env.HAPPY_MCP_API_TOKEN;
+const credentialStore = new InstanceCredentialStore();
 const keepaliveIntervalMs = Number(process.env.SSE_KEEPALIVE_INTERVAL || 15000);
 
 validateHttpTransportSecurity({ host, apiToken });
@@ -24,6 +26,7 @@ console.log(`Default ServiceNow instance: ${defaultInstance.name} (${defaultInst
 const app = createHttpApp({
   defaultInstance,
   apiToken,
+  credentialStore,
   keepaliveIntervalMs,
   listInstances: () => configManager.listInstances()
 });

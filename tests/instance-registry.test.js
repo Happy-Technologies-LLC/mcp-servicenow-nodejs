@@ -941,6 +941,39 @@ describe('InstanceRegistry persistence', () => {
     expect(registry.list()).toEqual([]);
     expect(fs.existsSync(file)).toBe(false);
   });
+  test('compensates a just-created default registration and restores the prior default atomically', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    await registry.register(publicInstance('old'));
+    const priorDefault = registry.getDefault();
+    const registered = await registry.register(publicInstance('new'), { makeDefault: true });
+    const writeAtomic = jest.spyOn(registry, '_writeAtomic');
+
+    await expect(registry.compensateRegistration('new', {
+      expected: registered,
+      priorDefault: { name: priorDefault.name, default: priorDefault.default }
+    })).resolves.toBeUndefined();
+
+    expect(writeAtomic).toHaveBeenCalledTimes(1);
+    expect(registry.list()).toEqual([
+      expect.objectContaining({ name: 'old', default: true })
+    ]);
+  });
+
+  test('does not clobber a concurrently changed registration during compensation', async () => {
+    const { file } = tempPaths();
+    const registry = new InstanceRegistry({ readPath: file, writePath: file });
+    await registry.register(publicInstance('old'));
+    const registered = await registry.register(publicInstance('new'), { makeDefault: true });
+    await registry.update('new', { description: 'changed concurrently' });
+
+    await expect(registry.compensateRegistration('new', {
+      expected: registered,
+      priorDefault: { name: 'old', default: true }
+    })).rejects.toMatchObject({ code: 'REGISTRY_ROLLBACK_REQUIRED' });
+    expect(registry.get('new')).toEqual(expect.objectContaining({ description: 'changed concurrently', default: true }));
+    expect(registry.get('old').default).toBe(false);
+  });
 });
 
 

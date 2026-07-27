@@ -396,6 +396,68 @@ describe('SN-Register-Instance', () => {
     expect(harness.registry.list()).toEqual([]);
     expect(harness.configManager.reload).not.toHaveBeenCalled();
   });
+  test('restores the old default when a makeDefault registration loses credentials after commit', async () => {
+    const store = {
+      hasSecret: jest.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+    };
+    const harness = await createHarness({ credentialStore: store });
+    await harness.registry.register({
+      name: 'old',
+      url: 'https://old.service-now.com',
+      authType: 'oauth',
+      grantType: 'authorization_code',
+      clientId: 'public-client'
+    });
+
+    const result = await harness.callTool('SN-Register-Instance', {
+      name: 'new',
+      url: 'https://new.service-now.com',
+      authType: 'basic',
+      username: 'developer',
+      makeDefault: true
+    });
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({ success: false, code: 'CREDENTIAL_NOT_FOUND' });
+    expect(harness.registry.get('old')).toEqual(expect.objectContaining({ default: true }));
+    expect(() => harness.registry.get('new')).toThrow(expect.objectContaining({ code: 'INSTANCE_NOT_FOUND' }));
+  });
+
+  test('reports a partial rollback requirement when compensation detects a concurrent change', async () => {
+    const store = {
+      hasSecret: jest.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+    };
+    const harness = await createHarness({ credentialStore: store });
+    jest.spyOn(harness.registry, 'compensateRegistration').mockRejectedValue(
+      Object.assign(new Error('registration changed'), {
+        code: 'REGISTRY_ROLLBACK_REQUIRED'
+      })
+    );
+
+    const result = await harness.callTool('SN-Register-Instance', {
+      name: 'new',
+      url: 'https://new.service-now.com',
+      authType: 'basic',
+      username: 'developer'
+    });
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      code: 'REGISTRY_ROLLBACK_REQUIRED',
+      partial: true,
+      rollbackRequired: true
+    });
+  });
+
 
   test('serializes concurrent duplicate registrations', async () => {
     const harness = await createHarness();

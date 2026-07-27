@@ -240,6 +240,13 @@ function registryError(error) {
   if (error?.code === 'CREDENTIAL_NOT_FOUND' || typeof error?.code === 'string' && error.code.startsWith('KEYCHAIN_')) {
     return errorResponse(error.code, error.message || 'The local credential store could not be checked; no registration was committed.', error.details || {});
   }
+  if (error?.code === 'REGISTRY_ROLLBACK_REQUIRED') {
+    return errorResponse(
+      'REGISTRY_ROLLBACK_REQUIRED',
+      'The registration could not be rolled back safely because it changed concurrently; manual rollback is required.',
+      { partial: true, rollbackRequired: true }
+    );
+  }
   if (error?.code === 'REGISTRY_WRITE_FAILED') {
     return errorResponse('REGISTRY_WRITE_FAILED', 'The instance registry could not be updated. No registration was committed.');
   }
@@ -247,6 +254,22 @@ function registryError(error) {
     return errorResponse('LEGACY_MIGRATION_REQUIRED', 'Migrate the legacy instance registry with the local CLI before registering another instance.');
   }
   return errorResponse('INSTANCE_REGISTRATION_FAILED', 'The instance registration could not be completed.');
+}
+
+async function snapshotPriorDefault(registry) {
+  if (typeof registry?.getDefault === 'function') {
+    const instance = await registry.getDefault();
+    return instance?.name
+      ? { name: instance.name, default: instance.default }
+      : undefined;
+  }
+  if (typeof registry?.list === 'function') {
+    const instance = (await registry.list()).find(candidate => candidate?.default === true);
+    return instance?.name
+      ? { name: instance.name, default: instance.default }
+      : undefined;
+  }
+  return undefined;
 }
 
 async function checkCredentials(store, requirements, name) {
@@ -334,6 +357,12 @@ export async function handleInstanceSetupTool(name, args = {}, dependencies = {}
   const requirements = credentialRequirements(canonical.authType, canonical.grantType, args.name);
   const credentialError = await checkCredentials(dependencies.credentialStore, requirements, args.name);
   if (credentialError) return credentialError;
+  let priorDefault;
+  try {
+    priorDefault = await snapshotPriorDefault(registry);
+  } catch (error) {
+    return registryError(error);
+  }
 
   const configManager = dependencies.configManager;
   if (!configManager || typeof configManager.reload !== 'function') {
@@ -360,7 +389,10 @@ export async function handleInstanceSetupTool(name, args = {}, dependencies = {}
   );
   if (postCommitCredentialError) {
     try {
-      await registry.remove(args.name, { expected: registered });
+      await registry.compensateRegistration(args.name, {
+        expected: registered,
+        priorDefault
+      });
     } catch (error) {
       return registryError(error);
     }
