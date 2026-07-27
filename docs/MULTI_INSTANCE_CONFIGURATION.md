@@ -8,11 +8,16 @@ never stored in the registry created by the new CLI: only canonical
 ## Configuration File
 
 Global installs and `npx` use the user-owned registry
-`~/.config/happy-platform-mcp/instances.json` (or the platform's user config
-directory on Windows). Set one optional `HAPPY_CONFIG_PATH` setting to point
-to a different metadata registry; `~` expands to the home directory and a
-relative path is resolved from the process cwd. One setting/file holds all
-environments.
+`<homedir>/.config/happy-platform-mcp/instances.json` on every OS, with that
+OS's native path separators. There is no platform-specific resolver claim.
+Set one optional `HAPPY_CONFIG_PATH` setting to point to a different metadata
+registry; `~` expands to the home directory and relative paths are resolved
+from the process working directory. One setting/file holds all environments.
+
+The CLI inherits its process environment and does not auto-load `.env`.
+`.env` auto-loading applies to the server/stdio process only. Export
+`HAPPY_CONFIG_PATH` for CLI commands, or set it in the MCP host environment
+for a server/stdio launch.
 
 ```json
 {
@@ -62,6 +67,12 @@ requires an interactive TTY for secret prompts and does not accept secrets
 from non-TTY stdin or fall back to plaintext. MCP tools never accept passwords
 or client secrets.
 
+For a password-grant instance, `credentialRef` is an object with both
+`password` and `clientSecret` canonical references. Basic and
+`client_credentials` instances use one string reference for the respective
+password or client secret. Authorization-code instances use metadata only
+until the interactive browser flow stores a refresh token locally.
+
 ### Instance Configuration Fields
 
 | Field | Required | Description |
@@ -82,6 +93,9 @@ or client secrets.
 | `callbackPath` | No | Loopback callback path |
 | `default` | No | Startup default marker |
 | `description` | No | Human-readable description |
+Legacy registries may omit `version`; readers treat an omitted value as
+version `1`. Any explicit value other than numeric `1` is rejected. CLI writes
+always emit numeric `"version": 1`.
 
 The registry file is metadata only and should remain private. Do not add
 plaintext credential fields to new configuration.
@@ -90,17 +104,23 @@ plaintext credential fields to new configuration.
 
 At startup and for CLI reads/writes, resolution is exact:
 
-1. `HAPPY_CONFIG_PATH`, when set. It is the single explicit metadata registry path.
-2. The user registry (`~/.config/happy-platform-mcp/instances.json`, or the
-   platform user config path on Windows) when it exists.
-3. The legacy package-relative `config/servicenow-instances.json` when it exists.
+1. `HAPPY_CONFIG_PATH`, when set. It is the single explicit metadata registry
+   path.
+2. The user registry (`<homedir>/.config/happy-platform-mcp/instances.json`)
+   when it exists.
+3. The legacy package-relative `config/servicenow-instances.json` when it
+   exists.
 4. The singular `SERVICENOW_*` environment fallback only when no registry file
    is available.
 
-`.env` is loaded when the server/CLI process starts, before configuration
-resolution. Set `HAPPY_CONFIG_PATH` in the MCP host environment before launch;
-do not expect changing it through a running MCP call to retarget the process.
+Migration reads only the legacy registry JSON source, never `SERVICENOW_*`
+environment variables. It writes the resolved target: the explicit
+`HAPPY_CONFIG_PATH` path when set, otherwise the default user registry path.
+The legacy source remains untouched. Environment-only credentials must be
+manually re-registered with `instance add` and `instance credential set`.
 
+Set `HAPPY_CONFIG_PATH` before launch; do not expect changing it through a
+running MCP call to retarget the process.
 
 ## Instance Selection
 
@@ -228,32 +248,61 @@ const selectedInstance = configManager.getInstanceOrDefault(process.env.SERVICEN
 const instances = configManager.listInstances();
 ```
 
-## Migration from legacy `.env` or package config
-
-Run the migration locally:
-
-```bash
-happy-platform-mcp instance migrate
-```
-
-Migration reads the selected legacy source, preserves unrelated top-level
-properties such as `docs`, writes a version 1 user registry, and stores
-supported basic-auth passwords and OAuth client secrets in the OS keychain.
-It leaves the legacy file untouched; remove old files or variables only after
-verifying the new registry with `instance list` and `instance test`.
-Unsupported or incomplete entries abort without a partial migration.
-If the keychain is unavailable, migration aborts and never writes plaintext
-credentials as a fallback.
-
 ## OAuth Authentication
 
-Each instance can independently use basic auth or OAuth 2.0:
+Each instance can independently use basic auth or OAuth 2.0. The following
+sequences use interactive `instance add`, then local credential setup and
+`instance test`; do not put secrets in JSON or command arguments.
 
-- **Client Credentials** (recommended for services): service-to-service.
-- **Resource Owner Password Credentials**: requires username and two local
-  keychain credentials, set through the CLI.
-- **Authorization Code with PKCE**: browser sign-in with a loopback callback;
-  public clients require no client secret.
+### Basic authentication
+
+```bash
+happy-platform-mcp instance add
+# Select Basic authentication and enter the URL, name, and username.
+happy-platform-mcp instance credential set dev --type password
+happy-platform-mcp instance test dev
+```
+
+### OAuth client credentials
+
+```bash
+happy-platform-mcp instance add
+# Select OAuth -> Client credentials and enter URL and client ID.
+happy-platform-mcp instance credential set prod --type client-secret
+happy-platform-mcp instance test prod
+```
+
+### OAuth password grant
+
+```bash
+happy-platform-mcp instance add
+# Select OAuth -> Password grant and enter URL, client ID, and username.
+happy-platform-mcp instance credential set password-prod --type password
+happy-platform-mcp instance credential set password-prod --type client-secret
+happy-platform-mcp instance test password-prod
+```
+
+Password grant requires both credential references:
+
+```json
+"credentialRef": {
+  "password": "keychain:instance/password-prod/password",
+  "clientSecret": "keychain:instance/password-prod/client-secret"
+}
+```
+
+### Public authorization code with PKCE
+
+```bash
+happy-platform-mcp instance add
+# Select OAuth -> Authorization code, choose a public client, and enter:
+# URL, client ID, authorize URL, token URL, redirect port, callback path.
+happy-platform-mcp instance test public-dev
+```
+
+Authorization-code metadata does not require `credentialRef` or a client
+secret. The first test/API call opens the browser authorization flow; the
+resulting refresh token is stored in the OS keychain.
 
 For OAuth setup, create the appropriate endpoint under **System OAuth >
 Application Registry**, then store only the client identifier and canonical
@@ -262,8 +311,8 @@ credential references in the registry. Authorization Code instances use
 
 Client Credentials and password-grant tokens are cached in memory and refreshed
 before expiry. Authorization Code refresh tokens are stored in the OS keychain.
-After a rejected refresh token, browser sign-in starts again; there is no shared
-credential or plaintext fallback.
+After a rejected refresh token, browser sign-in starts again; there is no
+shared credential or plaintext fallback.
 
 When `SN-Set-Instance` selects a configured instance, the current sequential
 session client uses that instance's authentication method. The configuration
@@ -282,8 +331,9 @@ itself is unchanged.
 - Registration uses atomic registry writes. A failed write reports
   `REGISTRY_WRITE_FAILED`; an unsafe compensation reports
   `REGISTRY_ROLLBACK_REQUIRED` and requires manual rollback review.
-- After docs-only registration, restart the MCP server. A failed reload also
-  returns `restartRequired`.
+After docs-only registration, restart the MCP server. Normal live registration
+reloads configuration without a restart; restart is required only when reload
+fails.
 
 ## Troubleshooting
 

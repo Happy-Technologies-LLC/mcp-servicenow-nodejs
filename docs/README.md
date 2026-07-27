@@ -31,9 +31,9 @@ The **[research/](research/)** folder contains technical research, breakthrough 
 
 ## Quick Links
 
-**Main Documentation:** `../README.md`
-**Source Code:** `../src/`
-**Configuration:** `../config/`
+**Main Documentation:** [../README.md](../README.md)
+**Source Code:** [../src/](../src/)
+**Configuration:** [../config/](../config/)
 
 ---
 

@@ -84,17 +84,28 @@ npm install -g happy-platform-mcp
 git clone https://github.com/Happy-Technologies-LLC/happy-platform-mcp.git
 cd happy-platform-mcp
 npm install
+# Source checkout: use node src/cli.js <command>, or npm link first.
+node src/cli.js instance list
 ```
 
 ### Configure Instances
 
 **Recommended: register metadata with the local CLI**
 
-The global install and `npx` use the user-owned metadata registry at
-`~/.config/happy-platform-mcp/instances.json` (on Windows, use the user config
-directory returned by the platform resolver). Credentials are prompted locally,
-masked, and stored in the operating system keychain. The registry contains only
-instance metadata and canonical `credentialRef` values.
+The CLI inherits the environment of the process that launches it. The CLI
+does not auto-load `.env`; `.env` loading applies to the server/stdio
+process only. For CLI use, export `HAPPY_CONFIG_PATH` in the shell (or set it
+in the MCP host environment when the host launches the CLI). The actual
+default registry path on every OS is
+`<homedir>/.config/happy-platform-mcp/instances.json`, using native path
+separators for that OS.
+
+Credentials are prompted locally, masked, and stored in the operating system
+keychain. A new CLI-written version 1 registry contains instance metadata and
+canonical `credentialRef` values only; it does not contain plaintext
+credentials. Legacy plaintext registry files are read-only compatibility
+inputs, and the singular `SERVICENOW_*` environment fallback is retained only
+for backward compatibility.
 
 ```bash
 happy-platform-mcp instance add
@@ -107,16 +118,21 @@ happy-platform-mcp instance migrate
 ```
 
 `instance update` changes metadata only. Authentication changes require
-`instance remove` followed by `instance add`. `credential set` accepts
-`password` or `client-secret`; secret prompts never put values in command
-arguments, logs, or MCP messages. These prompts require an interactive local
-TTY. In non-TTY automation, use a pre-provisioned OS keychain entry and run
-metadata-only commands; the CLI will not read secrets from stdin or silently
-fall back to plaintext.
+`instance remove` followed by `instance add`, then credential setup. Secret
+prompts never put values in command arguments, logs, or MCP messages. These
+prompts require an interactive local TTY. In non-TTY automation, use a
+pre-provisioned OS keychain entry and run metadata-only commands; the CLI will
+not read secrets from stdin or silently fall back to plaintext.
 
-To select a different metadata registry, set one `HAPPY_CONFIG_PATH` setting in
-the MCP host configuration. It supports `~` and relative paths resolved from
-the process working directory, and the same file holds all environments:
+To select a different metadata registry for the CLI, export
+`HAPPY_CONFIG_PATH` before invoking it:
+
+```bash
+export HAPPY_CONFIG_PATH="$HOME/.config/happy-platform-mcp/instances.json"
+happy-platform-mcp instance list
+```
+
+For an MCP server/stdio host, set the same variable in the host environment:
 
 ```json
 {
@@ -126,24 +142,28 @@ the process working directory, and the same file holds all environments:
 }
 ```
 
-This path points to metadata, not plaintext secrets created by the new CLI.
-After `SN-Register-Instance` changes the registry, restart the MCP server so
-the new configuration is loaded.
+`HAPPY_CONFIG_PATH` supports `~` and relative paths in the relevant process
+environment. A CLI migration writes to the explicitly selected
+`HAPPY_CONFIG_PATH`, when set, or to the default user registry path otherwise.
+It preserves the legacy source file and never migrates `SERVICENOW_*`
+environment variables. If credentials exist only in environment variables,
+manually register the instance with `instance add`, then set credentials with
+`instance credential set`.
 
-**Legacy compatibility:** `config/servicenow-instances.json` and the singular
-`SERVICENOW_*` environment variables remain migration/fallback inputs. The
-package-relative file is not the long-term writable location. To migrate an
-existing legacy file, run `happy-platform-mcp instance migrate`; migration
-preserves unrelated top-level properties such as `docs`, moves supported
-passwords and client secrets into the OS keychain, writes version 1 metadata,
-and leaves the legacy file untouched. Unsupported or incomplete entries abort
-without a partial migration.
+`SN-Register-Instance` normally applies a live registry reload and does not
+require a restart. Restart the MCP server only for docs-only mode or when the
+reload fails.
+
+**Legacy compatibility:** `config/servicenow-instances.json` is a read-only
+legacy migration input. The singular `SERVICENOW_*` environment variables are
+the backward-compatible single-instance fallback only when no registry is
+available. The package-relative file is not the CLI's writable location.
 
 **Option B: Single Instance (legacy environment fallback)**
 
 ```bash
 cp .env.example .env
-# Set the legacy SERVICENOW_* variables only when no registry file exists.
+# Server/stdio only: set legacy SERVICENOW_* variables in .env.
 ```
 
 ### Start the Server
@@ -338,94 +358,68 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```
 
 The registry setting points to metadata; credentials remain in the local OS
-keychain. `HAPPY_CONFIG_PATH` is optional when using the default user path and
-must be set before the server starts. If you use the legacy singular
-`SERVICENOW_*` environment fallback instead, keep those values out of source
-control and treat them as backward-compatible compatibility settings only.
-
-Or if installed from source, use `"command": "node"` with `"args": ["/path/to/happy-platform-mcp/src/stdio-server.js"]` and `"cwd": "/path/to/happy-platform-mcp"`.
-
-Restart Claude Desktop after editing the config or after registration.
+keychain. `HAPPY_CONFIG_PATH` is optional with the default user path and must
+be set before the server starts. For source installs, use `"command": "node"`
+with `"args": ["/path/to/happy-platform-mcp/src/stdio-server.js"]` and
+`"cwd": "/path/to/happy-platform-mcp"`. Restart Claude Desktop after editing
+its config.
 
 ## Authentication
 
-Happy MCP Server supports two authentication methods per instance. Both can coexist — instance A can use basic auth while instance B uses OAuth.
+Happy MCP Server supports three credential flows per instance. Use interactive
+`instance add`, then credential setup and `instance test`; never place secrets
+in JSON or command arguments.
 
-### Basic Auth (Default)
+### Basic Auth
 
-Use `happy-platform-mcp instance credential set dev --type password` to
-provide the secret locally. The registry stores only:
+```bash
+happy-platform-mcp instance add
+# Select Basic authentication and enter URL, name, and username.
+happy-platform-mcp instance credential set dev --type password
+happy-platform-mcp instance test dev
+```
+
+### OAuth client credentials
+
+```bash
+happy-platform-mcp instance add
+# Select OAuth -> Client credentials and enter URL and client ID.
+happy-platform-mcp instance credential set prod --type client-secret
+happy-platform-mcp instance test prod
+```
+
+### OAuth password grant
+
+```bash
+happy-platform-mcp instance add
+# Select OAuth -> Password grant and enter URL, client ID, and username.
+happy-platform-mcp instance credential set password-prod --type password
+happy-platform-mcp instance credential set password-prod --type client-secret
+happy-platform-mcp instance test password-prod
+```
+
+Password grant `credentialRef` must be an object containing both canonical
+references:
 
 ```json
-{
-  "name": "dev",
-  "url": "https://your-dev-instance.service-now.com",
-  "authType": "basic",
-  "username": "your-username",
-  "credentialRef": "keychain:instance/dev/password",
-  "default": true
+"credentialRef": {
+  "password": "keychain:instance/password-prod/password",
+  "clientSecret": "keychain:instance/password-prod/client-secret"
 }
 ```
 
-### OAuth 2.0
+### Public authorization code with PKCE
 
-Supports **Client Credentials**, **Resource Owner Password Credentials**, and
-per-user **Authorization Code with PKCE**. Tokens are requested, cached, and
-refreshed by the client. For client credentials, store the local secret with
-`happy-platform-mcp instance credential set prod --type client-secret`:
-
-```json
-{
-  "name": "prod",
-  "url": "https://your-prod-instance.service-now.com",
-  "authType": "oauth",
-  "grantType": "client_credentials",
-  "clientId": "your-client-id",
-  "credentialRef": "keychain:instance/prod/client-secret"
-}
+```bash
+happy-platform-mcp instance add
+# Select OAuth -> Authorization code and enter URL, client ID,
+# authorize URL, token URL, redirect port, and callback path.
+happy-platform-mcp instance test public-dev
 ```
 
-Resource Owner Password Credentials require both local credential types; use
-the CLI prompts rather than adding secret fields to JSON. Authorization Code
-with PKCE uses a public client and can omit a client secret:
-
-```json
-{
-  "name": "developer",
-  "url": "https://your-dev-instance.service-now.com",
-  "authType": "oauth",
-  "grantType": "authorization_code",
-  "clientId": "your-public-client-id",
-  "authorizeUrl": "https://your-dev-instance.service-now.com/oauth_auth.do",
-  "tokenUrl": "https://your-dev-instance.service-now.com/oauth_token.do",
-  "redirectPort": 8202,
-  "callbackPath": "/callback"
-}
-```
-
-On first use, the server opens the authorization URL and receives the callback
-on `127.0.0.1`. Refresh tokens are stored in the operating system keychain
-under the current OS user and instance name.
-
-If `grantType` is omitted, it defaults to `client_credentials` when no
-username is provided, or `password` when username is present.
-
-**ServiceNow setup:**
-
-1. Navigate to **System OAuth > Application Registry**.
-2. For Client Credentials or password grants, create an OAuth API endpoint for external clients and configure its client ID and secret.
-3. For Authorization Code with PKCE, create a public client and register `http://127.0.0.1:<redirectPort><callbackPath>` as its redirect URL.
-4. Add the matching values to your instance configuration.
-
-**How it works:**
-
-- On first API call, requests an access token from `/oauth_token.do`
-- Caches the token and automatically refreshes it before expiry (30-second buffer)
-- On 401 responses, transparently refreshes the token and retries the request once
-- Falls back to a fresh token grant if the refresh token is expired
-
-The `scope` field is optional and defaults to ServiceNow's standard scope.
-
+Public authorization-code metadata requires no `credentialRef` or client
+secret. The first test/API call opens the browser flow and stores its refresh
+token in the OS keychain.
 ## Architecture
 
 ```
@@ -466,8 +460,8 @@ npm run inspector
 ### Connection Issues
 
 ```bash
-# Test connectivity to your ServiceNow instance
-curl -u username:password https://your-instance.service-now.com/api/now/table/incident?sysparm_limit=1
+# Test configured credentials without exposing them in shell history.
+happy-platform-mcp instance test <instance-name>
 
 # Check server health
 curl http://localhost:3000/health
@@ -475,10 +469,10 @@ curl http://localhost:3000/health
 
 ### Common Problems
 
-- **Multi-instance not working:** Verify `config/servicenow-instances.json` is valid JSON with one `"default": true` instance. Restart after changes.
+- **Multi-instance not working:** Verify the version 1 registry is valid JSON and has one `"default": true` instance when a startup default is needed. Normal live registration reloads without a restart; restart only for docs-only mode or a reload failure.
 - **Tools not appearing:** Check MCP Inspector connection and server logs.
-- **Auth failures:** Test credentials in browser first. Ensure the user has required roles.
-- **SSE disconnects in Docker:** Enable keepalive (default 15s). See `docs/SSE_SETUP_GUIDE.md`.
+- **Auth failures:** Run `happy-platform-mcp instance test <instance-name>` and verify the local keychain credential reference and required ServiceNow roles.
+- **SSE disconnects in Docker:** Enable keepalive (default 15s). See `docs/SSE_DOCKER_SETUP.md`.
 
 ### Debug Mode
 
@@ -492,7 +486,7 @@ DEBUG=true npm run dev
 - Flow compilation/validation must be done in the UI
 - UI Policy Actions linking requires a background script workaround
 
-See `docs/MCP_Tool_Limitations.md` for details.
+See the API reference and tool-specific guides under `docs/` for details.
 
 ## Acknowledgments
 

@@ -131,26 +131,25 @@ Claude: [Calls SN-Create-Incident]
 
 ### Configuration File
 
-Instances are defined in `config/servicenow-instances.json`:
+New CLI registrations use the user registry at
+`<homedir>/.config/happy-platform-mcp/instances.json` on every OS, with native
+path separators. The legacy package-relative
+`config/servicenow-instances.json` is a read-only migration input. New
+registries contain metadata and `credentialRef` values, never plaintext
+credentials.
 
 ```json
 {
+  "version": 1,
   "instances": [
     {
       "name": "dev",
       "url": "https://dev276360.service-now.com",
+      "authType": "basic",
       "username": "admin",
-      "password": "dev_password",
+      "credentialRef": "keychain:instance/dev/password",
       "default": true,
       "description": "Development instance"
-    },
-    {
-      "name": "prod",
-      "url": "https://prod.service-now.com",
-      "username": "api_user",
-      "password": "prod_password",
-      "default": false,
-      "description": "Production instance"
     }
   ]
 }
@@ -213,10 +212,13 @@ Error: Instance 'staging' not found. Available instances: dev, prod, test
 **Solution:** Check instance name spelling or add instance to config file.
 
 ### Missing Config File
-```
-⚠️  servicenow-instances.json not found, falling back to .env
-```
-**Solution:** Create `config/servicenow-instances.json` from example.
+
+If no registry is available, the server/stdio process may use the singular
+`SERVICENOW_*` environment fallback for one backward-compatible instance.
+The CLI does not auto-load `.env`; export `HAPPY_CONFIG_PATH` when selecting a
+CLI registry. To create a new registry, use interactive
+`happy-platform-mcp instance add`, then set credentials with
+`happy-platform-mcp instance credential set <name> --type password|client-secret`.
 
 ### Authentication Failure
 If you switch to an instance with invalid credentials:
