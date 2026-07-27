@@ -89,6 +89,62 @@ export class StaleInstanceError extends Error {
     };
   }
 }
+export class AuthenticationError extends Error {
+  constructor(message, code = 'AUTHENTICATION_FAILED') {
+    super(message);
+    this.name = 'AuthenticationError';
+    this.code = code;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code
+    };
+  }
+}
+
+function invalidTokenResponse(message) {
+  return new AuthenticationError(message, 'OAUTH_TOKEN_RESPONSE_INVALID');
+}
+
+function validateTokenResponse(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw invalidTokenResponse('OAuth token endpoint returned an invalid response');
+  }
+  if (typeof data.access_token !== 'string' || data.access_token.trim().length === 0) {
+    throw invalidTokenResponse('OAuth token endpoint response is missing a valid access token');
+  }
+  if (
+    data.refresh_token !== undefined
+    && (typeof data.refresh_token !== 'string' || data.refresh_token.trim().length === 0)
+  ) {
+    throw invalidTokenResponse('OAuth token endpoint response contains an invalid refresh token');
+  }
+  if (
+    data.expires_in !== undefined
+    && (
+      typeof data.expires_in !== 'number'
+      || !Number.isFinite(data.expires_in)
+      || data.expires_in <= 0
+      || data.expires_in > Number.MAX_SAFE_INTEGER / 1000
+    )
+  ) {
+    throw invalidTokenResponse('OAuth token endpoint response contains an invalid expiry');
+  }
+  return data;
+}
+
+function hasValidCachedToken(state) {
+  return (
+    state?.generation !== undefined
+    && typeof state.token === 'string'
+    && state.token.length > 0
+    && Number.isFinite(state.expiry)
+    && Date.now() < state.expiry - 30000
+  );
+}
 
 function staleInstanceError() {
   return new StaleInstanceError();
@@ -231,7 +287,9 @@ function safeAuthError(error, client) {
   for (const value of collectCredentialValues(client)) {
     message = message.split(value).join('[redacted]');
   }
-  const safe = new Error(message);
+  const safe = error instanceof AuthenticationError
+    ? new AuthenticationError(message, error.code)
+    : new Error(message);
   const status = error?.response?.status;
   if (status !== undefined) safe.status = status;
   if (status === 401) safe.code = 'AUTHENTICATION_FAILED';
@@ -402,6 +460,7 @@ export class ServiceNowClient {
    */
   setInstance(instanceUrl, username, password, instanceName = null, options = {}) {
     this._instanceGeneration = (this._instanceGeneration || 0) + 1;
+    this._oauthCacheGeneration = this._instanceGeneration;
     this._resolvedCredentialSecrets = new Map();
     this._credentialResolutionPromises = new Map();
     this._oauthTokenPromise = null;
@@ -809,26 +868,54 @@ export class ServiceNowClient {
    */
   async _acceptAuthCodeTokens(data, account, generation, tokenStore) {
     this._assertCurrentGeneration(generation);
-    this._handleTokenResponse(data, generation);
-    // Persist only when the response carried a refresh token that DIFFERS from
-    // what is already stored. If the server rotated without returning one, or
-    // simply echoed the existing token (ServiceNow's usual behaviour), there is
-    // nothing new to save. Crucially, re-writing an identical value is not a
-    // harmless no-op: some OS keychain backends recreate the item on write
-    // (macOS resets the item's ACL to the writing process), so a redundant write
-    // on every refresh churns the credential's access control. Only write on a
-    // genuine change.
-    if (data.refresh_token) {
-      this._assertCurrentGeneration(generation);
-      const stored = await tokenStore.getRefreshToken(account);
-      this._assertCurrentGeneration(generation);
-      if (data.refresh_token !== stored) {
+    const validated = validateTokenResponse(data);
+    const previous = {
+      generation: this._oauthCacheGeneration,
+      token: this.oauthToken,
+      refreshToken: this.oauthRefreshToken,
+      expiry: this.oauthTokenExpiry
+    };
+
+    // Persist only when the response carries a refresh token that differs from
+    // the stored value. Do not publish any response-derived cache state until
+    // this write succeeds, because an access token without its refresh token
+    // would be unrecoverable on the next refresh.
+    try {
+      if (validated.refresh_token !== undefined) {
         this._assertCurrentGeneration(generation);
-        await tokenStore.setRefreshToken(account, data.refresh_token);
+        const stored = await tokenStore.getRefreshToken(account);
         this._assertCurrentGeneration(generation);
+        if (validated.refresh_token !== stored) {
+          this._assertCurrentGeneration(generation);
+          await tokenStore.setRefreshToken(account, validated.refresh_token);
+          this._assertCurrentGeneration(generation);
+        }
       }
+    } catch (error) {
+      if (isStaleInstanceError(error)) {
+        throw error;
+      }
+      this._assertCurrentGeneration(generation);
+      if (previous.generation === generation && hasValidCachedToken(previous)) {
+        this.oauthToken = previous.token;
+        this.oauthRefreshToken = previous.refreshToken;
+        this.oauthTokenExpiry = previous.expiry;
+      } else {
+        this.oauthToken = null;
+        this.oauthRefreshToken = null;
+        this.oauthTokenExpiry = null;
+        this._oauthCacheGeneration = generation;
+      }
+      throw safeCredentialError(error);
     }
+
     this._assertCurrentGeneration(generation);
+    this.oauthToken = validated.access_token;
+    this._assertCurrentGeneration(generation);
+    this.oauthRefreshToken = validated.refresh_token ?? this.oauthRefreshToken;
+    this._assertCurrentGeneration(generation);
+    this.oauthTokenExpiry = Date.now() + (validated.expires_in ?? 1800) * 1000;
+    this._oauthCacheGeneration = generation;
     return this.oauthToken;
   }
 
@@ -839,12 +926,15 @@ export class ServiceNowClient {
    */
   _handleTokenResponse(data, generation = this._instanceGeneration) {
     this._assertCurrentGeneration(generation);
-    this.oauthToken = data.access_token;
+    const validated = validateTokenResponse(data);
+    const expiry = Date.now() + (validated.expires_in ?? 1800) * 1000;
     this._assertCurrentGeneration(generation);
-    this.oauthRefreshToken = data.refresh_token || this.oauthRefreshToken;
-    // expires_in is in seconds
+    this.oauthToken = validated.access_token;
     this._assertCurrentGeneration(generation);
-    this.oauthTokenExpiry = Date.now() + (data.expires_in || 1800) * 1000;
+    this.oauthRefreshToken = validated.refresh_token ?? this.oauthRefreshToken;
+    this._assertCurrentGeneration(generation);
+    this.oauthTokenExpiry = expiry;
+    this._oauthCacheGeneration = generation;
     return this.oauthToken;
   }
 

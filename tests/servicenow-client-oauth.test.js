@@ -419,6 +419,111 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(setCalls).toBe(1); // changed value → exactly one write
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-rotated');
   });
+  it('does not cache an access token when refresh-token persistence fails, then retries the flow', async () => {
+    let rejectPersistence = true;
+    let storedRefreshToken = null;
+    const persistenceError = new Error('keychain rejected refresh-token-secret');
+    const store = {
+      getRefreshToken: jest.fn(async () => storedRefreshToken),
+      setRefreshToken: jest.fn(async (_account, token) => {
+        if (rejectPersistence) {
+          rejectPersistence = false;
+          throw persistenceError;
+        }
+        storedRefreshToken = token;
+      }),
+      clearRefreshToken: jest.fn()
+    };
+    const flow = jest.fn()
+      .mockResolvedValueOnce({
+        access_token: 'unpersisted-access-secret',
+        refresh_token: 'refresh-token-secret',
+        expires_in: 1800
+      })
+      .mockResolvedValueOnce({
+        access_token: 'retry-access-token',
+        refresh_token: 'retry-refresh-token',
+        expires_in: 1800
+      });
+    const client = makeClient({ store, flow });
+
+    const firstError = await client._getOAuthToken().catch(error => error);
+
+    expect(firstError).toMatchObject({ code: 'KEYCHAIN_OPERATION_FAILED' });
+    expect(JSON.stringify(firstError)).not.toContain('refresh-token-secret');
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
+
+    await expect(client._getOAuthToken()).resolves.toBe('retry-access-token');
+    expect(flow).toHaveBeenCalledTimes(2);
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('retry-refresh-token');
+  });
+
+  it('rejects malformed authorization-code token responses without mutating the cache', async () => {
+    const store = new InMemoryTokenStore();
+    const client = makeClient({
+      store,
+      flow: async () => ({
+        error: 'invalid_grant',
+        error_description: 'response contains auth-response-secret'
+      })
+    });
+
+    const error = await client._getOAuthToken().catch(thrown => thrown);
+
+    expect(error).toMatchObject({
+      name: 'AuthenticationError',
+      code: 'OAUTH_TOKEN_RESPONSE_INVALID'
+    });
+    expect(error.message).not.toContain('auth-response-secret');
+    expect(JSON.stringify(error)).not.toContain('auth-response-secret');
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBeNull();
+  });
+
+  it('rejects malformed normal token responses without creating an undefined bearer token', async () => {
+    const tokenPost = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: {
+        error: 'invalid_client',
+        error_description: 'response contains token-response-secret'
+      }
+    });
+    const client = makeGrantClient({ clientSecret: 'client-secret-fixture' });
+
+    const error = await client.getAuthHeader().catch(thrown => thrown);
+
+    expect(error).toMatchObject({
+      name: 'AuthenticationError',
+      code: 'OAUTH_TOKEN_RESPONSE_INVALID'
+    });
+    expect(error.message).not.toContain('token-response-secret');
+    expect(JSON.stringify(error)).not.toContain('token-response-secret');
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
+    expect(tokenPost).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['empty access token', { access_token: '   ' }],
+    ['non-string refresh token', { access_token: 'access', refresh_token: 42 }],
+    ['non-positive expiry', { access_token: 'access', expires_in: 0 }],
+    ['non-finite expiry', { access_token: 'access', expires_in: Infinity }]
+  ])('rejects token responses with %s before cache mutation', async (_caseName, response) => {
+    const client = makeGrantClient({ clientSecret: 'client-secret-fixture' });
+    const tokenPost = jest.spyOn(axios, 'post').mockResolvedValue({ data: response });
+
+    await expect(client._getOAuthToken()).rejects.toMatchObject({
+      code: 'OAUTH_TOKEN_RESPONSE_INVALID'
+    });
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
+    expect(tokenPost).toHaveBeenCalledTimes(1);
+  });
 });
   it('rejects a stale authorization flow without populating the switched instance', async () => {
     let releaseFlow;
