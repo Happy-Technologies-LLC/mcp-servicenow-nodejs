@@ -26,6 +26,8 @@ console.log(`Default ServiceNow instance: ${defaultInstance.name} (${defaultInst
 const app = createHttpApp({
   defaultInstance,
   apiToken,
+  configManager,
+  instanceRegistry: configManager.registry,
   credentialStore,
   keepaliveIntervalMs,
   listInstances: () => configManager.listInstances()

@@ -28,6 +28,8 @@ export function createDefaultClient(instance, { credentialStore } = {}) {
 export function createHttpApp({
   defaultInstance,
   apiToken,
+  configManager,
+  instanceRegistry,
   credentialStore = new InstanceCredentialStore(),
   keepaliveIntervalMs = 15000,
   listInstances = () => [{
@@ -63,12 +65,13 @@ export function createHttpApp({
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Connection', 'keep-alive');
-      req.setTimeout(0);
-      res.setTimeout(0);
-
       const transport = new Transport('/mcp', res);
       const serviceNowClient = createServiceNowClient(defaultInstance, { credentialStore });
-      const server = await createServer(serviceNowClient, { credentialStore });
+      const server = await createServer(serviceNowClient, {
+        configManager,
+        instanceRegistry,
+        credentialStore
+      });
       const cleanup = () => {
         clearInterval(keepaliveInterval);
         sessions.delete(transport.sessionId);

@@ -354,21 +354,90 @@ describe('SN-Register-Instance', () => {
     expect(harness.configManager.reload).not.toHaveBeenCalled();
   });
 
-  test('returns a successful partial response when config reload fails after persistence', async () => {
+  test('rolls back persisted metadata when config reload fails', async () => {
     const harness = await createHarness({ reload: false });
     const result = await harness.callTool('SN-Register-Instance', publicMetadata());
     const payload = parseResponse(result);
 
-    expect(result.isError).toBeUndefined();
+    expect(result.isError).toBe(true);
     expect(payload).toMatchObject({
-      success: true,
+      success: false,
       code: 'REGISTRY_RELOAD_FAILED',
+      persisted: false,
+      rolledBack: true
+    });
+    expect(() => harness.registry.get('dev')).toThrow(expect.objectContaining({ code: 'INSTANCE_NOT_FOUND' }));
+    expect(JSON.stringify(result)).not.toContain('secret-value');
+    expect(harness.configManager.reload).toHaveBeenCalledTimes(2);
+  });
+  test('requires a restart when restoring prior config also cannot complete', async () => {
+    const harness = await createHarness();
+    harness.configManager.reload.mockResolvedValue(false);
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata('restore-failed'));
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      code: 'REGISTRY_RELOAD_FAILED',
+      persisted: false,
+      rolledBack: true,
       restartRequired: true
     });
-    expect(payload.message).toMatch(/restart/i);
-    expect(harness.registry.get('dev')).toEqual(expect.objectContaining({ name: 'dev' }));
+    expect(() => harness.registry.get('restore-failed')).toThrow(expect.objectContaining({ code: 'INSTANCE_NOT_FOUND' }));
+  });
+
+
+  test('reports rollback-required when compensation write fails', async () => {
+    const harness = await createHarness();
+    jest.spyOn(harness.registry, 'compensateRegistration').mockRejectedValue(
+      Object.assign(new Error('rollback write failed'), { code: 'REGISTRY_WRITE_FAILED' })
+    );
+    harness.configManager.reload.mockRejectedValueOnce(new Error('reload failed'));
+
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata('rollback-write'));
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      code: 'REGISTRY_ROLLBACK_REQUIRED',
+      persisted: true,
+      partial: true,
+      rollbackRequired: true,
+      restartRequired: true
+    });
+  });
+
+  test('rolls back persisted metadata when the reload callback fails', async () => {
+    const harness = await createHarness();
+    const onConfigReload = jest.fn()
+      .mockImplementationOnce(async () => {
+        throw new Error('callback failed with secret-value');
+      });
+    const callbackServer = await createMcpServer({ setProgressCallback() {} }, {
+      configManager: harness.configManager,
+      instanceRegistry: harness.registry,
+      credentialStore: harness.credentialStore,
+      onConfigReload,
+      createServiceNowClient: jest.fn()
+    });
+    const handler = callbackServer._requestHandlers.get('tools/call');
+    const result = await handler({
+      method: 'tools/call',
+      params: { name: 'SN-Register-Instance', arguments: publicMetadata('callback') }
+    }, {});
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      code: 'REGISTRY_RELOAD_FAILED',
+      persisted: false,
+      rolledBack: true
+    });
+    expect(() => harness.registry.get('callback')).toThrow(expect.objectContaining({ code: 'INSTANCE_NOT_FOUND' }));
     expect(JSON.stringify(result)).not.toContain('secret-value');
-    expect(harness.configManager.reload).toHaveBeenCalledTimes(1);
   });
 
   test('rejects registration when credentials disappear before the precommit write', async () => {
@@ -470,8 +539,10 @@ describe('SN-Register-Instance', () => {
     expect(payload).toMatchObject({
       success: false,
       code: 'REGISTRY_ROLLBACK_REQUIRED',
+      persisted: true,
       partial: true,
-      rollbackRequired: true
+      rollbackRequired: true,
+      restartRequired: true
     });
   });
 

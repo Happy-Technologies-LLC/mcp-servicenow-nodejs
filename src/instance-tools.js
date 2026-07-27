@@ -245,7 +245,7 @@ function registryError(error) {
     return errorResponse(
       'REGISTRY_ROLLBACK_REQUIRED',
       'The registration could not be rolled back safely because it changed concurrently; manual rollback is required.',
-      { partial: true, rollbackRequired: true }
+      { persisted: true, partial: true, rollbackRequired: true, restartRequired: true }
     );
   }
   if (error?.code === 'REGISTRY_WRITE_FAILED') {
@@ -255,6 +255,59 @@ function registryError(error) {
     return errorResponse('LEGACY_MIGRATION_REQUIRED', 'Migrate the legacy instance registry with the local CLI before registering another instance.');
   }
   return errorResponse('INSTANCE_REGISTRATION_FAILED', 'The instance registration could not be completed.');
+}
+
+async function rollbackRegistration({ registry, configManager, name, registered, priorDefault, input }) {
+  try {
+    if (typeof registry.compensateRegistration !== 'function') {
+      throw Object.assign(new Error('Registration compensation is unavailable'), {
+        code: 'REGISTRY_ROLLBACK_REQUIRED'
+      });
+    }
+    await registry.compensateRegistration(name, {
+      expected: registered,
+      priorDefault
+    });
+  } catch {
+    return registryError({ code: 'REGISTRY_ROLLBACK_REQUIRED' });
+  }
+
+  let restoreError;
+  try {
+    const restoreResult = await configManager.reload();
+    if (restoreResult === false) {
+      restoreError = new Error('Configuration restore did not complete');
+    }
+  } catch (error) {
+    restoreError = error;
+  }
+
+  return errorResponse(
+    'REGISTRY_RELOAD_FAILED',
+    'Configuration reload failed; the persisted registration was rolled back.',
+    {
+      persisted: false,
+      rolledBack: true,
+      restartRequired: Boolean(restoreError),
+      metadata: outputMetadata(registered, input)
+    }
+  );
+}
+
+/*
+ * Keep this branch intentionally narrow: the public response describes only
+ * whether persistence and rollback completed, never the underlying error.
+ */
+function registrationReloadFailure(dependencies, args, registry, configManager, registered, priorDefault) {
+  return rollbackRegistration({
+    registry,
+    configManager,
+    name: args.name,
+    registered,
+    priorDefault,
+    input: args,
+    dependencies
+  });
 }
 
 async function snapshotPriorDefault(registry) {
@@ -400,33 +453,32 @@ export async function handleInstanceSetupTool(name, args = {}, dependencies = {}
     return postCommitCredentialError;
   }
 
-  let reloadResult;
   try {
-    reloadResult = await configManager.reload();
+    const reloadResult = await configManager.reload();
+    if (reloadResult === false) {
+      throw new Error('Configuration reload did not complete');
+    }
     if (typeof dependencies.onConfigReload === 'function') {
-      dependencies.onConfigReload();
+      await dependencies.onConfigReload();
     }
   } catch {
-    return response({
-      success: true,
-      code: 'REGISTRY_RELOAD_FAILED',
-      restartRequired: true,
-      partial: true,
-      message: 'Instance registered, but configuration reload failed. Restart the MCP server to load the persisted instance.',
-      metadata: outputMetadata(registered, args)
-    });
+    return registrationReloadFailure(
+      dependencies,
+      args,
+      registry,
+      configManager,
+      registered,
+      priorDefault
+    );
   }
 
-  const restartRequired = dependencies.docsOnly === true || reloadResult === false;
+  const restartRequired = dependencies.docsOnly === true;
   return response({
     success: true,
     restartRequired,
     ...(restartRequired
       ? {
-        ...(reloadResult === false ? { partial: true } : {}),
-        message: dependencies.docsOnly === true
-          ? 'Instance registered. Restart the MCP server to enable live ServiceNow tools.'
-          : 'Instance registered, but configuration reload did not complete. Restart the MCP server to load the persisted instance.'
+        message: 'Instance registered. Restart the MCP server to enable live ServiceNow tools.'
       }
       : {}),
     metadata: outputMetadata(registered, args)
