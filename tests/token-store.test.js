@@ -7,6 +7,7 @@
  * the in-memory one.
  */
 
+import { jest } from '@jest/globals';
 import { InMemoryTokenStore, KeychainTokenStore } from '../src/token-store.js';
 
 describe('InMemoryTokenStore', () => {
@@ -45,6 +46,52 @@ describe('KeychainTokenStore (with injected entry factory)', () => {
     });
     await expect(store.getRefreshToken('acct')).rejects.toThrow(/keychain locked/);
   });
+  it('waits for an async keychain write before resolving', async () => {
+    let release;
+    const writePending = new Promise(resolve => { release = resolve; });
+    let writes = 0;
+    const store = new KeychainTokenStore({
+      createEntry: () => ({
+        setPassword: async () => {
+          writes++;
+          await writePending;
+          return 'stored';
+        }
+      })
+    });
+
+    const write = store.setRefreshToken('acct', 'refresh-secret');
+    await Promise.resolve();
+    expect(writes).toBe(1);
+    expect(await Promise.race([write.then(() => 'settled'), Promise.resolve('pending')])).toBe('pending');
+    release();
+    expect(await write).toBe('stored');
+  });
+
+  it('propagates an async keychain write rejection', async () => {
+    const backendError = new Error('keychain write failed refresh-secret');
+    const store = new KeychainTokenStore({
+      createEntry: () => ({
+        setPassword: async () => { throw backendError; }
+      })
+    });
+
+    await expect(store.setRefreshToken('acct', 'refresh-secret')).rejects.toBe(backendError);
+  });
+
+  it('does not log raw keychain backend details or account identifiers on read failure', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new KeychainTokenStore({
+      createEntry: () => ({ getPassword: async () => { throw new Error('backend-secret-detail'); } })
+    });
+
+    await expect(store.getRefreshToken('sensitive-account')).rejects.toThrow();
+    expect(consoleError).toHaveBeenCalledWith('Keychain read failed');
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('backend-secret-detail');
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('sensitive-account');
+    consoleError.mockRestore();
+  });
+
   it('fails loud when clearing the keychain throws', async () => {
     const backendError = new Error('keychain locked');
     const store = new KeychainTokenStore({

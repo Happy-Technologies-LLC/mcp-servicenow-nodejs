@@ -19,6 +19,11 @@ const ALLOWED_FIELDS = new Set([
 ]);
 const OUTPUT_FIELDS = ALLOWED_FIELDS;
 const SECRET_KEY_PATTERN = /(?:password|secret|token|credential|api[_-]?key|private[_-]?key)/i;
+const SAFE_CREDENTIAL_ERROR_MESSAGES = new Map([
+  ['CREDENTIAL_NOT_FOUND', 'Required credential is missing; store it with the local credential command and retry.'],
+  ['KEYCHAIN_UNAVAILABLE', 'Credential store unavailable; unlock or configure the local keychain and retry.'],
+  ['KEYCHAIN_OPERATION_FAILED', 'Credential store operation failed; verify local keychain access and retry.']
+]);
 
 const INSTANCE_SCHEMA_PROPERTIES = {
   name: { type: 'string', description: 'Unique local instance name (for example, dev or prod).' },
@@ -234,7 +239,11 @@ function registryError(error) {
     });
   }
   if (error?.code === 'CREDENTIAL_NOT_FOUND' || typeof error?.code === 'string' && error.code.startsWith('KEYCHAIN_')) {
-    return errorResponse(error.code, error.message || 'The local credential store could not be checked; no registration was committed.', error.details || {});
+    const requestedCode = typeof error?.code === 'string' ? error.code : '';
+    const code = SAFE_CREDENTIAL_ERROR_MESSAGES.has(requestedCode)
+      ? requestedCode
+      : 'KEYCHAIN_OPERATION_FAILED';
+    return errorResponse(code, SAFE_CREDENTIAL_ERROR_MESSAGES.get(code), safeRegistryDetails(error));
   }
   if (error?.code === 'REGISTRY_ROLLBACK_REQUIRED') {
     return errorResponse(
@@ -270,7 +279,20 @@ function registryError(error) {
   return errorResponse('INSTANCE_REGISTRATION_FAILED', 'The instance registration could not be completed.');
 }
 
-async function rollbackRegistration({ registry, configManager, name, registered, priorDefault, input }) {
+function logRegistrationDiagnostic(dependencies, operation, code, name) {
+  const diagnostic = { operation, code };
+  if (typeof name === 'string' && /^[A-Za-z0-9_-]+$/.test(name)) diagnostic.name = name;
+  const logger = typeof dependencies?.diagnosticLogger === 'function'
+    ? dependencies.diagnosticLogger
+    : console.error;
+  try {
+    logger(JSON.stringify(diagnostic));
+  } catch {
+    // Diagnostics must never change registration or rollback behavior.
+  }
+}
+
+async function rollbackRegistration({ registry, configManager, name, registered, priorDefault, input, dependencies }) {
   try {
     if (typeof registry.compensateRegistration !== 'function') {
       throw Object.assign(new Error('Registration compensation is unavailable'), {
@@ -282,6 +304,7 @@ async function rollbackRegistration({ registry, configManager, name, registered,
       priorDefault
     });
   } catch {
+    logRegistrationDiagnostic(dependencies, 'registration_rollback', 'REGISTRY_ROLLBACK_REQUIRED', name);
     return registryError({ code: 'REGISTRY_ROLLBACK_REQUIRED' });
   }
 
@@ -293,6 +316,9 @@ async function rollbackRegistration({ registry, configManager, name, registered,
     }
   } catch (error) {
     restoreError = error;
+  }
+  if (restoreError) {
+    logRegistrationDiagnostic(dependencies, 'registration_restore_reload', 'REGISTRY_RELOAD_FAILED', name);
   }
 
   return errorResponse(
@@ -461,6 +487,7 @@ export async function handleInstanceSetupTool(name, args = {}, dependencies = {}
       await dependencies.onConfigReload();
     }
   } catch {
+    logRegistrationDiagnostic(dependencies, 'registration_reload', 'REGISTRY_RELOAD_FAILED', args.name);
     return registrationReloadFailure(
       dependencies,
       args,

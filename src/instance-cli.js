@@ -712,7 +712,7 @@ function canonicalMigrationPath(filePath, registryFs, registry) {
   while (true) {
     try {
       const canonicalParent = registryFs.realpathSync(candidate);
-      return path.resolve(canonicalParent, ...missing.reverse());
+      return path.resolve(canonicalParent, ...missing);
     } catch (error) {
       if (error?.code !== 'ENOENT') throw migrationSourceIdentityError(registry);
       const parent = path.dirname(candidate);

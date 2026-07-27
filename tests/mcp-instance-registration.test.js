@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import { createMcpServer } from '../src/mcp-server-consolidated.js';
-import { credentialRefFor } from '../src/instance-credential-store.js';
+import { credentialRefFor, InstanceCredentialStore } from '../src/instance-credential-store.js';
 import { InstanceRegistry } from '../src/instance-registry.js';
 
 const tempDirs = [];
@@ -250,6 +250,55 @@ describe('SN-Register-Instance', () => {
     expect(result.content[0].text).toContain('unavailable in docs-only mode');
   });
 
+  test('sanitizes keychain registration failures before returning MCP responses', async () => {
+    const fixture = 'keychain-secret-fixture';
+    const harness = await createHarness();
+    jest.spyOn(harness.registry, 'get').mockRejectedValueOnce(Object.assign(
+      new Error(`keychain backend failure ${fixture}`),
+      { code: 'KEYCHAIN_UNAVAILABLE', details: { secret: fixture, path: '/tmp/instances.json' } }
+    ));
+
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata('keychain-error'));
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      code: 'KEYCHAIN_UNAVAILABLE',
+      message: 'Credential store unavailable; unlock or configure the local keychain and retry.'
+    });
+    expect(payload.path).toBe(path.resolve('/tmp/instances.json'));
+    expect(JSON.stringify(result)).not.toContain(fixture);
+  });
+  test.each([
+    ['validate', 'validate'],
+    ['register', 'register']
+  ])('sanitizes secret-bearing %s errors', async (_phase, method) => {
+    const fixture = `registration-${method}-secret`;
+    const harness = await createHarness();
+    const failure = Object.assign(new Error(`backend failure ${fixture}`), {
+      code: 'KEYCHAIN_OPERATION_FAILED',
+      details: { secret: fixture, path: `/tmp/${method}-registry.json` }
+    });
+    if (method === 'validate') {
+      jest.spyOn(harness.registry, 'validate').mockRejectedValueOnce(failure);
+    } else {
+      jest.spyOn(harness.registry, 'register').mockRejectedValueOnce(failure);
+    }
+
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata(`${method}-error`));
+    const payload = parseResponse(result);
+
+    expect(result.isError).toBe(true);
+    expect(payload).toMatchObject({
+      success: false,
+      code: 'KEYCHAIN_OPERATION_FAILED',
+      message: 'Credential store operation failed; verify local keychain access and retry.'
+    });
+    expect(JSON.stringify(result)).not.toContain(fixture);
+  });
+
+
   test('requires an existing basic password credential without mutating the registry', async () => {
     const store = { hasSecret: jest.fn(async () => false) };
     const harness = await createHarness({ credentialStore: store });
@@ -270,6 +319,29 @@ describe('SN-Register-Instance', () => {
     expect(harness.registry.list()).toEqual([]);
     expect(harness.configManager.reload).not.toHaveBeenCalled();
     expect(store.hasSecret).toHaveBeenCalledWith(credentialRefFor('dev', 'password'));
+  });
+
+  test('rejects a whitespace-only keychain credential without persisting metadata', async () => {
+    const credentialStore = new InstanceCredentialStore({
+      createEntry: async () => ({
+        getPassword: async () => '   ',
+        setPassword: async () => {},
+        deletePassword: async () => true
+      })
+    });
+    const harness = await createHarness({ credentialStore });
+
+    const result = await harness.callTool('SN-Register-Instance', {
+      name: 'blank-credential',
+      url: 'https://blank-credential.service-now.com',
+      authType: 'basic',
+      username: 'user'
+    });
+    const payload = parseResponse(result);
+
+    expect(payload).toMatchObject({ success: false, code: 'CREDENTIAL_NOT_FOUND' });
+    expect(harness.registry.list()).toEqual([]);
+    expect(harness.configManager.reload).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -487,6 +559,36 @@ describe('SN-Register-Instance', () => {
       rollbackRequired: true,
       restartRequired: true
     });
+  });
+
+  test('logs only sanitized operation diagnostics for reload and rollback failures', async () => {
+    const fixture = 'registration-diagnostic-secret-fixture';
+    const harness = await createHarness();
+    harness.configManager.reload.mockRejectedValueOnce(Object.assign(
+      new Error(`reload failed ${fixture}`),
+      { config: { credentialRef: `keychain:${fixture}` } }
+    ));
+    jest.spyOn(harness.registry, 'compensateRegistration').mockRejectedValueOnce(Object.assign(
+      new Error(`rollback failed ${fixture}`),
+      { code: 'REGISTRY_WRITE_FAILED', details: { credentialRef: `keychain:${fixture}` } }
+    ));
+    const diagnosticSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await harness.callTool('SN-Register-Instance', publicMetadata('diagnostic-failure'));
+    const payload = parseResponse(result);
+    const diagnostics = JSON.stringify(diagnosticSpy.mock.calls);
+
+    expect(payload).toMatchObject({
+      code: 'REGISTRY_ROLLBACK_REQUIRED',
+      persisted: true,
+      rollbackRequired: true
+    });
+    expect(diagnostics).toContain('registration_reload');
+    expect(diagnostics).toContain('REGISTRY_RELOAD_FAILED');
+    expect(diagnostics).toContain('registration_rollback');
+    expect(diagnostics).toContain('REGISTRY_ROLLBACK_REQUIRED');
+    expect(diagnostics).not.toContain(fixture);
+    expect(diagnostics).not.toContain('credentialRef');
   });
 
   test('rolls back persisted metadata when the reload callback fails', async () => {

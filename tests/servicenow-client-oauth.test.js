@@ -175,6 +175,50 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(serialized).not.toContain(`Basic ${basicAuth}`);
   });
 
+  it('redacts newly issued token response credentials before authorization-code caching', async () => {
+    const secrets = {
+      accessToken: 'new-access-token-fixture',
+      refreshToken: 'new-refresh-token-fixture',
+      password: 'response-password-fixture',
+      clientSecret: 'response-client-secret-fixture',
+      authorization: 'Bearer response-authorization-fixture'
+    };
+    const flow = async () => {
+      const error = new Error(Object.values(secrets).join(' '));
+      error.stack = `AuthCodeFailure: ${Object.values(secrets).join(' ')}`;
+      error.details = { password: secrets.password, note: secrets.accessToken };
+      error.logs = [`authorization: ${secrets.authorization}`, secrets.refreshToken];
+      error.config = {
+        data: {
+          client_secret: secrets.clientSecret,
+          password: secrets.password,
+          Authorization: secrets.authorization
+        }
+      };
+      error.response = {
+        status: 500,
+        data: {
+          access_token: secrets.accessToken,
+          refresh_token: secrets.refreshToken
+        }
+      };
+      throw error;
+    };
+    const store = new InMemoryTokenStore();
+    const client = makeClient({ store, flow });
+
+    const error = await client._getOAuthToken().catch(thrown => thrown);
+    const serialized = serializedError(error);
+
+    for (const secret of Object.values(secrets)) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
+    expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBeNull();
+  });
+
   it('redacts OAuth and basic credential material from refresh endpoint errors', async () => {
     const accessToken = 'refresh-access-secret';
     const refreshToken = 'refresh-token-secret';
@@ -244,8 +288,9 @@ describe('ServiceNowClient authorization_code grant', () => {
     expect(flowCalls).toBe(1);
     expect(await store.getRefreshToken(DEFAULT_ACCOUNT)).toBe('rt-fresh');
   });
-  it('does not start browser sign-in when clearing an invalid_grant refresh token fails', async () => {
-    const clearError = new Error('keychain locked');
+  it('wraps a refresh-token clear failure without exposing backend details', async () => {
+    const secret = 'clear-refresh-secret';
+    const clearError = new Error(`keychain locked ${secret}`);
     const store = {
       getRefreshToken: jest.fn(async () => 'rt-expired'),
       clearRefreshToken: jest.fn(async () => { throw clearError; }),
@@ -259,11 +304,34 @@ describe('ServiceNowClient authorization_code grant', () => {
     });
     const client = makeClient({ store, flow, postToken });
 
-    await expect(client._getOAuthToken()).rejects.toBe(clearError);
+    const error = await client._getOAuthToken().catch(thrown => thrown);
+    expect(error).toMatchObject({ code: 'KEYCHAIN_OPERATION_FAILED' });
+    expect(JSON.stringify(error)).not.toContain(secret);
+    expect(error.message).toBe('Credential store operation failed');
 
     expect(store.clearRefreshToken).toHaveBeenCalledWith(DEFAULT_ACCOUNT);
     expect(flow).not.toHaveBeenCalled();
     expect(client.oauthRefreshToken).toBeNull();
+  });
+
+  it('wraps a refresh-token read failure without exposing backend details or populating cache', async () => {
+    const secret = 'read-refresh-secret';
+    const store = {
+      getRefreshToken: jest.fn(async () => { throw new Error(`keychain read failed ${secret}`); }),
+      clearRefreshToken: jest.fn(),
+      setRefreshToken: jest.fn()
+    };
+    const flow = jest.fn(async () => ({ access_token: 'unexpected-browser-token' }));
+    const client = makeClient({ store, flow });
+
+    const error = await client._getOAuthToken().catch(thrown => thrown);
+    expect(error).toMatchObject({ code: 'KEYCHAIN_OPERATION_FAILED' });
+    expect(JSON.stringify(error)).not.toContain(secret);
+    expect(error.message).toBe('Credential store operation failed');
+    expect(flow).not.toHaveBeenCalled();
+    expect(client.oauthToken).toBeNull();
+    expect(client.oauthRefreshToken).toBeNull();
+    expect(client.oauthTokenExpiry).toBeNull();
   });
 
 

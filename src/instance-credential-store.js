@@ -147,6 +147,9 @@ export class InstanceCredentialStore {
     const validatedRef = validateCredentialRef(ref);
     const entry = await this._entry(validatedRef);
     const value = await entry.getPassword();
+    if (typeof value === 'string' && value.trim().length === 0) {
+      throw new CredentialNotFoundError(validatedRef);
+    }
     if (typeof value !== 'string') {
       await this._verifyBackendHealth();
       throw new CredentialNotFoundError(validatedRef);
@@ -167,6 +170,9 @@ export class InstanceCredentialStore {
     const validatedRef = validateCredentialRef(ref);
     const entry = await this._entry(validatedRef);
     const value = await entry.getPassword();
+    if (typeof value === 'string' && value.trim().length === 0) {
+      return false;
+    }
     if (typeof value !== 'string') {
       await this._verifyBackendHealth();
       return false;

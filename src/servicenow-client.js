@@ -230,6 +230,29 @@ function collectAuthorizationValues(value, values, seen = new Set(), key = '') {
   }
 }
 
+function collectErrorCredentialValues(value, values, seen = new Set(), key = '') {
+  if (typeof value === 'string') {
+    if (isCredentialField(key)) {
+      addAuthorizationValue(values, value);
+      values.add(value);
+    } else if (/^(?:data|body)$/i.test(key)) {
+      try {
+        collectErrorCredentialValues(JSON.parse(value), values, seen, key);
+      } catch {
+        for (const [field, fieldValue] of new URLSearchParams(value)) {
+          collectErrorCredentialValues(fieldValue, values, seen, field);
+        }
+      }
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return;
+  seen.add(value);
+  for (const [childKey, childValue] of Object.entries(value)) {
+    collectErrorCredentialValues(childValue, values, seen, childKey);
+  }
+}
+
 function isCredentialField(key) {
   return /^(?:authorization|access_token|refresh_token|client_secret|password|token|id_token|basic)$/i.test(key)
     || /authorization/i.test(key);
@@ -281,12 +304,12 @@ function isExplicitInvalidGrant(error) {
 }
 
 function safeAuthError(error, client) {
-  let message = typeof error?.message === 'string' && error.message
+  const values = collectCredentialValues(client);
+  collectErrorCredentialValues(error, values);
+  collectAuthorizationValues(error, values);
+  const message = redactCredentialStrings(typeof error?.message === 'string' && error.message
     ? error.message
-    : 'Authentication request failed';
-  for (const value of collectCredentialValues(client)) {
-    message = message.split(value).join('[redacted]');
-  }
+    : 'Authentication request failed', values);
   const safe = error instanceof AuthenticationError
     ? new AuthenticationError(message, error.code)
     : new Error(message);
@@ -295,6 +318,12 @@ function safeAuthError(error, client) {
   if (status === 401) safe.code = 'AUTHENTICATION_FAILED';
   else if (status === 403) safe.code = 'AUTHORIZATION_FAILED';
   else if (typeof error?.code === 'string' && !CREDENTIAL_ERROR_CODES.has(error.code)) safe.code = error.code;
+  for (const field of ['details', 'logs', 'config', 'request', 'response', 'payload']) {
+    if (error?.[field] !== undefined) safe[field] = sanitizeCopy(error[field], values);
+  }
+  if (typeof error?.stack === 'string') {
+    safe.stack = redactCredentialStrings(error.stack, values);
+  }
   return safe;
 }
 
@@ -788,10 +817,17 @@ export class ServiceNowClient {
 
     // Load a persisted refresh token if we don't have one in memory yet.
     if (!this.oauthRefreshToken) {
-      this._assertCurrentGeneration(generation);
-      const storedRefreshToken = await tokenStore.getRefreshToken(account);
-      this._assertCurrentGeneration(generation);
-      this.oauthRefreshToken = storedRefreshToken;
+      try {
+        this._assertCurrentGeneration(generation);
+        const storedRefreshToken = await tokenStore.getRefreshToken(account);
+        this._assertCurrentGeneration(generation);
+        this.oauthRefreshToken = storedRefreshToken;
+      } catch (error) {
+        if (isStaleInstanceError(error)) {
+          throw error;
+        }
+        throw safeCredentialError(error);
+      }
     }
 
     // Try the refresh token first — avoids a browser round-trip.
@@ -830,8 +866,15 @@ export class ServiceNowClient {
         this._assertCurrentGeneration(generation);
         this.oauthRefreshToken = null;
         this._assertCurrentGeneration(generation);
-        await tokenStore.clearRefreshToken(account);
-        this._assertCurrentGeneration(generation);
+        try {
+          await tokenStore.clearRefreshToken(account);
+          this._assertCurrentGeneration(generation);
+        } catch (error) {
+          if (isStaleInstanceError(error)) {
+            throw error;
+          }
+          throw safeCredentialError(error);
+        }
       }
     }
 

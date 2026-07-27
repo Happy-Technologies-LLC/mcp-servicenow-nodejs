@@ -1447,6 +1447,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
           configManager: instanceConfigManager,
           instanceRegistry,
           credentialStore: instanceCredentialStore,
+          diagnosticLogger: options.instanceDiagnosticLogger,
           onConfigReload: options.onConfigReload || (() => {
             instanceClients.clear();
           })

@@ -564,6 +564,35 @@ test('migrate allows a genuinely nonexistent destination after canonicalizing it
   }
 });
 
+test('migrate preserves missing target component order during identity comparison', async () => {
+  const registry = {
+    readPath: '/tmp/target/sub',
+    writePath: '/tmp/sub/target',
+    fs: {
+      realpathSync: jest.fn(candidate => {
+        if (candidate === '/tmp/target/sub' || candidate === '/tmp') return candidate;
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      })
+    },
+    _rawDocument: () => ({
+      instances: [{ name: 'dev', url: 'https://dev.service-now.com', username: 'developer', password: 'fixture-password' }]
+    }),
+    _writeAtomic: jest.fn(async () => {})
+  };
+  const store = credentialStore();
+  const result = streams();
+
+  expect(await runInstanceCli(['instance', 'migrate'], {
+    registry,
+    credentialStore: store,
+    prompts: prompts({ confirm: true }),
+    stdout: result.out,
+    stderr: result.err
+  })).toBe(0);
+  expect(store.setSecret).toHaveBeenCalledWith('keychain:instance/dev/password', 'fixture-password');
+  expect(registry._writeAtomic).toHaveBeenCalledTimes(1);
+});
+
 
 test('migrate fails closed when an injected fs adapter cannot prove source identity', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-migration-missing-realpath-'));

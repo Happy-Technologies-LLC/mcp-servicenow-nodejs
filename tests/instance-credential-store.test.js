@@ -139,15 +139,27 @@ describe('InstanceCredentialStore', () => {
     await expect(store.deleteSecret(ref)).rejects.toThrow();
   });
 
-  test('hasSecret returns false only for a missing null or undefined value', async () => {
+  test('hasSecret returns false for a missing or empty value', async () => {
     const { values, store } = createHarness();
     const ref = credentialRefFor('dev', 'password');
 
     await expect(store.hasSecret(ref)).resolves.toBe(false);
     values.set(ref, '');
-    await expect(store.hasSecret(ref)).resolves.toBe(true);
+    await expect(store.hasSecret(ref)).resolves.toBe(false);
     values.set(ref, 'fixture-secret');
     await expect(store.hasSecret(ref)).resolves.toBe(true);
+  });
+
+  test.each(['', '   ', '\t\n'])('treats blank keychain value %j as missing', async value => {
+    const ref = credentialRefFor('dev', 'password');
+    const getHarness = createMapProbeHarness({ targetValue: value });
+    await expect(getHarness.store.getSecret(ref)).rejects.toMatchObject({
+      code: 'CREDENTIAL_NOT_FOUND',
+      ref
+    });
+
+    const hasHarness = createMapProbeHarness({ targetValue: value });
+    await expect(hasHarness.store.hasSecret(ref)).resolves.toBe(false);
   });
 
 test.each([null, undefined, false, 42, {}])(
