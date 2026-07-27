@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { input as defaultInput, password as defaultPassword, select as defaultSelect, confirm as defaultConfirm } from '@inquirer/prompts';
 import { InstanceRegistry } from './instance-registry.js';
 import { credentialRefFor, CredentialNotFoundError, InstanceCredentialStore } from './instance-credential-store.js';
@@ -625,6 +627,31 @@ function buildMigratedDocument(document, registry) {
   };
 }
 
+function migrationSourceEqualsTarget(registry) {
+  if (typeof registry?.readPath !== 'string' || typeof registry?.writePath !== 'string') return false;
+  const readPath = path.resolve(registry.readPath);
+  const writePath = path.resolve(registry.writePath);
+  if (readPath === writePath) return true;
+  const registryFs = registry.fs || fs;
+  if (typeof registryFs.realpathSync !== 'function') return false;
+  try {
+    return registryFs.realpathSync(readPath) === registryFs.realpathSync(writePath);
+  } catch {
+    return false;
+  }
+}
+
+function migrationSourceTargetError(registry) {
+  const error = new Error(
+    'Migration refused: the plaintext source and registry target resolve to the same file. '
+      + 'Choose a distinct HAPPY_CONFIG_PATH target, or unset HAPPY_CONFIG_PATH to use automatic '
+      + 'package-legacy -> user-registry migration. The source bytes and OS keychain were left unchanged.'
+  );
+  error.code = 'MIGRATION_SOURCE_EQUALS_TARGET';
+  error.details = { readPath: registry.readPath, writePath: registry.writePath };
+  return error;
+}
+
 async function writeMigratedDocument(registry, document) {
   if (typeof registry.migrateLegacy === 'function') return registry.migrateLegacy(document);
   if (typeof registry.migrate === 'function') return registry.migrate(document);
@@ -646,6 +673,9 @@ async function migrateCommand(context) {
   if (!writes.length) {
     output(context.stdout, 'No legacy plaintext credentials require migration.');
     return 0;
+  }
+  if (migrationSourceEqualsTarget(registry)) {
+    throw migrationSourceTargetError(registry);
   }
   const confirmed = await ask(context.prompts, 'confirm', { name: 'confirm', message: 'Migrate legacy credentials into the OS keychain?', default: false });
   if (!confirmed) {
@@ -732,6 +762,10 @@ export async function runInstanceCli(argv = [], dependencies = {}) {
     }
   } catch (error) {
     if (error?.code === 'NON_INTERACTIVE_PROMPT') {
+      output(stderr, error.message);
+      return 2;
+    }
+    if (error?.code === 'MIGRATION_SOURCE_EQUALS_TARGET') {
       output(stderr, error.message);
       return 2;
     }

@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { InstanceRegistry } from '../src/instance-registry.js';
 import { describe, expect, jest, test } from '@jest/globals';
 import { runInstanceCli } from '../src/instance-cli.js';
 
@@ -400,6 +404,41 @@ test('migrate stores plaintext credentials as refs, preserves document propertie
   expect(result.out.chunks.join('')).not.toContain('fixture-password');
   expect(result.out.chunks.join('')).not.toContain('fixture-client-secret');
 });
+test('migrate refuses same-file plaintext source before keychain writes', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'happy-migration-same-file-'));
+  const sourcePath = path.join(directory, 'instances.json');
+  const source = JSON.stringify({
+    version: 1,
+    instances: [{
+      name: 'dev',
+      url: 'https://dev.service-now.com',
+      username: 'developer',
+      password: 'fixture-password'
+    }]
+  }, null, 2);
+  fs.writeFileSync(sourcePath, source, 'utf8');
+  const registry = new InstanceRegistry({ readPath: sourcePath, writePath: sourcePath });
+  const store = credentialStore();
+  const result = streams();
+  const prompt = prompts({ confirm: true });
+
+  try {
+    expect(await runInstanceCli(['instance', 'migrate'], {
+      registry,
+      credentialStore: store,
+      prompts: prompt,
+      stdout: result.out,
+      stderr: result.err
+    })).toBe(2);
+    expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+    expect(store.setSecret).not.toHaveBeenCalled();
+    expect(prompt.confirm).not.toHaveBeenCalled();
+    expect(result.err.chunks.join('')).toMatch(/same file|distinct .*HAPPY_CONFIG_PATH|automatic.*user-registry/i);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 
 test('migrate rolls back only newly-created secrets when registry write fails', async () => {
   const registry = {

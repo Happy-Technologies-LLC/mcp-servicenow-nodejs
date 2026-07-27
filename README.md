@@ -88,6 +88,33 @@ npm install
 node src/cli.js instance list
 ```
 
+### Start the stdio server
+
+After a global install, `happy-platform-mcp` with no arguments starts the
+stdio MCP server:
+
+```bash
+npm install -g happy-platform-mcp
+SERVICENOW_INSTANCE=dev happy-platform-mcp
+```
+
+An MCP host can use the global command:
+
+```json
+{
+  "mcpServers": {
+    "happy-mcp-server": {
+      "command": "happy-platform-mcp",
+      "env": { "SERVICENOW_INSTANCE": "dev" }
+    }
+  }
+}
+```
+
+Or use `npx` with `command: "npx"` and `args: ["-y", "happy-platform-mcp"]`.
+From a source checkout, use `node src/stdio-server.js`; source CLI commands
+use `node src/cli.js instance ...`.
+
 ### Configure Instances
 
 **Recommended: register metadata with the local CLI**
@@ -142,13 +169,18 @@ For an MCP server/stdio host, set the same variable in the host environment:
 }
 ```
 
-`HAPPY_CONFIG_PATH` supports `~` and relative paths in the relevant process
-environment. A CLI migration writes to the explicitly selected
-`HAPPY_CONFIG_PATH`, when set, or to the default user registry path otherwise.
-It preserves the legacy source file and never migrates `SERVICENOW_*`
-environment variables. If credentials exist only in environment variables,
-manually register the instance with `instance add`, then set credentials with
-`instance credential set`.
+`HAPPY_CONFIG_PATH` supports `~` and relative paths. For migration, automatic
+package-legacy -> user-registry migration is available only when the resolver
+selects the package-relative `config/servicenow-instances.json` as
+`readPath` and the distinct default user registry as `writePath`.
+`HAPPY_CONFIG_PATH` normally selects both `readPath` and `writePath` and must
+point to a metadata-only version 1 registry. If it points to a plaintext
+source (the same file), the CLI refuses before any keychain write; source
+bytes and keychain entries remain unchanged. Choose a distinct
+`HAPPY_CONFIG_PATH` target, or unset it for the automatic workflow. Never
+copy secrets into command arguments. For a non-package legacy source, use a
+controlled distinct source/target workflow or manually use `instance add` and
+the masked `instance credential set` prompt.
 
 `SN-Register-Instance` normally applies a live registry reload and does not
 require a restart. Restart the MCP server only for docs-only mode or when the
@@ -343,6 +375,22 @@ Registration and runtime selection are separate:
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
+For a global install, no arguments starts stdio:
+
+```json
+{
+  "mcpServers": {
+    "happy-mcp-server": {
+      "command": "happy-platform-mcp",
+      "env": { "SERVICENOW_INSTANCE": "dev" }
+    }
+  }
+}
+```
+
+For an ephemeral install, use `command: "npx"` with
+`args: ["-y", "happy-platform-mcp"]`:
+
 ```json
 {
   "mcpServers": {
@@ -359,10 +407,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 The registry setting points to metadata; credentials remain in the local OS
 keychain. `HAPPY_CONFIG_PATH` is optional with the default user path and must
-be set before the server starts. For source installs, use `"command": "node"`
-with `"args": ["/path/to/happy-platform-mcp/src/stdio-server.js"]` and
-`"cwd": "/path/to/happy-platform-mcp"`. Restart Claude Desktop after editing
-its config.
+be set before the server starts. For source installs, use
+`node src/stdio-server.js` in the host config and `node src/cli.js instance
+<command>` for CLI operations. Restart Claude Desktop after editing its config.
 
 ## Authentication
 
@@ -370,20 +417,20 @@ Happy MCP Server supports three credential flows per instance. Use interactive
 `instance add`, then credential setup and `instance test`; never place secrets
 in JSON or command arguments.
 
-### Basic Auth
+### Global CLI: dev basic authentication
 
 ```bash
 happy-platform-mcp instance add
-# Select Basic authentication and enter URL, name, and username.
+# Select Basic authentication; set the name to dev and enter URL and username.
 happy-platform-mcp instance credential set dev --type password
 happy-platform-mcp instance test dev
 ```
 
-### OAuth client credentials
+### Global CLI: prod OAuth client credentials
 
 ```bash
 happy-platform-mcp instance add
-# Select OAuth -> Client credentials and enter URL and client ID.
+# Select OAuth -> Client credentials; set the name to prod and enter URL and client ID.
 happy-platform-mcp instance credential set prod --type client-secret
 happy-platform-mcp instance test prod
 ```

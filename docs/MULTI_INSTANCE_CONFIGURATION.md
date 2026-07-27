@@ -113,11 +113,31 @@ At startup and for CLI reads/writes, resolution is exact:
 4. The singular `SERVICENOW_*` environment fallback only when no registry file
    is available.
 
-Migration reads only the legacy registry JSON source, never `SERVICENOW_*`
-environment variables. It writes the resolved target: the explicit
-`HAPPY_CONFIG_PATH` path when set, otherwise the default user registry path.
-The legacy source remains untouched. Environment-only credentials must be
-manually re-registered with `instance add` and `instance credential set`.
+Automatic migration is available only when the resolver selects the legacy
+package-relative JSON and the default user target is distinct:
+
+```text
+readPath:  <package>/config/servicenow-instances.json
+writePath: <homedir>/.config/happy-platform-mcp/instances.json
+```
+
+In that case `happy-platform-mcp instance migrate` reads the package legacy
+source, stores its plaintext credentials in the OS keychain, and writes a
+metadata-only version 1 registry to the user target. The source bytes remain
+unchanged. `HAPPY_CONFIG_PATH` normally selects both the registry to read and
+the target to write, so it must point to a metadata-only version 1 registry.
+If it points to a plaintext source (the source and target are the same file),
+the CLI refuses before any keychain write and leaves both source bytes and
+keychain entries unchanged. Choose a distinct `HAPPY_CONFIG_PATH` target, or
+unset it and use the automatic package-legacy -> user-registry workflow.
+Never copy credentials into command arguments; for a non-package legacy source,
+use a controlled distinct source/target migration workflow or manually register
+metadata with `instance add`, then enter credentials through the masked
+`instance credential set` prompt.
+
+Migration never reads `SERVICENOW_*` environment variables. Environment-only
+credentials must be manually re-registered with `instance add` and
+`instance credential set`.
 
 Set `HAPPY_CONFIG_PATH` before launch; do not expect changing it through a
 running MCP call to retarget the process.
@@ -129,6 +149,20 @@ running MCP call to retarget the process.
 Add the optional `instance` parameter to any live ServiceNow operation except `SN-Set-Instance`, `SN-Get-Current-Instance`, and `SN-Docs-*`. If omitted, the call uses the current session client's implicit target.
 
 Explicit routes use clients cached by instance name. Use them when overlapping work may target different instances or race with `SN-Set-Instance`; concurrent calls against one stable implicit target do not require explicit routing. Explicit calls to the same instance share that named cached client. `SN-Set-Instance` changes only the current session client's implicit target in memory. It never edits JSON or environment configuration, and a new MCP session or server starts from startup selection again.
+
+Sequential session:
+
+```text
+SN-Set-Instance { "instance": "dev" }
+SN-Get-Current-Instance {}
+SN-List-Records { "table_name": "incident" }
+```
+
+Per-call routing:
+
+```text
+SN-List-Records { "instance": "prod", "table_name": "incident" }
+```
 
 ### 2. Startup Selection
 
@@ -143,22 +177,44 @@ SERVICENOW_INSTANCE=prod node src/stdio-server.js
 # Selects the configured "prod" entry
 ```
 
-In your Claude Desktop configuration:
+The published global binary starts the stdio server when invoked without
+arguments:
+
+```bash
+npm install -g happy-platform-mcp
+SERVICENOW_INSTANCE=prod happy-platform-mcp
+```
+
+An MCP host may invoke the global binary directly:
 
 ```json
 {
   "mcpServers": {
     "servicenow": {
-      "command": "node",
-      "args": ["src/stdio-server.js"],
-      "cwd": "/path/to/mcp-servicenow-nodejs",
-      "env": {
-        "SERVICENOW_INSTANCE": "dev"
-      }
+      "command": "happy-platform-mcp",
+      "env": { "SERVICENOW_INSTANCE": "dev" }
     }
   }
 }
 ```
+
+Or use the package through `npx`:
+
+```json
+{
+  "mcpServers": {
+    "servicenow": {
+      "command": "npx",
+      "args": ["-y", "happy-platform-mcp"],
+      "env": { "SERVICENOW_INSTANCE": "dev" }
+    }
+  }
+}
+```
+
+For a source checkout, use `node src/stdio-server.js` for the server and
+`node src/cli.js instance list` (or another `instance` command) for CLI
+operations. Set `"cwd"` to the checkout directory.
 
 The HTTP server does not use the stdio named override; it starts with the `"default": true` entry, or the first configured entry if none is marked.
 
@@ -240,7 +296,6 @@ const defaultInstance = configManager.getDefaultInstance();
 
 // Get a specific instance
 const prodInstance = configManager.getInstance('prod');
-
 // Apply named override, configured default, then first-entry precedence
 const selectedInstance = configManager.getInstanceOrDefault(process.env.SERVICENOW_INSTANCE);
 
@@ -251,23 +306,23 @@ const instances = configManager.listInstances();
 ## OAuth Authentication
 
 Each instance can independently use basic auth or OAuth 2.0. The following
-sequences use interactive `instance add`, then local credential setup and
+sequences use the global interactive CLI, then local credential setup and
 `instance test`; do not put secrets in JSON or command arguments.
 
-### Basic authentication
+### Global CLI: dev basic authentication
 
 ```bash
 happy-platform-mcp instance add
-# Select Basic authentication and enter the URL, name, and username.
+# Select Basic authentication; set the name to dev and enter URL and username.
 happy-platform-mcp instance credential set dev --type password
 happy-platform-mcp instance test dev
 ```
 
-### OAuth client credentials
+### Global CLI: prod OAuth client credentials
 
 ```bash
 happy-platform-mcp instance add
-# Select OAuth -> Client credentials and enter URL and client ID.
+# Select OAuth -> Client credentials; set the name to prod and enter URL and client ID.
 happy-platform-mcp instance credential set prod --type client-secret
 happy-platform-mcp instance test prod
 ```
