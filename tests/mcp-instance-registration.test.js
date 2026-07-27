@@ -116,6 +116,20 @@ describe('SN-Register-Instance', () => {
     ]);
     expect(JSON.stringify(result)).not.toMatch(/password|clientSecret|fixture-secret/i);
   });
+  test('persists and returns a custom authorization-code token URL without exposing secrets', async () => {
+    const harness = await createHarness();
+    const tokenUrl = 'https://oauth.example.com/custom/token';
+    const result = await harness.callTool('SN-Register-Instance', {
+      ...publicMetadata('custom-token'),
+      tokenUrl
+    });
+    const payload = parseResponse(result);
+
+    expect(payload.metadata.tokenUrl).toBe(tokenUrl);
+    expect(harness.registry.get('custom-token').tokenUrl).toBe(tokenUrl);
+    expect(JSON.stringify(result)).not.toMatch(/password|clientSecret|accessToken|tokenValue|fixture-secret/i);
+  });
+
   test('makes a newly registered named instance resolvable immediately', async () => {
     const routedClient = {
       currentInstanceName: 'dev',
@@ -251,6 +265,9 @@ describe('SN-Register-Instance', () => {
     const harness = await createHarness();
     for (const args of [
       { ...publicMetadata('secret-key'), password: 'fixture-secret' },
+      { ...publicMetadata('client-secret-key'), clientSecret: 'fixture-secret' },
+      { ...publicMetadata('access-token-key'), accessToken: 'fixture-token' },
+      { ...publicMetadata('token-value-key'), tokenValue: 'fixture-token' },
       { ...publicMetadata('nested-key'), nested: { clientSecret: 'fixture-secret' } }
     ]) {
       const result = await harness.callTool('SN-Register-Instance', args);

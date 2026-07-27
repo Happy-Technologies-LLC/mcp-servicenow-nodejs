@@ -129,10 +129,11 @@ function validateInputKeys(value, depth = 0) {
   }
 
   for (const [key, nested] of Object.entries(value)) {
-    if (SECRET_KEY_PATTERN.test(key)) {
+    const knownTopLevelField = depth === 0 && ALLOWED_FIELDS.has(key);
+    if (!knownTopLevelField && SECRET_KEY_PATTERN.test(key)) {
       return invalid('Secret-shaped fields are not accepted by this tool; use the local credential command');
     }
-    if (depth === 0 && !ALLOWED_FIELDS.has(key)) {
+    if (depth === 0 && !knownTopLevelField) {
       return invalid('Unknown instance metadata field');
     }
     if (depth > 0) {
