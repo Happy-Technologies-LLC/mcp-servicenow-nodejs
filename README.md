@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.nickzitzer%2Fservicenow-nodejs.svg)](https://mcptoplist.com/server/io.github.nickzitzer%2Fservicenow-nodejs)
+
 <p align="center">
   <img src="https://happy-tech.biz/images/logo.svg" alt="Happy MCP Server" width="120" height="120">
 </p>
