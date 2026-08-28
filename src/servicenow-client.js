@@ -450,6 +450,83 @@ export function enrichServiceNowError(error, credentialSource = null) {
   return sanitizeServiceNowError(error, credentialSource, message);
 }
 
+// Generates a unique per-execution marker so a background script's
+// completion line can be found in syslog and never confused with output
+// from an unrelated execution.
+export function generateScriptExecutionMarker() {
+  return `MCP_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+// Matches ANY execution's start/end marker line (see
+// buildBackgroundScriptWrapper), not just one specific run's — used by
+// _collectBackgroundScriptLogs to strip marker bookkeeping out of
+// returned log content regardless of which execution produced it.
+const MCP_SCRIPT_MARKER_PATTERN = /^MCP_\d+_[0-9a-f]+:(START|END)/;
+
+/**
+ * Builds the sys_trigger script body that wraps a caller's script so its
+ * outcome — success or a thrown error — is captured and reported via a
+ * greppable `gs.info` marker line (see issue #40). The original wrapper was
+ * a bare `try { script } finally { self-delete }` with no `catch`, so a
+ * thrown script was silently indistinguishable from a clean one; the
+ * `catch` here is what fixes that. `finally` still self-deletes the
+ * trigger when `autoDelete` is set, using the trigger's own sys_id.
+ *
+ * A `:START` marker is logged before the script runs and a `:END` marker
+ * (carrying the outcome JSON) after, bracketing a `sys_created_on` window
+ * that `_collectBackgroundScriptLogs` later queries to recover whatever
+ * the script itself logged via `gs.info`/`gs.print` in between.
+ */
+export function buildBackgroundScriptWrapper({ script, marker, autoDelete, triggerSysId }) {
+  const startMarker = `${marker}:START`;
+  const endMarker = `${marker}:END`;
+  const deleteBlock = autoDelete
+    ? `
+  var triggerGR = new GlideRecord('sys_trigger');
+  if (triggerGR.get('${triggerSysId}')) {
+    triggerGR.deleteRecord();
+  }`
+    : '';
+
+  return `
+// Auto-generated MCP script trigger
+gs.info('${startMarker}');
+try {
+  ${script}
+  gs.info('${endMarker}' + JSON.stringify({ ok: true }));
+} catch (e) {
+  gs.info('${endMarker}' + JSON.stringify({ ok: false, error: e.message, stack: e.stack || '' }));
+} finally {${deleteBlock}
+}`;
+}
+
+/**
+ * Parses a syslog record produced by `buildBackgroundScriptWrapper` into a
+ * `{ state: 'completed' | 'failed', output?, error?, stack? }` outcome.
+ */
+export function parseBackgroundScriptMarker(record, marker) {
+  const message = record?.message || '';
+  const idx = message.indexOf(marker);
+  const jsonPart = idx >= 0 ? message.slice(idx + marker.length) : message;
+
+  let payload;
+  try {
+    payload = JSON.parse(jsonPart);
+  } catch (parseError) {
+    return {
+      state: 'failed',
+      error: `Could not parse script outcome from syslog message: ${message}`
+    };
+  }
+
+  if (payload.ok) {
+    const { ok, ...output } = payload;
+    return { state: 'completed', output };
+  }
+
+  return { state: 'failed', error: payload.error || 'Script execution failed', stack: payload.stack };
+}
+
 export class ServiceNowClient {
   constructor(instanceUrl, username, password, options = {}) {
     this.currentInstanceName = 'default';
@@ -1128,7 +1205,7 @@ gr.insert();
 
 gs.info('✅ Update set changed to: ${updateSet.name}');`;
 
-      const result = await this.executeScriptViaTrigger(script, `Set update set to: ${updateSet.name}`, true);
+      const result = await this.executeScriptViaTrigger(script, `Set update set to: ${updateSet.name}`, true, { wait: false });
       return {
         success: true,
         update_set: updateSet.name,
@@ -1837,8 +1914,26 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
     return this.createRecord('sys_report', data);
   }
 
-  // Execute script via sys_trigger (scheduled job that runs immediately)
-  async executeScriptViaTrigger(script, description = 'MCP Script Execution', autoDelete = true) {
+  // Execute script via sys_trigger (scheduled job that runs immediately).
+  //
+  // When `options.wait` is true (the default), this blocks until the
+  // script's completion marker shows up in syslog (or the timeout budget
+  // is exhausted) and resolves to one of three distinguishable outcomes:
+  //   - status: 'completed' — the script ran and did not throw; `output`
+  //     carries whatever accompanied the success marker, and `logs`
+  //     carries whatever the script itself logged via gs.info/gs.print.
+  //   - status: 'failed'    — the script ran and threw; `success` is false,
+  //     `error`/`stack` carry the failure, and `logs` still carries
+  //     whatever the script logged before it threw. This is NOT a success.
+  //   - status: 'timeout'   — no completion marker appeared within the
+  //     budget; `success` is false. The trigger may still be pending, may
+  //     have run without a marker, or may never have fired — inspect
+  //     `trigger_sys_id` manually. There is no end marker to bound a
+  //     window with, so `logs` is omitted rather than guessed.
+  // Pass `{ wait: false }` to keep the original fire-and-forget behavior
+  // (status: 'scheduled', no polling, no logs).
+  async executeScriptViaTrigger(script, description = 'MCP Script Execution', autoDelete = true, options = {}) {
+    const { wait = true, timeoutMs = 15000, intervalMs = 500 } = options;
     try {
       // Calculate next action time (1 second from now)
       const now = new Date();
@@ -1848,55 +1943,190 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
       // glide_date_time string as UTC, so this must not use local getters)
       const formatDateTime = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
 
-      // Wrap script with auto-delete logic if requested
-      let finalScript = script;
-      let triggerSysId = null;
-      if (autoDelete) {
-        // We'll set the sys_id after creation, then update the script
-        finalScript = script;  // Use original script for now
-      }
+      // Unique per-execution marker so the completion line is greppable in
+      // syslog and cannot be confused with output from an unrelated run.
+      const marker = generateScriptExecutionMarker();
+      const endMarker = `${marker}:END`;
+      // Bound the syslog poll to this execution window — an unbounded
+      // syslog query 500s on this platform (see issue #40).
+      const pollSince = formatDateTime(new Date(now.getTime() - 2000));
 
-      // Create sys_trigger record
-      const trigger = await this.createRecord('sys_trigger', {
+      const baseTriggerFields = {
         name: `MCP_Script_${Date.now()}`,
-        script: finalScript,
         next_action: formatDateTime(nextAction),
         trigger_type: '0', // Run once
         state: '0', // Ready state
         description: description || 'Automated script execution via MCP'
-      });
+      };
 
-      // If auto-delete requested, update script with self-delete logic
+      let trigger;
       if (autoDelete) {
-        const scriptWithDelete = `
-// Auto-generated MCP script trigger
-try {
-  ${script}
-} finally {
-  // Auto-delete this trigger after execution
-  var triggerGR = new GlideRecord('sys_trigger');
-  if (triggerGR.get('${trigger.sys_id}')) {
-    triggerGR.deleteRecord();
-    gs.info('MCP: Auto-deleted trigger ${trigger.sys_id}');
-  }
-}`;
-
-        await this.updateRecord('sys_trigger', trigger.sys_id, {
-          script: scriptWithDelete
-        });
+        // The self-delete block needs the trigger's own sys_id, which only
+        // exists after creation — create first, then patch in the wrapped
+        // script that references its own sys_id.
+        trigger = await this.createRecord('sys_trigger', { ...baseTriggerFields, script });
+        const wrappedScript = buildBackgroundScriptWrapper({ script, marker, autoDelete: true, triggerSysId: trigger.sys_id });
+        await this.updateRecord('sys_trigger', trigger.sys_id, { script: wrappedScript });
+      } else {
+        const wrappedScript = buildBackgroundScriptWrapper({ script, marker, autoDelete: false });
+        trigger = await this.createRecord('sys_trigger', { ...baseTriggerFields, script: wrappedScript });
       }
 
-      return {
-        success: true,
+      const schedulingInfo = {
         trigger_sys_id: trigger.sys_id,
         trigger_name: trigger.name,
         next_action: formatDateTime(nextAction),
-        auto_delete: autoDelete,
-        message: `Script scheduled to run at ${formatDateTime(nextAction)}. ${autoDelete ? 'Trigger will auto-delete after execution.' : 'Trigger will remain after execution.'}`
+        auto_delete: autoDelete
+      };
+
+      if (!wait) {
+        return {
+          success: true,
+          status: 'scheduled',
+          ...schedulingInfo,
+          message: `Script scheduled to run at ${formatDateTime(nextAction)}. ${autoDelete ? 'Trigger will auto-delete after execution.' : 'Trigger will remain after execution.'}`
+        };
+      }
+
+      const outcome = await this._pollBackgroundScriptOutcome(endMarker, pollSince, timeoutMs, intervalMs);
+
+      if (outcome.state === 'completed' || outcome.state === 'failed') {
+        const { logs, truncated, logsWindowUnverified } = await this._collectBackgroundScriptLogs({
+          endMarker,
+          sinceDateTime: schedulingInfo.next_action,
+          untilDateTime: outcome.endTime
+        });
+
+        if (outcome.state === 'completed') {
+          return {
+            success: true,
+            status: 'completed',
+            ...schedulingInfo,
+            output: outcome.output,
+            logs,
+            ...(truncated ? { logsTruncated: true } : {}),
+            ...(logsWindowUnverified ? { logsWindowUnverified: true } : {}),
+            message: 'Script executed successfully.'
+          };
+        }
+
+        return {
+          success: false,
+          status: 'failed',
+          ...schedulingInfo,
+          error: outcome.error,
+          stack: outcome.stack,
+          logs,
+          ...(truncated ? { logsTruncated: true } : {}),
+          ...(logsWindowUnverified ? { logsWindowUnverified: true } : {}),
+          message: `Script execution failed: ${outcome.error}`
+        };
+      }
+
+      return {
+        success: false,
+        status: 'timeout',
+        ...schedulingInfo,
+        message: `Timed out after ${timeoutMs}ms waiting for the script's completion marker in syslog. Trigger ${trigger.sys_id} may still be pending, may have run without producing a marker, or may have failed to fire — inspect it manually.`
       };
     } catch (error) {
       throw new Error(`Failed to create script trigger: ${error.message}`);
     }
+  }
+
+  // Polls syslog for the completion marker a background script wrapper
+  // (see buildBackgroundScriptWrapper) writes on success or failure. The
+  // sys_created_on lower bound is required: an unbounded syslog query 500s
+  // on this platform (see issue #40). Returns the found record's
+  // `sys_created_on` as `endTime` so the caller can bound a log-collection
+  // window without a second guess at the script's finish time.
+  async _pollBackgroundScriptOutcome(endMarker, sinceDateTime, timeoutMs, intervalMs) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const records = await this.getRecords('syslog', {
+        sysparm_query: `messageLIKE${endMarker}^sys_created_on>=${sinceDateTime}^ORDERBYDESCsys_created_on`,
+        sysparm_fields: 'message,sys_created_on',
+        sysparm_limit: 1
+      });
+
+      if (Array.isArray(records) && records.length > 0) {
+        return { ...parseBackgroundScriptMarker(records[0], endMarker), endTime: records[0].sys_created_on };
+      }
+
+      if (Date.now() >= deadline) {
+        return { state: 'timeout' };
+      }
+
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  // Collects whatever the script itself logged (gs.info/gs.print) between
+  // its start and end markers, for a `completed`/`failed` outcome only — a
+  // `timeout` has no end marker and therefore no window to bound a query
+  // with. The user's own log lines carry no marker text, so a broad
+  // `sys_created_on` range query (both a lower AND an upper bound — an
+  // unbounded syslog query 500s on this platform) is unavoidable to find
+  // them.
+  //
+  // Two platform limitations were found by testing this against a live
+  // instance, and both shape the implementation below:
+  //
+  // 1. `sys_created_on` is second-resolution, and ties are NOT guaranteed
+  //    to come back in real execution order — a positional "slice between
+  //    this run's own start/end line" approach (tried first) silently
+  //    scrambled when two runs landed in the same second, leaking one
+  //    run's own marker text into another run's `logs`. So marker lines
+  //    are excluded by SHAPE (any `MCP_<ts>_<hex>:START`/`:END` line),
+  //    not by exact match to this run's own marker — this guarantees no
+  //    execution's bookkeeping literal ever leaks into `logs`, regardless
+  //    of ordering.
+  // 2. The lower bound is the trigger's own `next_action` (the earliest
+  //    moment this run's script could possibly execute), not a generic
+  //    few-seconds-back buffer — a generic buffer let an EARLIER, already
+  //    finished MCP call's own log lines bleed into this run's window.
+  //
+  // What is NOT solved, and cannot be from the client side: two genuinely
+  // unrelated background scripts (this run's, and some other scheduled
+  // job on a busy/shared instance) both logging with `source: '*** Script'`
+  // inside the exact same second are indistinguishable by timestamp alone,
+  // and neither carries a marker to filter on. That residual noise is a
+  // real, disclosed limitation of syslog time-window correlation on this
+  // platform, not a bug — solving it would require a server-side
+  // correlation id the Table API does not expose.
+  //
+  // Integrity check: `sinceDateTime` (this run's own `next_action`) is
+  // computed from the MCP host's clock, with no slack for host/instance
+  // clock skew — unlike the outcome poll's lower bound, which has a
+  // built-in buffer. If the host clock runs ahead of the instance, this
+  // bound can land AFTER the real ServiceNow-assigned timestamps of this
+  // run's own log rows, and the range query below would then miss them
+  // entirely — including this run's own end marker, which
+  // `_pollBackgroundScriptOutcome` JUST found moments ago via a separate,
+  // looser query. Its absence here is therefore a hard signal that the
+  // window is wrong, not that the script printed nothing: an empty
+  // `logs` array would otherwise be silently indistinguishable from a
+  // genuinely silent script — precisely the ambiguity issue #40 exists
+  // to resolve. `endMarker` is passed in solely for this check, not for
+  // content filtering (that stays shape-based per point 1 above).
+  async _collectBackgroundScriptLogs({ endMarker, sinceDateTime, untilDateTime, maxLines = 100 }) {
+    const records = await this.getRecords('syslog', {
+      sysparm_query: `source=*** Script^sys_created_on>=${sinceDateTime}^sys_created_on<=${untilDateTime}^ORDERBYsys_created_on`,
+      sysparm_fields: 'message,sys_created_on',
+      sysparm_limit: maxLines + 10
+    });
+
+    const messages = (Array.isArray(records) ? records : []).map(record => record?.message || '');
+    const windowVerified = messages.some(message => message.startsWith(endMarker));
+
+    const lines = messages.filter(message => !MCP_SCRIPT_MARKER_PATTERN.test(message));
+
+    const truncated = lines.length > maxLines;
+    return {
+      logs: truncated ? lines.slice(0, maxLines) : lines,
+      truncated,
+      ...(windowVerified ? {} : { logsWindowUnverified: true })
+    };
   }
 
   // Batch operations

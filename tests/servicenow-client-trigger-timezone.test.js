@@ -37,7 +37,7 @@ describe('executeScriptViaTrigger next_action formatting', () => {
     const captured = [];
     client.client.defaults.adapter = captureAdapter(captured);
 
-    const result = await client.executeScriptViaTrigger("gs.info('hi');", 'Test script', true);
+    const result = await client.executeScriptViaTrigger("gs.info('hi');", 'Test script', true, { wait: false });
 
     expect(result.next_action).toBe('2026-08-28 12:00:01');
     expect(result.message).toContain('2026-08-28 12:00:01');
