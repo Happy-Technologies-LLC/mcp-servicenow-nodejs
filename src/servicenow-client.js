@@ -1024,6 +1024,8 @@ export class ServiceNowClient {
     if (query.sysparm_query) params.append('sysparm_query', query.sysparm_query);
     if (query.sysparm_limit) params.append('sysparm_limit', query.sysparm_limit);
     if (query.sysparm_fields) params.append('sysparm_fields', query.sysparm_fields);
+    if (query.sysparm_offset) params.append('sysparm_offset', query.sysparm_offset);
+    if (query.sysparm_order_by) params.append('sysparm_order_by', query.sysparm_order_by);
 
     const response = await this.client.get(`/api/now/table/${table}?${params}`);
     return response.data.result;
