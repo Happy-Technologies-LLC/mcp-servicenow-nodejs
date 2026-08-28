@@ -5,6 +5,15 @@ import { ServiceNowClient } from './servicenow-client.js';
 import { createMcpServer } from './mcp-server-consolidated.js';
 import { instanceToClientOptions } from './config-manager.js';
 import { InstanceCredentialStore } from './instance-credential-store.js';
+import { installProcessCrashGuards } from './process-guards.js';
+
+// Guards the whole process against a single unhandled rejection or
+// uncaught exception taking down every concurrent MCP session — see
+// process-guards.js for the full rationale. Registration happens once
+// per process (module-scoped flag), so whichever entrypoint imports
+// this module first wins the label; server.js imports http-server.js,
+// so 'http-server' is the label actually used there too.
+installProcessCrashGuards('http-server');
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 

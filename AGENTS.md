@@ -144,8 +144,7 @@ SN-Query-Table({ table_name: "incident", limit: 10, instance: "prod" })
 ```javascript
 SN-Execute-Background-Script({
   script: "gs.info('Hello from automated script');",
-  description: "Test automated execution",
-  execution_method: "trigger"  // Default, most reliable
+  description: "Test automated execution"
 });
 ```
 
@@ -155,9 +154,7 @@ SN-Execute-Background-Script({
 3. Auto-deletes trigger after execution
 4. No manual copy-paste required!
 
-**Fallback methods:**
-- `ui`: Direct UI endpoint execution
-- `auto`: Try trigger → ui → create fix script
+**Note:** Script console/log output is not returned — only trigger scheduling metadata. Check `System Logs` in the ServiceNow UI (see issue #40).
 
 ### SN-Set-Update-Set (FULLY AUTOMATED!)
 ```javascript

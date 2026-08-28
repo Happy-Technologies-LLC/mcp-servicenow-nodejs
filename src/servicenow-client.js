@@ -472,10 +472,12 @@ export class ServiceNowClient {
   /**
    * Send progress notification
    * @param {string} message - Progress message
+   * @param {number} [current] - Current progress value
+   * @param {number} [total] - Total value for the progress operation
    */
-  notifyProgress(message) {
+  notifyProgress(message, current, total) {
     if (this.progressCallback) {
-      this.progressCallback(message);
+      this.progressCallback(message, current, total);
     }
   }
 
@@ -1842,11 +1844,9 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
       const now = new Date();
       const nextAction = new Date(now.getTime() + 1000); // 1 second from now
 
-      // Format: YYYY-MM-DD HH:MM:SS
-      const formatDateTime = (date) => {
-        const pad = (n) => n.toString().padStart(2, '0');
-        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-      };
+      // Format: YYYY-MM-DD HH:MM:SS (UTC — the Table API interprets a raw
+      // glide_date_time string as UTC, so this must not use local getters)
+      const formatDateTime = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
 
       // Wrap script with auto-delete logic if requested
       let finalScript = script;
@@ -1899,14 +1899,6 @@ try {
     }
   }
 
-  // Background script execution via UI endpoint (NOT WORKING - requires interactive session)
-  // NOTE: /sys.scripts.do endpoint requires interactive browser session with cookies
-  // from login.do - Basic Auth is not sufficient. Always fails with X-Is-Logged-In: false
-  // Use executeScriptViaTrigger() instead.
-  async executeBackgroundScript(script, scope = 'global') {
-    throw new Error('Direct UI script execution not supported - use sys_trigger method instead');
-  }
-
   // Batch operations
   async batchCreate(operations, transaction = true, reportProgress = true) {
     const results = {
@@ -1949,7 +1941,7 @@ try {
           // Report progress
           if (shouldReport(i)) {
             const percentage = Math.round(((i + 1) / total) * 100);
-            this.notifyProgress(`Creating record ${i + 1}/${total} (${percentage}%): ${op.table}`);
+            this.notifyProgress(`Creating record ${i + 1}/${total} (${percentage}%): ${op.table}`, i + 1, total);
           }
         } catch (error) {
           results.errors.push({
@@ -1959,7 +1951,7 @@ try {
           });
 
           if (reportProgress) {
-            this.notifyProgress(`Failed ${i + 1}/${total}: ${op.table} - ${error.message}`);
+            this.notifyProgress(`Failed ${i + 1}/${total}: ${op.table} - ${error.message}`, i + 1, total);
           }
 
           if (transaction) {
@@ -2013,7 +2005,7 @@ try {
         // Report progress
         if (shouldReport(i)) {
           const percentage = Math.round(((i + 1) / total) * 100);
-          this.notifyProgress(`Updating record ${i + 1}/${total} (${percentage}%): ${update.table}`);
+          this.notifyProgress(`Updating record ${i + 1}/${total} (${percentage}%): ${update.table}`, i + 1, total);
         }
       } catch (error) {
         results.errors.push({
@@ -2024,7 +2016,7 @@ try {
         });
 
         if (reportProgress) {
-          this.notifyProgress(`Failed ${i + 1}/${total}: ${update.table} - ${error.message}`);
+          this.notifyProgress(`Failed ${i + 1}/${total}: ${update.table} - ${error.message}`, i + 1, total);
         }
 
         if (stopOnError) {
@@ -2202,7 +2194,7 @@ try {
         const actSpec = activities[i];
 
         if (reportProgress) {
-          this.notifyProgress(`Creating activity ${i + 1}/${totalActivities}: ${actSpec.name}`);
+          this.notifyProgress(`Creating activity ${i + 1}/${totalActivities}: ${actSpec.name}`, i + 1, totalActivities);
         }
 
         const activity = await this.createActivity({
@@ -2231,7 +2223,7 @@ try {
         const transSpec = transitions[i];
 
         if (reportProgress) {
-          this.notifyProgress(`Creating transition ${i + 1}/${totalTransitions}`);
+          this.notifyProgress(`Creating transition ${i + 1}/${totalTransitions}`, i + 1, totalTransitions);
         }
 
         // Resolve activity references
@@ -2366,7 +2358,7 @@ try {
 
           if (shouldReport(i)) {
             const percentage = Math.round(((i + 1) / total) * 100);
-            this.notifyProgress(`Moving record ${i + 1}/${total} (${percentage}%): ${record.type || 'unknown'}`);
+            this.notifyProgress(`Moving record ${i + 1}/${total} (${percentage}%): ${record.type || 'unknown'}`, i + 1, total);
           }
         } catch (error) {
           results.failed++;
@@ -2376,7 +2368,7 @@ try {
           });
 
           if (reportProgress) {
-            this.notifyProgress(`Failed ${i + 1}/${total}: ${record.sys_id} - ${error.message}`);
+            this.notifyProgress(`Failed ${i + 1}/${total}: ${record.sys_id} - ${error.message}`, i + 1, total);
           }
         }
       }
@@ -2447,13 +2439,13 @@ try {
 
           if (shouldReport(i)) {
             const percentage = Math.round(((i + 1) / total) * 100);
-            this.notifyProgress(`Cloning record ${i + 1}/${total} (${percentage}%): ${record.type || 'unknown'}`);
+            this.notifyProgress(`Cloning record ${i + 1}/${total} (${percentage}%): ${record.type || 'unknown'}`, i + 1, total);
           }
         } catch (error) {
           failedCount++;
           console.error(`Failed to clone record ${record.sys_id}: ${error.message}`);
           if (reportProgress && failedCount <= 5) { // Only report first 5 failures to avoid spam
-            this.notifyProgress(`Failed to clone record ${i + 1}/${total}: ${error.message}`);
+            this.notifyProgress(`Failed to clone record ${i + 1}/${total}: ${error.message}`, i + 1, total);
           }
         }
       }
