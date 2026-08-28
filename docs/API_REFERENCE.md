@@ -807,13 +807,22 @@ Execute JavaScript server-side by creating a `sys_trigger` scheduled job that ru
 {
   "script": "gs.info('Hello from script');",
   "description": "Test script execution",
+  "wait": true,
   "instance": "dev"
 }
 ```
 
-**Note:** This tool does not return the script's console/log output — only trigger scheduling metadata (`trigger_sys_id`, `trigger_name`, `next_action`). Check `System Logs` in the ServiceNow UI to see `gs.info`/`gs.print` output (see issue #40).
+`wait` defaults to `true`: the tool polls `syslog` (bounded by a `sys_created_on` lower bound and a timeout, ~15s by default) for a per-execution correlation marker the script wrapper emits via `gs.info`, then returns one of three outcomes:
 
-**Returns:** Success status and trigger details
+- **`completed`** — the script ran without throwing; `output` carries whatever accompanied the success marker, and `logs` carries whatever the script itself logged via `gs.info`/`gs.print` while it ran.
+- **`failed`** — the script threw; `error` (and `stack`, when available) carry the failure, and `logs` still carries whatever the script logged before it threw. This is reported as an error, never as success.
+- **`timeout`** — the marker never appeared within the budget. `trigger_sys_id` is included so you can inspect the trigger manually; this is never reported as success. There is no end marker to bound a window with, so `logs` is omitted.
+
+`logs` is recovered by bracketing the run with start/end markers and querying `syslog` for everything in between (both a lower AND an upper `sys_created_on` bound), capped at 100 lines (`logsTruncated: true` when more were emitted). This is a time-window correlation, not true per-run isolation — a different script logging in the exact same window on a busy instance could in principle bleed in — but it is strictly better than requiring the caller to hand-write this query themselves.
+
+Pass `wait: false` to skip polling and get back only trigger scheduling metadata (`trigger_sys_id`, `trigger_name`, `next_action`) immediately, matching the original fire-and-forget behavior (no `logs`, no `output`; see issue #40).
+
+**Returns:** `status` (`completed` | `failed` | `timeout` | `scheduled`), `success`, trigger details, and `output`/`error`/`logs` depending on outcome.
 
 ---
 

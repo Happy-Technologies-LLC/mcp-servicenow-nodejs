@@ -153,8 +153,10 @@ SN-Execute-Background-Script({
 2. Executes in ~1 second
 3. Auto-deletes trigger after execution
 4. No manual copy-paste required!
+5. By default (`wait: true`), polls `syslog` for a correlation marker the script wrapper emits and returns `status: 'completed'` (with `output` and `logs`), `status: 'failed'` (with the thrown error and any `logs` emitted before it — never reported as success), or `status: 'timeout'` (marker never showed up within ~15s; no `logs`; also never reported as success)
+6. `logs` captures whatever the script itself logged via `gs.info`/`gs.print` while it ran, recovered from a bounded `syslog` time window (capped at 100 lines) — a time-window correlation, not perfect isolation, but no longer requires a manual follow-up `syslog` query
 
-**Note:** Script console/log output is not returned — only trigger scheduling metadata. Check `System Logs` in the ServiceNow UI (see issue #40).
+**Note:** Pass `wait: false` for the old fire-and-forget behavior — returns immediately with only trigger scheduling metadata, no `output`/`logs` captured (see issue #40).
 
 ### SN-Set-Update-Set (FULLY AUTOMATED!)
 ```javascript

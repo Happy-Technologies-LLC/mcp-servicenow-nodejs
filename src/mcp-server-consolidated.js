@@ -675,7 +675,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
       },
       {
         name: 'SN-Execute-Background-Script',
-        description: 'Executes server-side JavaScript by creating a sys_trigger scheduled job that runs in ~1 second and auto-deletes after execution. Use for: setting update sets, complex GlideRecord operations, GlideUpdateSet API calls, etc. Note: this tool does not return the script\'s console/log output — only trigger scheduling metadata (see issue #40).',
+        description: 'Executes server-side JavaScript by creating a sys_trigger scheduled job that runs in ~1 second and auto-deletes after execution. Use for: setting update sets, complex GlideRecord operations, GlideUpdateSet API calls, etc. By default this waits for the script to finish and returns its outcome — "completed" (with captured output and gs.info/gs.print logs), "failed" (with the thrown error and any logs emitted before it), or "timeout" (marker never appeared within the budget; not a success) — by polling syslog for a correlation marker. Pass wait: false to skip polling and get back only trigger scheduling metadata immediately (see issue #40).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -686,6 +686,11 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             description: {
               type: 'string',
               description: 'Description of what the script does (optional)'
+            },
+            wait: {
+              type: 'boolean',
+              description: 'If true (default), block until the script reports completion (or the timeout elapses) and return its captured output/error. If false, return immediately with only trigger scheduling metadata (fire-and-forget).',
+              default: true
             }
           },
           required: ['script']
@@ -2166,14 +2171,89 @@ Please verify:
         }
 
         case 'SN-Execute-Background-Script': {
-          const { script, description } = args;
+          const { script, description, wait = true } = args;
 
           console.error(`🚀 Executing background script via sys_trigger...`);
 
+          const renderLogs = (result) => {
+            if (!result.logs) {
+              return '';
+            }
+            if (result.logs.length === 0) {
+              return '\n📜 Script logs: (none captured)\n';
+            }
+            const truncatedNote = result.logsTruncated
+              ? `\n(truncated to the first ${result.logs.length} lines)`
+              : '';
+            return `\n📜 Script logs:\n${result.logs.map(line => `  ${line}`).join('\n')}${truncatedNote}\n`;
+          };
+
           try {
             // Primary method: sys_trigger (ONLY working method)
-            const result = await requestClient.executeScriptViaTrigger(script, description, true);
+            const result = await requestClient.executeScriptViaTrigger(script, description, true, { wait });
 
+            if (result.status === 'completed') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `✅ Script executed successfully!
+
+${description ? `Description: ${description}\n` : ''}
+📊 Trigger Details:
+- Trigger sys_id: ${result.trigger_sys_id}
+- Trigger name: ${result.trigger_name}
+- Ran at: ${result.next_action}
+- Auto-delete: ${result.auto_delete ? 'Yes' : 'No'}
+${renderLogs(result)}
+📤 Output:
+${JSON.stringify(result.output, null, 2)}`
+                }],
+                isError: false
+              };
+            }
+
+            if (result.status === 'failed') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `❌ Script threw an error during execution — the script did NOT complete successfully.
+
+${description ? `Description: ${description}\n` : ''}
+📊 Trigger Details:
+- Trigger sys_id: ${result.trigger_sys_id}
+- Trigger name: ${result.trigger_name}
+- Ran at: ${result.next_action}
+${renderLogs(result)}
+🧨 Error: ${result.error}
+${result.stack ? `\nStack:\n${result.stack}` : ''}`
+                }],
+                isError: true
+              };
+            }
+
+            if (result.status === 'timeout') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `⏱️ Timed out waiting for the script to report completion — this is NOT a success.
+
+${description ? `Description: ${description}\n` : ''}
+📊 Trigger Details:
+- Trigger sys_id: ${result.trigger_sys_id}
+- Trigger name: ${result.trigger_name}
+- Scheduled time: ${result.next_action}
+
+${result.message}
+
+Check manually in:
+- System Logs → System Log → All (search for "${result.trigger_sys_id}" or the trigger name)
+- System Definition → Scheduled Jobs (filter by name: ${result.trigger_name})`
+                }],
+                isError: true
+              };
+            }
+
+            // result.status === 'scheduled' — caller passed wait: false, fire-and-forget.
             return {
               content: [{
                 type: 'text',
@@ -2190,11 +2270,9 @@ ${result.message}
 
 The script will execute in ~1 second. You can monitor execution in:
 - System Logs → System Log → All
-- System Definition → Scheduled Jobs (filter by name: ${result.trigger_name})
-
-🔍 Script to execute:
-${script.substring(0, 300)}${script.length > 300 ? '...' : ''}`
-              }]
+- System Definition → Scheduled Jobs (filter by name: ${result.trigger_name})`
+              }],
+              isError: false
             };
           } catch (triggerError) {
             // Fallback: Create fix script if sys_trigger fails
