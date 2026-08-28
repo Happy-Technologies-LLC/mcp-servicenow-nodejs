@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.2.0 - 2026-08-28
+
+### Added
+
+- `SN-Execute-Background-Script` now captures and returns script output: `gs.info`/`gs.print` log lines are recovered from a bounded `syslog` window and returned as `logs`, the thrown error is surfaced on failure (previously swallowed by a bare `try`/`finally` with no `catch`), and three distinguishable outcomes (`completed`, `failed`, `timeout`) replace the old single success-looking response. A `wait: false` opt-out preserves fire-and-forget behavior.
+- Per-request `progressToken` isolation via `AsyncLocalStorage` so concurrent tool calls (the project's own guidance recommends 5-10 at once) no longer collide on a shared client instance's token or progress counter.
+- Process-level `unhandledRejection`/`uncaughtException` guards in all three entrypoints (`src/server.js`, `src/http-server.js`, `src/stdio-server.js`) via a shared `src/process-guards.js` — a single dropped notification can no longer terminate every concurrent session.
+
+### Security
+
+- Removed tracked ServiceNow credential material from `start-mcp.sh` and deleted the committed `.env.backup`; the startup script now fails closed when required configuration is absent.
+- Resolved npm audit failures (brace-expansion, fast-uri, ip-address, js-yaml, hono) that were blocking the `security-audit` CI gate on every PR.
+
+### Fixed
+
+- `notifications/progress` payloads now conform to the MCP spec (`progressToken` required, `progress` numeric, text in `message`); spec-compliant clients like Cursor no longer reject them and drop the connection (#58).
+- `server.notification()` rejections are now handled instead of becoming `unhandledRejection` process crashes (#50).
+- `sys_trigger` `next_action` is now formatted as UTC instead of local time — scripts were scheduling ~2 hours out (one UTC offset) instead of ~1 second (#52).
+- `getRecords()` now forwards `sysparm_offset` and `sysparm_order_by` to the Table API; pagination and sorting were silently ignored for all nine affected tool handlers (#55).
+- Removed the false `execution_method` enum from `SN-Execute-Background-Script` — the handler never read it and the advertised `ui` path was dead code that always threw.
+
 ## Unreleased
 
 ## 5.1.0 - 2026-07-27
