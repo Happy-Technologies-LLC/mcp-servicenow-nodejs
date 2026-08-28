@@ -26,11 +26,11 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
   "mcpServers": {
     "servicenow": {
       "command": "node",
-      "args": ["/Users/nczitzer/WebstormProjects/mcp-servicenow-nodejs/src/stdio-server.js"],
+      "args": ["/absolute/path/to/happy-platform-mcp/src/stdio-server.js"],
       "env": {
-        "SERVICENOW_INSTANCE_URL": "https://dev276360.service-now.com",
-        "SERVICENOW_USERNAME": "admin",
-        "SERVICENOW_PASSWORD": "$h4fG+9nAGeU"
+        "SERVICENOW_INSTANCE_URL": "https://your-instance.service-now.com",
+        "SERVICENOW_USERNAME": "your-username",
+        "SERVICENOW_PASSWORD": "your-password"
       }
     }
   }

@@ -1,7 +1,9 @@
-#!/bin/bash
-cd /Users/nczitzer/WebstormProjects/happy-platform-mcp
-export SERVICENOW_INSTANCE_URL=https://dev276360.service-now.com
-export SERVICENOW_USERNAME=admin
-export SERVICENOW_PASSWORD='$h4fG+9nAGeU'
-export SERVICENOW_AUTH_TYPE=basic
-node src/stdio-server.js
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${SERVICENOW_INSTANCE_URL:?Set SERVICENOW_INSTANCE_URL before starting the MCP server}"
+: "${SERVICENOW_USERNAME:?Set SERVICENOW_USERNAME before starting the MCP server}"
+: "${SERVICENOW_PASSWORD:?Set SERVICENOW_PASSWORD before starting the MCP server}"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node "$script_dir/src/stdio-server.js"
