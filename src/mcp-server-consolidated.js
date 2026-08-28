@@ -2179,6 +2179,17 @@ Please verify:
             if (!result.logs) {
               return '';
             }
+            if (result.logsWindowUnverified) {
+              // This run's own completion marker wasn't found inside the
+              // log-collection window — most likely clock skew between
+              // this host and the instance shifted the lower bound past
+              // the script's real timestamps. An empty/partial `logs`
+              // here is NOT proof the script printed nothing.
+              const captured = result.logs.length > 0
+                ? `Captured anyway (may be incomplete):\n${result.logs.map(line => `  ${line}`).join('\n')}`
+                : 'Nothing was captured — this does NOT mean the script produced no output.';
+              return `\n⚠️ Script logs could not be verified (possible clock skew between this host and the instance). ${captured}\n`;
+            }
             if (result.logs.length === 0) {
               return '\n📜 Script logs: (none captured)\n';
             }

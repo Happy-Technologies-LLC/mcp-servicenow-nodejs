@@ -339,4 +339,43 @@ describe('executeScriptViaTrigger log capture', () => {
     expect(result.logs[0]).toBe('line 0');
     expect(result.logsTruncated).toBe(true);
   });
+
+  test('flags logsWindowUnverified instead of silently returning empty logs when the window misses this run\'s own end marker (e.g. host/instance clock skew)', async () => {
+    // sinceDateTime (this run's own next_action) is computed from the
+    // MCP host's clock with no skew buffer. If the host clock runs ahead
+    // of the instance, the range query can miss this run's own rows
+    // entirely -- including its own end marker, which the outcome poll
+    // (a separate, looser query) just found moments ago. An empty `logs`
+    // in that case must not look identical to a script that genuinely
+    // printed nothing.
+    const captured = [];
+    const client = makeClient(captured, (endMarker, config) => {
+      if (isLogCollectionQuery(config)) {
+        // The range query comes back empty: the window missed the real
+        // timestamps entirely.
+        return [];
+      }
+      return [{ message: `${endMarker}${JSON.stringify({ ok: true })}`, sys_created_on: '2026-01-01 00:00:09' }];
+    });
+
+    const result = await client.executeScriptViaTrigger("gs.info('hi');", 'desc', true);
+
+    expect(result.status).toBe('completed');
+    expect(result.logsWindowUnverified).toBe(true);
+    expect(result.logs).toEqual([]);
+  });
+
+  test('does not flag logsWindowUnverified when this run\'s own end marker is present in the window', async () => {
+    const captured = [];
+    const client = makeClient(captured, (endMarker, config) => {
+      if (isLogCollectionQuery(config)) return markerRecords(endMarker, { ok: true }, ['real line']);
+      return [{ message: `${endMarker}${JSON.stringify({ ok: true })}`, sys_created_on: '2026-01-01 00:00:09' }];
+    });
+
+    const result = await client.executeScriptViaTrigger("gs.info('hi');", 'desc', true);
+
+    expect(result.status).toBe('completed');
+    expect(result.logsWindowUnverified).toBeUndefined();
+    expect(result.logs).toEqual(['real line']);
+  });
 });

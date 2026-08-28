@@ -1991,7 +1991,8 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
       const outcome = await this._pollBackgroundScriptOutcome(endMarker, pollSince, timeoutMs, intervalMs);
 
       if (outcome.state === 'completed' || outcome.state === 'failed') {
-        const { logs, truncated } = await this._collectBackgroundScriptLogs({
+        const { logs, truncated, logsWindowUnverified } = await this._collectBackgroundScriptLogs({
+          endMarker,
           sinceDateTime: schedulingInfo.next_action,
           untilDateTime: outcome.endTime
         });
@@ -2004,6 +2005,7 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
             output: outcome.output,
             logs,
             ...(truncated ? { logsTruncated: true } : {}),
+            ...(logsWindowUnverified ? { logsWindowUnverified: true } : {}),
             message: 'Script executed successfully.'
           };
         }
@@ -2016,6 +2018,7 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
           stack: outcome.stack,
           logs,
           ...(truncated ? { logsTruncated: true } : {}),
+          ...(logsWindowUnverified ? { logsWindowUnverified: true } : {}),
           message: `Script execution failed: ${outcome.error}`
         };
       }
@@ -2091,19 +2094,39 @@ gs.info('✅ Update set changed to: ${updateSet.name}');`;
   // real, disclosed limitation of syslog time-window correlation on this
   // platform, not a bug — solving it would require a server-side
   // correlation id the Table API does not expose.
-  async _collectBackgroundScriptLogs({ sinceDateTime, untilDateTime, maxLines = 100 }) {
+  //
+  // Integrity check: `sinceDateTime` (this run's own `next_action`) is
+  // computed from the MCP host's clock, with no slack for host/instance
+  // clock skew — unlike the outcome poll's lower bound, which has a
+  // built-in buffer. If the host clock runs ahead of the instance, this
+  // bound can land AFTER the real ServiceNow-assigned timestamps of this
+  // run's own log rows, and the range query below would then miss them
+  // entirely — including this run's own end marker, which
+  // `_pollBackgroundScriptOutcome` JUST found moments ago via a separate,
+  // looser query. Its absence here is therefore a hard signal that the
+  // window is wrong, not that the script printed nothing: an empty
+  // `logs` array would otherwise be silently indistinguishable from a
+  // genuinely silent script — precisely the ambiguity issue #40 exists
+  // to resolve. `endMarker` is passed in solely for this check, not for
+  // content filtering (that stays shape-based per point 1 above).
+  async _collectBackgroundScriptLogs({ endMarker, sinceDateTime, untilDateTime, maxLines = 100 }) {
     const records = await this.getRecords('syslog', {
       sysparm_query: `source=*** Script^sys_created_on>=${sinceDateTime}^sys_created_on<=${untilDateTime}^ORDERBYsys_created_on`,
       sysparm_fields: 'message,sys_created_on',
       sysparm_limit: maxLines + 10
     });
 
-    const lines = (Array.isArray(records) ? records : [])
-      .map(record => record?.message || '')
-      .filter(message => !MCP_SCRIPT_MARKER_PATTERN.test(message));
+    const messages = (Array.isArray(records) ? records : []).map(record => record?.message || '');
+    const windowVerified = messages.some(message => message.startsWith(endMarker));
+
+    const lines = messages.filter(message => !MCP_SCRIPT_MARKER_PATTERN.test(message));
 
     const truncated = lines.length > maxLines;
-    return { logs: truncated ? lines.slice(0, maxLines) : lines, truncated };
+    return {
+      logs: truncated ? lines.slice(0, maxLines) : lines,
+      truncated,
+      ...(windowVerified ? {} : { logsWindowUnverified: true })
+    };
   }
 
   // Batch operations
