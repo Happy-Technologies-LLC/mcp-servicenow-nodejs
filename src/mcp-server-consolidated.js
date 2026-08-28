@@ -6,6 +6,7 @@
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { AsyncLocalStorage } from 'async_hooks';
 import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -73,20 +74,61 @@ export async function createMcpServer(serviceNowClient, options = {}) {
       }
     }
   );
+  // Per-request progress state. The MCP progressToken and the monotonically
+  // increasing `progress` counter belong to a single in-flight tool call,
+  // not to the (memoized, cross-request-shared) ServiceNow client instance.
+  // AsyncLocalStorage threads that per-request store through every `await`
+  // inside the handler -- including deep inside servicenow-client.js's
+  // notifyProgress() calls -- without adding a signature parameter anywhere.
+  const progressContext = new AsyncLocalStorage();
 
   const configureProgressNotifications = (client) => {
     if (!client?.setProgressCallback) {
       return;
     }
 
-    client.setProgressCallback((message) => {
+    client.setProgressCallback((message, current, total) => {
+      const ctx = progressContext.getStore();
+
+      // Per MCP spec, progress notifications are only valid for requests
+      // that opted in with a progressToken. Without one, send nothing.
+      // Likewise, once this request's own notification has failed to send,
+      // stop retrying for the rest of this request only.
+      if (!ctx || ctx.token === null || ctx.token === undefined || ctx.failed) {
+        return;
+      }
+
+      let progress = Number.isFinite(current) ? current : ctx.lastProgress + 1;
+      if (progress <= ctx.lastProgress) {
+        progress = ctx.lastProgress + 1;
+      }
+      ctx.lastProgress = progress;
+
+      const params = {
+        progressToken: ctx.token,
+        progress,
+        message
+      };
+
+      if (Number.isFinite(total)) {
+        params.total = total;
+      }
+
       try {
-        server.notification({
+        const result = server.notification({
           method: 'notifications/progress',
-          params: {
-            progress: message
-          }
+          params
         });
+
+        if (result && typeof result.then === 'function') {
+          result.catch((error) => {
+            console.error('Progress notification dropped:', error.message);
+            // Stop the doomed retry loop for this request only. Other
+            // concurrent (and future) requests keep their own store entry
+            // and are unaffected.
+            ctx.failed = true;
+          });
+        }
       } catch (error) {
         console.error('Failed to send progress notification:', error.message);
       }
@@ -633,7 +675,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
       },
       {
         name: 'SN-Execute-Background-Script',
-        description: '🚀 EXECUTES background scripts with THREE methods: (1) sys_trigger [DEFAULT & MOST RELIABLE] - Creates scheduled job that runs in 1 second and auto-deletes, (2) UI endpoint (sys.scripts.do) - Attempts direct execution via UI, (3) Fix script - Manual fallback. Use for: setting update sets, complex GlideRecord operations, GlideUpdateSet API calls, etc. The sys_trigger method is most reliable and works consistently!',
+        description: 'Executes server-side JavaScript by creating a sys_trigger scheduled job that runs in ~1 second and auto-deletes after execution. Use for: setting update sets, complex GlideRecord operations, GlideUpdateSet API calls, etc. Note: this tool does not return the script\'s console/log output — only trigger scheduling metadata (see issue #40).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -644,12 +686,6 @@ export async function createMcpServer(serviceNowClient, options = {}) {
             description: {
               type: 'string',
               description: 'Description of what the script does (optional)'
-            },
-            execution_method: {
-              type: 'string',
-              description: 'Execution method: "trigger" (default - most reliable), "ui" (UI endpoint), "auto" (try trigger then ui then fix script)',
-              enum: ['trigger', 'ui', 'auto'],
-              default: 'trigger'
             }
           },
           required: ['script']
@@ -1437,8 +1473,9 @@ export async function createMcpServer(serviceNowClient, options = {}) {
     return { tools: addInstanceParameter(tools) };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const dispatchToolCall = async (request) => {
     const { name, arguments: args } = request.params;
+    let requestClient = null;
 
     try {
       if (isInstanceSetupTool(name)) {
@@ -1462,7 +1499,7 @@ export async function createMcpServer(serviceNowClient, options = {}) {
         throw new Error(`Tool ${name} is unavailable in docs-only mode`);
       }
 
-      const requestClient = resolveClient(args?.instance);
+      requestClient = resolveClient(args?.instance);
 
       switch (name) {
         case 'SN-Set-Instance': {
@@ -3100,6 +3137,14 @@ The problem has been closed successfully.`
         isError: true
       };
     }
+  };
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const progressToken = request.params?._meta?.progressToken;
+    return progressContext.run(
+      { token: progressToken ?? null, lastProgress: 0, failed: false },
+      () => dispatchToolCall(request)
+    );
   });
 
   // Add resources

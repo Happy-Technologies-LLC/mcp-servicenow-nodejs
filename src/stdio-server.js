@@ -14,9 +14,17 @@ import { ServiceNowClient } from './servicenow-client.js';
 import { createMcpServer } from './mcp-server-consolidated.js';
 import { configManager as defaultConfigManager, instanceToClientOptions } from './config-manager.js';
 import { InstanceCredentialStore } from './instance-credential-store.js';
+import { installProcessCrashGuards } from './process-guards.js';
 
 // Load environment variables
 dotenv.config();
+
+// Guards the whole process against a single unhandled rejection or
+// uncaught exception taking down every concurrent MCP session — see
+// process-guards.js for the full rationale. Registration happens once
+// per process (module-scoped flag), so whichever entrypoint imports
+// this module first wins the label.
+installProcessCrashGuards('stdio-server');
 
 function booleanEnv(value) {
   return ['true', '1', 'yes'].includes(String(value || '').toLowerCase());

@@ -800,22 +800,18 @@ Update multiple records efficiently.
 
 ### SN-Execute-Background-Script
 
-Execute JavaScript server-side with automated sys_trigger execution.
+Execute JavaScript server-side by creating a `sys_trigger` scheduled job that runs in ~1 second and auto-deletes after execution.
 
 **Parameters:**
 ```javascript
 {
   "script": "gs.info('Hello from script');",
   "description": "Test script execution",
-  "execution_method": "trigger",  // trigger (default), ui, or auto
   "instance": "dev"
 }
 ```
 
-**Execution Methods:**
-- `trigger` (recommended): Uses sys_trigger, runs in ~1 second, auto-deletes
-- `ui`: Attempts direct UI endpoint execution
-- `auto`: Tries trigger, then ui, then creates fix script
+**Note:** This tool does not return the script's console/log output — only trigger scheduling metadata (`trigger_sys_id`, `trigger_name`, `next_action`). Check `System Logs` in the ServiceNow UI to see `gs.info`/`gs.print` output (see issue #40).
 
 **Returns:** Success status and trigger details
 

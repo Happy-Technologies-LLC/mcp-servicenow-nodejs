@@ -9,8 +9,18 @@ import dotenv from 'dotenv';
 import { configManager } from './config-manager.js';
 import { createHttpApp, validateHttpTransportSecurity } from './http-server.js';
 import { InstanceCredentialStore } from './instance-credential-store.js';
+import { installProcessCrashGuards } from './process-guards.js';
 
 dotenv.config();
+
+// Guards the whole process against a single unhandled rejection or
+// uncaught exception taking down every concurrent MCP session — see
+// process-guards.js for the full rationale. Registration is a no-op
+// here in practice: http-server.js (imported above) already installed
+// the handlers under the 'http-server' label, since the module-scoped
+// install flag makes registration exactly-once per process regardless
+// of which entrypoint calls it first.
+installProcessCrashGuards('server');
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HAPPY_MCP_BIND_HOST || '127.0.0.1';
